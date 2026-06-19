@@ -4,6 +4,7 @@ use serde_json::json;
 use crate::cli::OrdersCommands;
 use crate::config::RuntimeConfig;
 use crate::human;
+use crate::order_schema::{order_examples, order_request_schema, order_schema_meta, validate_order_shape};
 use crate::output::ResponseEnvelope;
 use crate::safety::{execute_trading_order, require_trading_approval};
 
@@ -11,6 +12,48 @@ pub async fn run(runtime: &RuntimeConfig, command: OrdersCommands) -> Result<()>
     let api = runtime.build_api()?;
 
     match command {
+        OrdersCommands::Schema => {
+            runtime.emit(ResponseEnvelope::ok(
+                "orders schema",
+                json!({
+                    "schema": order_request_schema(),
+                    "meta": order_schema_meta(),
+                    "examples": order_examples(),
+                }),
+            ));
+        }
+        OrdersCommands::Validate {
+            order,
+            account_number,
+        } => {
+            let order_json = human::parse_order_input(&order)?;
+            validate_order_shape(&order_json)?;
+
+            let equity = if let Some(hash) = account_number.as_deref() {
+                crate::portfolio::account_equity(&api, hash)
+                    .await
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            };
+
+            runtime
+                .safety
+                .validate_order(&order_json, None, equity)?;
+
+            runtime.emit(
+                ResponseEnvelope::ok("orders validate", json!({
+                    "valid": true,
+                    "order": order_json,
+                    "account_equity": equity,
+                }))
+                .with_next_actions(vec![
+                    "schwab orders preview --account-number <hash> --order '<json>' --json".into(),
+                    "schwab orders place --account-number <hash> --order '<json>' --trust --yes --json".into(),
+                ]),
+            );
+        }
         OrdersCommands::List {
             mut account_number,
             from_entered_time,
@@ -118,6 +161,8 @@ pub async fn run(runtime: &RuntimeConfig, command: OrdersCommands) -> Result<()>
                 human::parse_order_input(&order)?
             };
 
+            validate_order_shape(&order_json)?;
+
             if runtime.dry_run {
                 let equity = crate::portfolio::account_equity(&api, &account_number)
                     .await
@@ -153,6 +198,8 @@ pub async fn run(runtime: &RuntimeConfig, command: OrdersCommands) -> Result<()>
             } else {
                 human::parse_order_input(&order)?
             };
+
+            validate_order_shape(&order_json)?;
 
             if runtime.is_interactive() && account_number.is_empty() {
                 account_number = human::pick_account_hash(runtime, &api).await?;
@@ -200,6 +247,7 @@ pub async fn run(runtime: &RuntimeConfig, command: OrdersCommands) -> Result<()>
         } => {
             require_trading_approval(runtime, "orders replace", "Replace an existing order.")?;
             let order_json = human::parse_order_input(&order)?;
+            validate_order_shape(&order_json)?;
             if runtime.dry_run {
                 let equity = crate::portfolio::account_equity(&api, &account_number)
                     .await

@@ -122,6 +122,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: PlanCommands,
     },
+
+    /// Market Data API — quotes, history, instruments, hours
+    Market {
+        #[command(subcommand)]
+        command: MarketCommands,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -165,6 +171,17 @@ pub enum AccountsCommands {
 
 #[derive(Debug, Subcommand)]
 pub enum OrdersCommands {
+    /// JSON Schema + Schwab order examples for agents
+    Schema,
+    /// Validate order JSON (shape + safety.json limits)
+    Validate {
+        /// Path to order JSON file or inline JSON string
+        #[arg(long)]
+        order: String,
+        /// Account hash for equity % checks (optional)
+        #[arg(long)]
+        account_number: Option<String>,
+    },
     /// GET /accounts/{accountNumber}/orders
     List {
         account_number: String,
@@ -349,6 +366,93 @@ pub enum PlanCommands {
         /// Run from this step id through the end
         #[arg(long)]
         from_step: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MarketCommands {
+    /// Agent dossier — quote + fundamentals + price context + research hints
+    Info {
+        /// One symbol or comma-separated list (e.g. SGOV or SGOV,JPST,AAPL)
+        symbol: String,
+        /// Skip price history fetch
+        #[arg(long)]
+        no_history: bool,
+        #[arg(long, default_value = "month")]
+        history_period_type: String,
+        #[arg(long, default_value_t = 1)]
+        history_period: u32,
+        #[arg(long, default_value = "daily")]
+        history_frequency_type: String,
+    },
+    /// GET /quotes — quotes for multiple symbols (comma-separated)
+    Quotes {
+        /// Comma-separated tickers (e.g. SGOV,JPST,AAPL)
+        #[arg(long)]
+        symbols: String,
+        /// Quote fields: all, quote, fundamental, reference, extended, regular
+        #[arg(long)]
+        fields: Option<String>,
+        #[arg(long)]
+        indicative: Option<bool>,
+    },
+    /// GET /{symbol}/quotes — single symbol quote
+    Quote {
+        symbol: String,
+        #[arg(long)]
+        fields: Option<String>,
+        #[arg(long)]
+        indicative: Option<bool>,
+    },
+    /// GET /pricehistory — OHLCV candles
+    History {
+        symbol: String,
+        #[arg(long)]
+        period_type: Option<String>,
+        #[arg(long)]
+        period: Option<u32>,
+        #[arg(long)]
+        frequency_type: Option<String>,
+        #[arg(long)]
+        frequency: Option<u32>,
+        /// Epoch milliseconds
+        #[arg(long)]
+        start_date: Option<i64>,
+        #[arg(long)]
+        end_date: Option<i64>,
+        #[arg(long)]
+        need_extended_hours_data: Option<bool>,
+        #[arg(long)]
+        need_previous_close: Option<bool>,
+    },
+    /// GET /instruments — symbol search / fundamentals (company info)
+    Instrument {
+        /// Symbol or search text
+        #[arg(long)]
+        symbol: String,
+        /// Projection: symbol-search, fundamental, search, etc.
+        #[arg(long, default_value = "fundamental")]
+        projection: String,
+    },
+    /// GET /instruments/{cusip}
+    InstrumentByCusip {
+        cusip: String,
+    },
+    /// GET /markets — hours for multiple markets (comma-separated)
+    Hours {
+        /// equity, option, bond, future, forex (comma-separated)
+        #[arg(long, default_value = "equity")]
+        markets: String,
+        /// YYYY-MM-DD (defaults to today)
+        #[arg(long)]
+        date: Option<String>,
+    },
+    /// GET /markets/{market_id} — hours for one market
+    HoursFor {
+        /// equity | option | bond | future | forex
+        market: String,
+        #[arg(long)]
+        date: Option<String>,
     },
 }
 

@@ -5,6 +5,11 @@ fn capabilities_has_trader_commands() {
     let cmds = capabilities::all_commands();
     assert!(cmds.iter().any(|c| c.path == "accounts numbers"));
     assert!(cmds.iter().any(|c| c.path == "portfolio summary"));
+    assert!(cmds.iter().any(|c| c.path == "market info"));
+    assert!(cmds.iter().any(|c| c.path == "market quotes"));
+    assert!(cmds.iter().any(|c| c.path == "market hours"));
     assert!(cmds.iter().any(|c| c.path == "trade buy" && c.mutation));
+    assert!(cmds.iter().any(|c| c.path == "orders schema"));
+    assert!(cmds.iter().any(|c| c.path == "orders validate"));
     assert!(cmds.iter().any(|c| c.path == "orders place" && c.mutation));
 }

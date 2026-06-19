@@ -6,6 +6,7 @@ Agent-first Rust CLI for the [Charles Schwab Trader API](https://developer.schwa
 
 - **OAuth 2.0** — browser login, token refresh, secure local storage
 - **Read** — accounts, positions, orders, transactions, user preferences
+- **Market data** — quotes, price history, instrument fundamentals, market hours
 - **Portfolio summary** — aggregated equity and holdings across accounts
 - **Trading** — `trade buy` / `trade sell` with preview and safety guardrails
 - **Trade plans** — YAML/JSON multi-step rebalances; LLM-authored, CLI-validated
@@ -17,6 +18,7 @@ Agent-first Rust CLI for the [Charles Schwab Trader API](https://developer.schwa
 
 - Rust 1.75+ ([rustup](https://rustup.rs/))
 - Schwab Developer Portal app with **Trader API – Individual** (Production)
+- Same app should also enable **Market Data Production** for quotes and history
 - macOS / Linux / Windows
 
 ## Quick start
@@ -63,8 +65,9 @@ Copy `.env.example` to `.env` in the project root (or `~/.config/schwabinvestbot
 
 1. Create an app at [developer.schwab.com](https://developer.schwab.com/)
 2. Enable **Trader API – Individual** (Production)
-3. Set callback URL to `https://127.0.0.1:8182` (HTTPS required)
-4. Copy App Key and Secret into `.env`
+3. Enable **Market Data Production** (quotes, price history, instruments)
+4. Set callback URL to `https://127.0.0.1:8182` (HTTPS required)
+5. Copy App Key and Secret into `.env`
 
 ### Token storage
 
@@ -117,6 +120,38 @@ schwab user preference --json
 
 **Important:** Use `hashValue` from `accounts numbers` as `{accountNumber}` in trading endpoints — not the plain account number.
 
+## Market data
+
+Uses the same OAuth tokens as the Trader API (`https://api.schwabapi.com/marketdata/v1`).
+
+```bash
+# Agent research dossier (quote + fundamentals + 1mo history + web research hints)
+schwab market info SGOV --json
+schwab market info SGOV,JPST,AAPL --json
+
+# Lower-level endpoints
+# Market hours (works when markets are closed)
+schwab market hours --markets equity --json
+
+# Live quotes — quote + fundamentals for company info
+schwab market quotes --symbols SGOV,JPST --fields quote,fundamental,reference --json
+schwab market quote SGOV --fields all --json
+
+# Price history (OHLCV candles)
+schwab market history AAPL \
+  --period-type month --period 1 --frequency-type daily --json
+
+# Company / instrument fundamentals
+schwab market instrument --symbol AAPL --projection fundamental --json
+
+# Symbol search
+schwab market instrument --symbol SGO --projection symbol-search --json
+```
+
+Quote `fields`: `all`, `quote`, `fundamental`, `reference`, `extended`, `regular`
+
+Instrument `projection`: `symbol-search`, `fundamental`, `search`, `desc-search`, etc.
+
 ## Trading
 
 ### Single orders
@@ -134,6 +169,31 @@ schwab trade buy --trust --yes \
 ```
 
 Low-level JSON orders: `schwab orders place`, `schwab orders preview`, etc.
+
+### Options and complex orders
+
+Schwab supports **EQUITY** and **OPTION** orders including spreads, OCO, and TRIGGER sequences. Use raw JSON via `orders place` / `orders preview`:
+
+```bash
+# Schema + official Schwab examples (vertical spread, OCO, trailing stop, etc.)
+schwab orders schema --json
+
+# Validate shape + safety.json before preview/place
+schwab orders validate --order '{"orderType":"NET_DEBIT",...}' --json
+
+# Preview then place a complex order
+schwab orders preview --account-number <hash> --order '<json>' --json
+schwab orders place --account-number <hash> --order '<json>' --trust --yes --json
+```
+
+Enable in `safety.json` as needed:
+- `allow_option_orders` — single-leg and spread option legs
+- `allow_complex_orders` — multi-leg spreads (`NET_DEBIT`, `NET_CREDIT`)
+- `allow_conditional_orders` — `OCO`, `TRIGGER` with `childOrderStrategies`
+
+Option symbol format: `UNDERLYING(6 chars) | YYMMDD | C/P | STRIKE` — e.g. `XYZ   240315C00500000`
+
+Fields supported include `cancelTime`, `complexOrderStrategyType` (`VERTICAL`, `IRON_CONDOR`, etc.), and `orderStrategyType` (`SINGLE`, `OCO`, `TRIGGER`).
 
 ### Order status / wait
 
@@ -212,8 +272,9 @@ Output envelope fields: `success`, `command`, `inputs`, `data`, `warnings`, `err
 ```
 schwab-api-cli/
 ├── crates/
-│   ├── schwab-api/     # HTTP client, OAuth, API endpoints
-│   └── schwab-cli/     # CLI binary (`schwab`)
+│   ├── schwab-api/          # HTTP client, OAuth, Trader API endpoints
+│   ├── schwab-market-data/  # Market Data API client (quotes, history, instruments)
+│   └── schwab-cli/          # CLI binary (`schwab`)
 ├── plans/              # Example trade plans + TRADE_PLAN.md
 ├── safety.json.example
 ├── .env.example

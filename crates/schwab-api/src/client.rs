@@ -44,15 +44,52 @@ impl SchwabClient {
     }
 
     pub async fn get_json<T: DeserializeOwned>(&self, path: &str, query: &[(&str, &str)]) -> Result<T> {
-        self.request(Method::GET, path, query, None::<&Value>).await
+        self.request(
+            &self.config.trader_base_url,
+            Method::GET,
+            path,
+            query,
+            None::<&Value>,
+        )
+        .await
+    }
+
+    /// GET against Market Data Production (`/marketdata/v1`).
+    pub async fn get_market_data_json<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+    ) -> Result<T> {
+        self.request(
+            crate::MARKET_DATA_BASE_URL,
+            Method::GET,
+            path,
+            query,
+            None::<&Value>,
+        )
+        .await
     }
 
     pub async fn post_json<T: DeserializeOwned>(&self, path: &str, body: &Value) -> Result<T> {
-        self.request(Method::POST, path, &[], Some(body)).await
+        self.request(
+            &self.config.trader_base_url,
+            Method::POST,
+            path,
+            &[],
+            Some(body),
+        )
+        .await
     }
 
     pub async fn put_json<T: DeserializeOwned>(&self, path: &str, body: &Value) -> Result<T> {
-        self.request(Method::PUT, path, &[], Some(body)).await
+        self.request(
+            &self.config.trader_base_url,
+            Method::PUT,
+            path,
+            &[],
+            Some(body),
+        )
+        .await
     }
 
     pub async fn post_mutate(&self, path: &str, body: &Value) -> Result<MutationResponse> {
@@ -94,13 +131,14 @@ impl SchwabClient {
 
     async fn request<T: DeserializeOwned>(
         &self,
+        base_url: &str,
         method: Method,
         path: &str,
         query: &[(&str, &str)],
         body: Option<&Value>,
     ) -> Result<T> {
         let token = self.oauth.ensure_access_token().await?;
-        let url = format!("{}{}", self.config.trader_base_url, path);
+        let url = format!("{base_url}{path}");
         debug!(%url, ?method, "API request");
 
         let mut req = self

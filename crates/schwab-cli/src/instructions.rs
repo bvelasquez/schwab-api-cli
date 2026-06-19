@@ -54,17 +54,54 @@ pub fn instructions_json(safety: &SafetyConfig) -> Value {
             "preview_first": "Use `schwab orders preview --json` or rely on built-in preview before place"
         },
         "recommended_read_path": [
+            "schwab market info SGOV --json",
+            "schwab market hours --markets equity --json",
             "schwab portfolio summary --json",
             "schwab accounts numbers --json",
             "schwab orders list <hash> --json"
         ],
+        "market_data": {
+            "base_url": schwab_api::MARKET_DATA_BASE_URL,
+            "requires_portal_product": "Market Data Production",
+            "primary_research_command": "schwab market info <SYMBOL> --json",
+            "commands": {
+                "info": "schwab market info SGOV --json (quote + fundamentals + history + research hints)",
+                "info_multi": "schwab market info SGOV,JPST,AAPL --json",
+                "quotes": "schwab market quotes --symbols SGOV,JPST --fields quote,fundamental --json",
+                "quote": "schwab market quote SGOV --fields all --json",
+                "history": "schwab market history AAPL --period-type month --period 1 --frequency-type daily --json",
+                "company_info": "schwab market instrument --symbol AAPL --projection fundamental --json",
+                "hours": "schwab market hours --markets equity --json"
+            },
+            "agent_workflow": [
+                "schwab market info <symbol> --json for Schwab-side facts",
+                "Web search using data.researchHints.recommendedWebQueries for narrative, holdings, news",
+                "schwab portfolio summary --json for account context",
+                "schwab plan prompt --json → validate → dry-run → run with --trust --yes"
+            ],
+            "quote_fields": ["all", "quote", "fundamental", "reference", "extended", "regular"],
+            "instrument_projections": ["symbol-search", "fundamental", "search", "desc-search"]
+        },
         "recommended_trade_path": [
+            "schwab orders schema --json",
             "schwab safety show --json",
-            "schwab plan prompt --json",
-            "schwab plan validate plans/my-plan.yaml",
-            "schwab plan run plans/my-plan.yaml --dry-run --json",
-            "schwab plan run plans/my-plan.yaml --trust --yes --json"
+            "schwab orders validate --order '<json>' --json",
+            "schwab orders preview --account-number <hash> --order '<json>' --json",
+            "schwab orders place --account-number <hash> --order '<json>' --trust --yes --json"
         ],
+        "orders": {
+            "schema": "schwab orders schema --json",
+            "validate": "schwab orders validate --order '<json>' --json",
+            "supported_asset_types": ["EQUITY", "OPTION"],
+            "complexOrderStrategyType": ["NONE", "VERTICAL", "IRON_CONDOR", "CUSTOM", "..."],
+            "conditionalStrategies": ["OCO", "TRIGGER"],
+            "safety_flags": {
+                "allow_option_orders": "single-leg and spread option legs",
+                "allow_complex_orders": "multi-leg spreads (NET_DEBIT/NET_CREDIT)",
+                "allow_conditional_orders": "OCO and TRIGGER childOrderStrategies"
+            },
+            "option_symbology": "UNDERLYING(6) | YYMMDD | C/P | STRIKE(8) — e.g. XYZ   240315C00500000"
+        },
         "trade_plans": {
             "description": "LLMs generate YAML/JSON plans; CLI validates and executes them",
             "schema": "schwab plan schema --json",

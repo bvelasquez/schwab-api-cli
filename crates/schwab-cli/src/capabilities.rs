@@ -159,6 +159,20 @@ pub fn all_commands() -> Vec<CommandSpec> {
             requires_auth: true,
         },
         CommandSpec {
+            path: "orders schema",
+            description: "OrderRequest JSON schema and Schwab order examples",
+            http: None,
+            mutation: false,
+            requires_auth: false,
+        },
+        CommandSpec {
+            path: "orders validate",
+            description: "Validate order JSON shape and safety.json limits",
+            http: None,
+            mutation: false,
+            requires_auth: false,
+        },
+        CommandSpec {
             path: "orders list",
             description: "List orders for an account",
             http: Some("GET /accounts/{accountNumber}/orders"),
@@ -235,6 +249,62 @@ pub fn all_commands() -> Vec<CommandSpec> {
             mutation: false,
             requires_auth: true,
         },
+        CommandSpec {
+            path: "market info",
+            description: "Agent dossier: quote + fundamentals + price context + research hints",
+            http: Some("GET /marketdata/v1/{symbol}/quotes + /instruments + /pricehistory"),
+            mutation: false,
+            requires_auth: true,
+        },
+        CommandSpec {
+            path: "market quotes",
+            description: "Get quotes for multiple symbols",
+            http: Some("GET /marketdata/v1/quotes"),
+            mutation: false,
+            requires_auth: true,
+        },
+        CommandSpec {
+            path: "market quote",
+            description: "Get quote for a single symbol",
+            http: Some("GET /marketdata/v1/{symbol}/quotes"),
+            mutation: false,
+            requires_auth: true,
+        },
+        CommandSpec {
+            path: "market history",
+            description: "Price history (OHLCV candles)",
+            http: Some("GET /marketdata/v1/pricehistory"),
+            mutation: false,
+            requires_auth: true,
+        },
+        CommandSpec {
+            path: "market instrument",
+            description: "Instrument search and fundamentals (company info)",
+            http: Some("GET /marketdata/v1/instruments"),
+            mutation: false,
+            requires_auth: true,
+        },
+        CommandSpec {
+            path: "market instrument-by-cusip",
+            description: "Instrument lookup by CUSIP",
+            http: Some("GET /marketdata/v1/instruments/{cusip}"),
+            mutation: false,
+            requires_auth: true,
+        },
+        CommandSpec {
+            path: "market hours",
+            description: "Market hours for one or more markets",
+            http: Some("GET /marketdata/v1/markets"),
+            mutation: false,
+            requires_auth: true,
+        },
+        CommandSpec {
+            path: "market hours-for",
+            description: "Market hours for a single market",
+            http: Some("GET /marketdata/v1/markets/{market}"),
+            mutation: false,
+            requires_auth: true,
+        },
     ]
 }
 
@@ -247,7 +317,8 @@ pub fn command_tree() -> Value {
         { "group": "trade", "commands": ["buy", "sell"] },
         { "group": "safety", "commands": ["show", "init", "path"] },
         { "group": "plan", "commands": ["schema", "prompt", "validate", "show", "run"] },
-        { "group": "orders", "commands": ["list", "all", "get", "wait", "place", "preview", "cancel", "replace"] },
+        { "group": "market", "commands": ["info", "quotes", "quote", "history", "instrument", "instrument-by-cusip", "hours", "hours-for"] },
+        { "group": "orders", "commands": ["schema", "validate", "list", "all", "get", "wait", "place", "preview", "cancel", "replace"] },
         { "group": "transactions", "commands": ["list", "get"] },
         { "group": "user", "commands": ["preference"] }
     ])
@@ -270,6 +341,7 @@ pub fn capabilities_json() -> Value {
     json!({
         "cli": "schwab",
         "api_product": "Trader API - Individual (Accounts and Trading Production)",
+        "market_data_base_url": schwab_api::MARKET_DATA_BASE_URL,
         "base_url": schwab_api::TRADER_BASE_URL,
         "default_mode": "agent",
         "output_formats": ["pretty", "json", "md"],
