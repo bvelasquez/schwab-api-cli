@@ -1,0 +1,111 @@
+version: 1
+plan_id: example-sgov-income-barbell
+title: "Example Plan B — SGOV income barbell (9947-style)"
+account_hash: "<YOUR_ACCOUNT_HASH_FROM_schwab_accounts_numbers>"
+account_label: "Example brokerage account ending 9947"
+created_at: "2026-06-19T00:00:00Z"
+author: "llm-agent"
+rationale: |
+  Plan B (Income Barbell): reduce SGOV anchor, add JAAA + SPYI, modest JEPI/JEPQ adds.
+
+  Target allocation (~): SGOV 25% | JAAA 15% | SPYI 12% | JEPQ 33% | JEPI 15%
+  Expected income lift: ~18% vs current (~$355/yr on ~$28k account).
+
+  BEFORE LIVE RUN:
+    1. schwab market info SGOV,JAAA,SPYI,JEPI,JEPQ --json
+    2. Update limit_price on every step (sell at bid, buy at ask)
+    3. schwab plan validate <file>
+    4. schwab plan run <file> --dry-run --json
+
+assumptions:
+  notes: |
+    Placeholder prices — refresh from live quotes at execution time.
+    Sells complete before buys; each step waits for fill.
+  limit_prices:
+    SGOV: 100.59
+    JAAA: 50.67
+    SPYI: 53.15
+    JEPI: 56.18
+    JEPQ: 61.36
+
+execution:
+  stop_on_error: true
+  pause_seconds_between_steps: 5
+  wait_for_fill: true
+  fill_timeout_seconds: 3600
+  poll_interval_seconds: 10
+
+steps:
+  # --- Phase 1: Sell 54 SGOV (125 → 71 shares) ---
+  - id: step-01-sell-sgov-1
+    side: sell
+    symbol: SGOV
+    quantity: 14
+    order_type: limit
+    limit_price: 100.59
+    note: "Sell SGOV batch 1/4"
+
+  - id: step-02-sell-sgov-2
+    side: sell
+    symbol: SGOV
+    quantity: 14
+    order_type: limit
+    limit_price: 100.59
+    note: "Sell SGOV batch 2/4"
+
+  - id: step-03-sell-sgov-3
+    side: sell
+    symbol: SGOV
+    quantity: 14
+    order_type: limit
+    limit_price: 100.59
+    note: "Sell SGOV batch 3/4"
+
+  - id: step-04-sell-sgov-4
+    side: sell
+    symbol: SGOV
+    quantity: 12
+    order_type: limit
+    limit_price: 100.59
+    note: "Sell SGOV batch 4/4 — total 54 shares (~$5,432)"
+
+  # --- Phase 2: Deploy proceeds ---
+  - id: step-05-buy-jaaa-1
+    side: buy
+    symbol: JAAA
+    quantity: 15
+    order_type: limit
+    limit_price: 50.67
+    note: "Buy JAAA batch 1/2 — AAA CLO cash upgrade"
+
+  - id: step-06-buy-jaaa-2
+    side: buy
+    symbol: JAAA
+    quantity: 15
+    order_type: limit
+    limit_price: 50.67
+    note: "Buy JAAA batch 2/2 — total 30 shares"
+
+  - id: step-07-buy-spyi
+    side: buy
+    symbol: SPYI
+    quantity: 19
+    order_type: limit
+    limit_price: 53.15
+    note: "Buy SPYI — S&P 500 covered-call income"
+
+  - id: step-08-buy-jepi
+    side: buy
+    symbol: JEPI
+    quantity: 18
+    order_type: limit
+    limit_price: 56.18
+    note: "Add JEPI — defensive equity premium"
+
+  - id: step-09-buy-jepq
+    side: buy
+    symbol: JEPQ
+    quantity: 16
+    order_type: limit
+    limit_price: 61.36
+    note: "Add JEPQ — Nasdaq premium income"

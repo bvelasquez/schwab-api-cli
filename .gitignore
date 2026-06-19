@@ -26,3 +26,4 @@ safety.json
 
 # Plan runtime state (future)
 plans/*.state.json
+plans/local/
