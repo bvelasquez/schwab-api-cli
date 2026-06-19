@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "agent_rules": [
+    "Always run `schwab portfolio summary --json` before rebalancing.",
+    "Preview every order before placement unless using --dry-run.",
+    "Respect safety.json limits; the CLI rejects orders that exceed them.",
+    "Never pass --trust unless the user explicitly requests autonomous trading."
+  ],
+  "require_preview_before_place": true,
+  "limits": {
+    "max_trade_value_usd": 5000.0,
+    "max_shares_per_order": 100.0,
+    "allow_market_orders": true,
+    "allow_limit_orders": true,
+    "allow_short_sales": false,
+    "allow_option_orders": false,
+    "allowed_instructions": ["BUY", "SELL"],
+    "allowed_order_types": ["MARKET", "LIMIT"],
+    "allowed_symbols": [],
+    "blocked_symbols": [],
+    "max_trade_pct_of_equity": 10.0
+  }
+}

@@ -1,0 +1,128 @@
+mod auth_callback;
+mod capabilities;
+mod cli;
+mod commands;
+mod config;
+mod env_schema;
+mod human;
+mod instructions;
+mod mode;
+mod output;
+mod order_builder;
+mod order_status;
+mod portfolio;
+mod plan;
+mod safety;
+mod safety_config;
+mod tls;
+
+use anyhow::Result;
+use clap::Parser;
+use cli::{Cli, Commands};
+use tracing_subscriber::EnvFilter;
+
+use crate::config::RuntimeConfig;
+use crate::output::ResponseEnvelope;
+
+#[tokio::main]
+async fn main() {
+    tls::install_crypto_provider();
+    if let Err(err) = run().await {
+        eprintln!("{err:#}");
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<()> {
+    load_dotenv();
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_target(false)
+        .init();
+
+    let cli = Cli::parse();
+    let runtime = RuntimeConfig::from_cli(&cli)?;
+
+    if cli.help_json {
+        return print_help_json(&runtime);
+    }
+
+    match cli.command {
+        Some(Commands::Capabilities) => commands::meta::capabilities(&runtime).await,
+        Some(Commands::Env { command }) => commands::meta::env(&runtime, command).await,
+        Some(Commands::Instructions) => commands::meta::instructions(&runtime).await,
+        Some(Commands::Auth { command }) => commands::auth::run(&runtime, command).await,
+        Some(Commands::Accounts { command }) => commands::accounts::run(&runtime, command).await,
+        Some(Commands::Orders { command }) => commands::orders::run(&runtime, command).await,
+        Some(Commands::Transactions { command }) => commands::transactions::run(&runtime, command).await,
+        Some(Commands::User { command }) => commands::user::run(&runtime, command).await,
+        Some(Commands::Portfolio { command }) => commands::trading::run_portfolio(&runtime, command).await,
+        Some(Commands::Trade { command }) => commands::trading::run_trade(&runtime, command).await,
+        Some(Commands::Safety { command }) => commands::trading::run_safety(&runtime, command).await,
+        Some(Commands::Plan { command }) => commands::plan::run(&runtime, command).await,
+        None => {
+            print_top_level_help(&runtime);
+            Ok(())
+        }
+    }
+}
+
+fn load_dotenv() {
+    let mut dir = std::env::current_dir().ok();
+    while let Some(mut path) = dir {
+        let candidate = path.join(".env");
+        if candidate.is_file() {
+            let _ = dotenvy::from_path(&candidate);
+            return;
+        }
+        if !path.pop() {
+            break;
+        }
+        dir = Some(path);
+    }
+
+    if let Some(home) = directories::UserDirs::new().map(|d| d.home_dir().to_path_buf()) {
+        let fallback = home.join(".config/schwabinvestbot/.env");
+        if fallback.is_file() {
+            let _ = dotenvy::from_path(&fallback);
+        }
+    }
+}
+
+fn print_top_level_help(runtime: &RuntimeConfig) {
+    let envelope = ResponseEnvelope::ok("help", serde_json::json!({
+        "message": "Schwab Trader API CLI — agent-first. Run subcommand --help for details.",
+        "discovery": [
+            "schwab --help --json",
+            "schwab capabilities --json",
+            "schwab env schema --json",
+            "schwab instructions --json"
+        ],
+        "mode": runtime.mode.as_str(),
+    }))
+    .with_next_actions(vec![
+        "schwab auth login".into(),
+        "schwab accounts numbers --json".into(),
+    ]);
+    runtime.emit(envelope);
+}
+
+fn print_help_json(runtime: &RuntimeConfig) -> Result<()> {
+    let tree = capabilities::command_tree();
+    let envelope = ResponseEnvelope::ok(
+        "help-json",
+        serde_json::json!({
+            "name": "schwab",
+            "version": env!("CARGO_PKG_VERSION"),
+            "description": "Agent-first CLI for Charles Schwab Trader API (Accounts and Trading Production)",
+            "base_url": schwab_api::TRADER_BASE_URL,
+            "modes": ["agent", "human"],
+            "output_formats": ["pretty", "json", "md"],
+            "commands": tree,
+            "env_schema_hint": "schwab env schema --json",
+            "capabilities_hint": "schwab capabilities --json",
+        }),
+    );
+    runtime.emit(envelope);
+    Ok(())
+}

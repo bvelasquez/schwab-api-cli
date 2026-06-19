@@ -1,0 +1,44 @@
+[package]
+name = "schwab-cli"
+description = "Agent-first CLI for Charles Schwab Trader API"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "schwab_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "schwab"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+console.workspace = true
+directories.workspace = true
+dotenvy = "0.15"
+indicatif.workspace = true
+inquire.workspace = true
+schwab-api = { path = "../schwab-api" }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true
+urlencoding = "2"
+rcgen.workspace = true
+rustls.workspace = true
+tokio-rustls.workspace = true
+webbrowser = "1"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
