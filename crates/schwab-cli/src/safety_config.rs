@@ -33,6 +33,14 @@ pub struct SafetyLimits {
     pub allow_short_sales: bool,
     /// Allow non-equity asset types (OPTION, etc.).
     pub allow_option_orders: bool,
+    /// Allow multi-leg / complex orders (spreads, iron condors, etc.).
+    pub allow_complex_orders: bool,
+    /// Allow conditional orders (OCO, TRIGGER, etc.).
+    pub allow_conditional_orders: bool,
+    /// Max legs per order (complex spreads).
+    pub max_legs_per_order: u32,
+    /// If non-empty, only these complexOrderStrategyType values are allowed.
+    pub allowed_complex_strategies: Vec<String>,
     /// Permitted instructions (e.g. BUY, SELL). Empty = none allowed.
     pub allowed_instructions: Vec<String>,
     /// Permitted order types (e.g. MARKET, LIMIT). Empty = none allowed.
@@ -70,6 +78,10 @@ impl Default for SafetyLimits {
             allow_limit_orders: true,
             allow_short_sales: false,
             allow_option_orders: false,
+            allow_complex_orders: false,
+            allow_conditional_orders: false,
+            max_legs_per_order: 4,
+            allowed_complex_strategies: vec![],
             allowed_instructions: vec!["BUY".into(), "SELL".into()],
             allowed_order_types: vec!["MARKET".into(), "LIMIT".into()],
             allowed_symbols: vec![],
@@ -132,6 +144,13 @@ impl SafetyConfig {
             .map(|s| s.trim().to_uppercase())
             .filter(|s| !s.is_empty())
             .collect();
+        self.limits.allowed_complex_strategies = self
+            .limits
+            .allowed_complex_strategies
+            .iter()
+            .map(|s| s.trim().to_uppercase())
+            .filter(|s| !s.is_empty())
+            .collect();
         self.limits.blocked_symbols = self
             .limits
             .blocked_symbols
@@ -156,49 +175,61 @@ fn default_config_path() -> PathBuf {
 
 /// Parsed fields extracted from a Schwab order JSON payload.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ParsedOrder {
+pub struct ParsedOrderLeg {
     pub instruction: String,
-    pub order_type: String,
     pub symbol: String,
     pub asset_type: String,
     pub quantity: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParsedOrder {
+    pub order_type: String,
+    pub order_strategy_type: Option<String>,
+    pub complex_order_strategy_type: Option<String>,
     pub limit_price: Option<f64>,
+    pub legs: Vec<ParsedOrderLeg>,
 }
 
 pub fn parse_order(order: &Value) -> Result<ParsedOrder> {
-    let legs = order
+    let legs_raw = order
         .get("orderLegCollection")
         .and_then(|v| v.as_array())
         .filter(|a| !a.is_empty())
         .context("orderLegCollection must contain at least one leg")?;
 
-    if legs.len() > 1 {
-        anyhow::bail!("Multi-leg and complex orders are not supported by safety validation yet");
-    }
+    let mut legs = Vec::with_capacity(legs_raw.len());
+    for (idx, leg) in legs_raw.iter().enumerate() {
+        let instruction = leg
+            .get("instruction")
+            .and_then(|v| v.as_str())
+            .with_context(|| format!("Missing orderLegCollection[{idx}].instruction"))?
+            .to_uppercase();
+        let quantity = leg
+            .get("quantity")
+            .and_then(parse_number)
+            .with_context(|| format!("Missing or invalid orderLegCollection[{idx}].quantity"))?;
+        let instrument = leg
+            .get("instrument")
+            .with_context(|| format!("Missing orderLegCollection[{idx}].instrument"))?;
+        let symbol = instrument
+            .get("symbol")
+            .and_then(|v| v.as_str())
+            .with_context(|| format!("Missing orderLegCollection[{idx}].instrument.symbol"))?
+            .to_uppercase();
+        let asset_type = instrument
+            .get("assetType")
+            .and_then(|v| v.as_str())
+            .unwrap_or("EQUITY")
+            .to_uppercase();
 
-    let leg = &legs[0];
-    let instruction = leg
-        .get("instruction")
-        .and_then(|v| v.as_str())
-        .context("Missing orderLegCollection[0].instruction")?
-        .to_uppercase();
-    let quantity = leg
-        .get("quantity")
-        .and_then(parse_number)
-        .context("Missing or invalid orderLegCollection[0].quantity")?;
-    let instrument = leg
-        .get("instrument")
-        .context("Missing orderLegCollection[0].instrument")?;
-    let symbol = instrument
-        .get("symbol")
-        .and_then(|v| v.as_str())
-        .context("Missing instrument.symbol")?
-        .to_uppercase();
-    let asset_type = instrument
-        .get("assetType")
-        .and_then(|v| v.as_str())
-        .unwrap_or("EQUITY")
-        .to_uppercase();
+        legs.push(ParsedOrderLeg {
+            instruction,
+            symbol,
+            asset_type,
+            quantity,
+        });
+    }
 
     let order_type = order
         .get("orderType")
@@ -206,21 +237,65 @@ pub fn parse_order(order: &Value) -> Result<ParsedOrder> {
         .context("Missing orderType")?
         .to_uppercase();
 
+    let order_strategy_type = order
+        .get("orderStrategyType")
+        .and_then(|v| v.as_str())
+        .map(str::to_uppercase);
+
+    let complex_order_strategy_type = order
+        .get("complexOrderStrategyType")
+        .and_then(|v| v.as_str())
+        .map(str::to_uppercase);
+
     let limit_price = order.get("price").and_then(parse_number);
 
     Ok(ParsedOrder {
-        instruction,
         order_type,
-        symbol,
-        asset_type,
-        quantity,
+        order_strategy_type,
+        complex_order_strategy_type,
         limit_price,
+        legs,
     })
 }
 
+fn is_complex_order(parsed: &ParsedOrder) -> bool {
+    if parsed.legs.len() > 1 {
+        return true;
+    }
+    parsed
+        .complex_order_strategy_type
+        .as_deref()
+        .is_some_and(|s| s != "NONE")
+}
+
+fn underlying_symbol(symbol: &str, asset_type: &str) -> String {
+    if asset_type == "OPTION" {
+        symbol.split_whitespace().next().unwrap_or(symbol).to_string()
+    } else {
+        symbol.to_string()
+    }
+}
+
 pub fn estimate_notional(parsed: &ParsedOrder, preview: Option<&Value>) -> Option<f64> {
+    let net_types = ["NET_DEBIT", "NET_CREDIT", "NET_ZERO"];
+    if net_types.contains(&parsed.order_type.as_str()) {
+        if let Some(price) = parsed.limit_price {
+            let contracts = parsed
+                .legs
+                .iter()
+                .map(|leg| leg.quantity)
+                .fold(0.0_f64, f64::max);
+            return Some(price.abs() * contracts * 100.0);
+        }
+    }
+
     if let Some(price) = parsed.limit_price {
-        return Some(parsed.quantity * price);
+        let total_qty: f64 = parsed.legs.iter().map(|leg| leg.quantity).sum();
+        return Some(total_qty * price);
+    }
+
+    if parsed.order_type == "MARKET" && parsed.legs.len() == 1 {
+        return None;
     }
 
     if let Some(preview) = preview {
@@ -253,15 +328,76 @@ pub fn validate_order(
     preview: Option<&Value>,
     account_equity: Option<f64>,
 ) -> Result<()> {
-    let parsed = parse_order(order)?;
+    validate_order_tree(config, order, preview, account_equity)
+}
+
+fn validate_order_tree(
+    config: &SafetyConfig,
+    order: &Value,
+    preview: Option<&Value>,
+    account_equity: Option<f64>,
+) -> Result<()> {
+    let has_legs = order
+        .get("orderLegCollection")
+        .and_then(|v| v.as_array())
+        .is_some_and(|a| !a.is_empty());
+
+    if has_legs {
+        let parsed = parse_order(order)?;
+        validate_parsed_order(config, &parsed, preview, account_equity)?;
+    }
+
+    let strategy = order
+        .get("orderStrategyType")
+        .and_then(|v| v.as_str())
+        .unwrap_or("SINGLE")
+        .to_uppercase();
+
+    if matches!(strategy.as_str(), "OCO" | "TRIGGER" | "BLAST_ALL")
+        && !config.limits.allow_conditional_orders
+    {
+        anyhow::bail!(
+            "orderStrategyType `{strategy}` requires allow_conditional_orders=true in safety.json"
+        );
+    }
+
+    if let Some(children) = order.get("childOrderStrategies").and_then(|v| v.as_array()) {
+        for child in children {
+            validate_order_tree(config, child, preview, account_equity)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_parsed_order(
+    config: &SafetyConfig,
+    parsed: &ParsedOrder,
+    preview: Option<&Value>,
+    account_equity: Option<f64>,
+) -> Result<()> {
     let limits = &config.limits;
 
-    if !limits.allowed_instructions.contains(&parsed.instruction) {
+    if parsed.legs.len() as u32 > limits.max_legs_per_order {
         anyhow::bail!(
-            "Instruction `{}` is not allowed (allowed: {:?})",
-            parsed.instruction,
-            limits.allowed_instructions
+            "Order has {} legs; max_legs_per_order is {}",
+            parsed.legs.len(),
+            limits.max_legs_per_order
         );
+    }
+
+    if is_complex_order(parsed) && !limits.allow_complex_orders {
+        anyhow::bail!("Multi-leg/complex orders require allow_complex_orders=true in safety.json");
+    }
+
+    if let Some(strategy) = &parsed.complex_order_strategy_type {
+        if !limits.allowed_complex_strategies.is_empty()
+            && !limits.allowed_complex_strategies.contains(strategy)
+        {
+            anyhow::bail!(
+                "complexOrderStrategyType `{strategy}` is not in allowed_complex_strategies"
+            );
+        }
     }
 
     if !limits.allowed_order_types.contains(&parsed.order_type) {
@@ -276,43 +412,53 @@ pub fn validate_order(
         "MARKET" if !limits.allow_market_orders => {
             anyhow::bail!("MARKET orders are disabled in safety.json");
         }
-        "LIMIT" if !limits.allow_limit_orders => {
-            anyhow::bail!("LIMIT orders are disabled in safety.json");
+        "LIMIT" | "NET_DEBIT" | "NET_CREDIT" | "LIMIT_ON_CLOSE" if !limits.allow_limit_orders => {
+            anyhow::bail!("Limit-style orders are disabled in safety.json");
         }
         _ => {}
     }
 
-    if parsed.instruction.contains("SHORT") && !limits.allow_short_sales {
-        anyhow::bail!("Short sales are disabled in safety.json");
+    for leg in &parsed.legs {
+        if !limits.allowed_instructions.contains(&leg.instruction) {
+            anyhow::bail!(
+                "Instruction `{}` is not allowed (allowed: {:?})",
+                leg.instruction,
+                limits.allowed_instructions
+            );
+        }
+
+        if leg.instruction.contains("SHORT") && !limits.allow_short_sales {
+            anyhow::bail!("Short sales are disabled in safety.json");
+        }
+
+        if leg.asset_type != "EQUITY" && !limits.allow_option_orders {
+            anyhow::bail!(
+                "Asset type `{}` is not allowed (allow_option_orders=false)",
+                leg.asset_type
+            );
+        }
+
+        let check_symbol = underlying_symbol(&leg.symbol, &leg.asset_type);
+        if limits.blocked_symbols.contains(&check_symbol) {
+            anyhow::bail!("Symbol `{check_symbol}` is blocked in safety.json");
+        }
+
+        if !limits.allowed_symbols.is_empty() && !limits.allowed_symbols.contains(&check_symbol) {
+            anyhow::bail!(
+                "Symbol `{check_symbol}` is not in the allowed_symbols whitelist"
+            );
+        }
+
+        if leg.quantity > limits.max_shares_per_order {
+            anyhow::bail!(
+                "Leg quantity {} exceeds max_shares_per_order ({})",
+                leg.quantity,
+                limits.max_shares_per_order
+            );
+        }
     }
 
-    if parsed.asset_type != "EQUITY" && !limits.allow_option_orders {
-        anyhow::bail!(
-            "Asset type `{}` is not allowed (allow_option_orders=false)",
-            parsed.asset_type
-        );
-    }
-
-    if limits.blocked_symbols.contains(&parsed.symbol) {
-        anyhow::bail!("Symbol `{}` is blocked in safety.json", parsed.symbol);
-    }
-
-    if !limits.allowed_symbols.is_empty() && !limits.allowed_symbols.contains(&parsed.symbol) {
-        anyhow::bail!(
-            "Symbol `{}` is not in the allowed_symbols whitelist",
-            parsed.symbol
-        );
-    }
-
-    if parsed.quantity > limits.max_shares_per_order {
-        anyhow::bail!(
-            "Quantity {} exceeds max_shares_per_order ({})",
-            parsed.quantity,
-            limits.max_shares_per_order
-        );
-    }
-
-    if let Some(notional) = estimate_notional(&parsed, preview) {
+    if let Some(notional) = estimate_notional(parsed, preview) {
         if notional > limits.max_trade_value_usd {
             anyhow::bail!(
                 "Estimated order value ${notional:.2} exceeds max_trade_value_usd ({})",
@@ -333,9 +479,11 @@ pub fn validate_order(
                 }
             }
         }
-    } else if limits.max_trade_value_usd > 0.0 || limits.max_trade_pct_of_equity > 0.0 {
+    } else if (limits.max_trade_value_usd > 0.0 || limits.max_trade_pct_of_equity > 0.0)
+        && parsed.order_type != "MARKET"
+    {
         anyhow::bail!(
-            "Could not estimate order notional; provide a limit price or preview data"
+            "Could not estimate order notional; provide a limit/net price or preview data"
         );
     }
 
@@ -424,5 +572,63 @@ mod tests {
         });
         let err = validate_order(&cfg, &order, None, None).unwrap_err();
         assert!(err.to_string().contains("max_trade_value_usd"));
+    }
+
+    #[test]
+    fn blocks_multi_leg_without_complex_flag() {
+        let mut cfg = SafetyConfig::default();
+        cfg.limits.allow_option_orders = true;
+        cfg.limits.allowed_instructions = vec![
+            "BUY_TO_OPEN".into(),
+            "SELL_TO_OPEN".into(),
+        ];
+        cfg.limits.allowed_order_types = vec!["NET_DEBIT".into()];
+        let order = json!({
+            "orderType": "NET_DEBIT",
+            "price": "0.10",
+            "orderLegCollection": [
+                {
+                    "instruction": "BUY_TO_OPEN",
+                    "quantity": 2,
+                    "instrument": { "symbol": "XYZ   240315P00045000", "assetType": "OPTION" }
+                },
+                {
+                    "instruction": "SELL_TO_OPEN",
+                    "quantity": 2,
+                    "instrument": { "symbol": "XYZ   240315P00043000", "assetType": "OPTION" }
+                }
+            ]
+        });
+        let err = validate_order(&cfg, &order, None, None).unwrap_err();
+        assert!(err.to_string().contains("allow_complex_orders"));
+    }
+
+    #[test]
+    fn allows_vertical_spread_when_enabled() {
+        let mut cfg = SafetyConfig::default();
+        cfg.limits.allow_option_orders = true;
+        cfg.limits.allow_complex_orders = true;
+        cfg.limits.allowed_instructions = vec![
+            "BUY_TO_OPEN".into(),
+            "SELL_TO_OPEN".into(),
+        ];
+        cfg.limits.allowed_order_types = vec!["NET_DEBIT".into()];
+        let order = json!({
+            "orderType": "NET_DEBIT",
+            "price": "0.10",
+            "orderLegCollection": [
+                {
+                    "instruction": "BUY_TO_OPEN",
+                    "quantity": 2,
+                    "instrument": { "symbol": "XYZ   240315P00045000", "assetType": "OPTION" }
+                },
+                {
+                    "instruction": "SELL_TO_OPEN",
+                    "quantity": 2,
+                    "instrument": { "symbol": "XYZ   240315P00043000", "assetType": "OPTION" }
+                }
+            ]
+        });
+        validate_order(&cfg, &order, None, None).unwrap();
     }
 }

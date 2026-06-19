@@ -1688,6 +1688,7 @@ dependencies = [
  "rcgen",
  "rustls",
  "schwab-api",
+ "schwab-market-data",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -1699,6 +1700,16 @@ dependencies = [
  "url",
  "urlencoding",
  "webbrowser",
+]
+
+[[package]]
+name = "schwab-market-data"
+version = "0.1.0"
+dependencies = [
+ "schwab-api",
+ "serde_json",
+ "tokio",
+ "urlencoding",
 ]
 
 [[package]]

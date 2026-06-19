@@ -14,8 +14,12 @@
     "allow_limit_orders": true,
     "allow_short_sales": false,
     "allow_option_orders": false,
+    "allow_complex_orders": false,
+    "allow_conditional_orders": false,
+    "max_legs_per_order": 4,
+    "allowed_complex_strategies": [],
     "allowed_instructions": ["BUY", "SELL"],
-    "allowed_order_types": ["MARKET", "LIMIT"],
+    "allowed_order_types": ["MARKET", "LIMIT", "NET_DEBIT", "NET_CREDIT", "STOP", "STOP_LIMIT", "TRAILING_STOP"],
     "allowed_symbols": [],
     "blocked_symbols": [],
     "max_trade_pct_of_equity": 10.0

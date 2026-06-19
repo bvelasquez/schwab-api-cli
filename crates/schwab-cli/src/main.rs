@@ -6,9 +6,11 @@ mod config;
 mod env_schema;
 mod human;
 mod instructions;
+mod market_info;
 mod mode;
 mod output;
 mod order_builder;
+mod order_schema;
 mod order_status;
 mod portfolio;
 mod plan;
@@ -60,6 +62,7 @@ async fn run() -> Result<()> {
         Some(Commands::Trade { command }) => commands::trading::run_trade(&runtime, command).await,
         Some(Commands::Safety { command }) => commands::trading::run_safety(&runtime, command).await,
         Some(Commands::Plan { command }) => commands::plan::run(&runtime, command).await,
+        Some(Commands::Market { command }) => commands::market::run(&runtime, command).await,
         None => {
             print_top_level_help(&runtime);
             Ok(())

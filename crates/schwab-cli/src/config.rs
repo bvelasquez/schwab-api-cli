@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use schwab_api::{ClientConfig, SchwabClient, TraderApi};
+use schwab_market_data::MarketDataApi;
 
 use crate::cli::Cli;
 use crate::mode::CliMode;
@@ -55,5 +56,11 @@ impl RuntimeConfig {
         let config = ClientConfig::from_env().context("Failed to load Schwab client config")?;
         let client = SchwabClient::new(config);
         Ok(Arc::new(TraderApi::new(client)))
+    }
+
+    pub fn build_market_api(&self) -> Result<Arc<MarketDataApi>> {
+        let config = ClientConfig::from_env().context("Failed to load Schwab client config")?;
+        let client = SchwabClient::new(config);
+        Ok(Arc::new(MarketDataApi::new(client)))
     }
 }
