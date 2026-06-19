@@ -1,0 +1,75 @@
+version: 1
+plan_id: example-sgov-to-jpst-rebalance
+title: "Example partial SGOV → JPST rotation"
+account_hash: "<YOUR_ACCOUNT_HASH_FROM_schwab_accounts_numbers>"
+account_label: "Example brokerage account"
+created_at: "2026-06-19T00:00:00Z"
+author: "llm-agent"
+rationale: |
+  Example plan: rotate ~40 SGOV shares into JPST for modest yield uplift while
+  keeping a SGOV cash anchor. Split into batches that fit safety.json limits.
+
+  Before running: replace account_hash, refresh limit prices, run plan validate.
+
+assumptions:
+  notes: |
+    Limit prices are placeholders — update from current quotes before live run.
+  limit_prices:
+    SGOV: 100.55
+    JPST: 50.50
+
+execution:
+  stop_on_error: true
+  pause_seconds_between_steps: 3
+  wait_for_fill: true
+  fill_timeout_seconds: 3600
+  poll_interval_seconds: 10
+
+steps:
+  - id: step-01-sell-sgov-1
+    side: sell
+    symbol: SGOV
+    quantity: 14
+    order_type: limit
+    limit_price: 100.55
+    note: "Sell batch 1/3"
+
+  - id: step-02-sell-sgov-2
+    side: sell
+    symbol: SGOV
+    quantity: 14
+    order_type: limit
+    limit_price: 100.55
+    note: "Sell batch 2/3"
+
+  - id: step-03-sell-sgov-3
+    side: sell
+    symbol: SGOV
+    quantity: 12
+    order_type: limit
+    limit_price: 100.55
+    note: "Sell batch 3/3 — total 40 shares"
+
+  - id: step-04-buy-jpst-1
+    side: buy
+    symbol: JPST
+    quantity: 28
+    order_type: limit
+    limit_price: 50.50
+    note: "Buy batch 1/3"
+
+  - id: step-05-buy-jpst-2
+    side: buy
+    symbol: JPST
+    quantity: 28
+    order_type: limit
+    limit_price: 50.50
+    note: "Buy batch 2/3"
+
+  - id: step-06-buy-jpst-3
+    side: buy
+    symbol: JPST
+    quantity: 23
+    order_type: limit
+    limit_price: 50.50
+    note: "Buy batch 3/3 — total 79 shares"

@@ -1,0 +1,28 @@
+# Dependencies
+/target/
+
+# Secrets and local config — NEVER commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+tokens.json
+**/tokens.json
+.schwabinvestbot/
+safety.json
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs and temp
+*.log
+*.rs.bk
+
+# Plan runtime state (future)
+plans/*.state.json
