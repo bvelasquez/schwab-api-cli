@@ -57,6 +57,7 @@ pub fn instructions_json(safety: &SafetyConfig) -> Value {
             "schwab market info SGOV --json",
             "schwab market hours --markets equity --json",
             "schwab portfolio summary --json",
+            "schwab portfolio buying-power --account-number <hash> --json",
             "schwab accounts numbers --json",
             "schwab orders list <hash> --json"
         ],
@@ -83,12 +84,23 @@ pub fn instructions_json(safety: &SafetyConfig) -> Value {
             "instrument_projections": ["symbol-search", "fundamental", "search", "desc-search"]
         },
         "recommended_trade_path": [
+            "schwab portfolio buying-power --account-number <hash> --json",
+            "schwab market quotes --symbols <SYMBOL> --fields quote --json",
             "schwab orders schema --json",
             "schwab safety show --json",
             "schwab orders validate --order '<json>' --json",
             "schwab orders preview --account-number <hash> --order '<json>' --json",
             "schwab orders place --account-number <hash> --order '<json>' --trust --yes --json"
         ],
+        "buying_power": {
+            "rule": "Before any BUY, check cashAvailableForTrading via `schwab portfolio buying-power --account-number <hash> --json`",
+            "cli_enforcement": "trade buy and orders place reject buys when estimated cost exceeds available cash",
+            "funding_sequence": [
+                "If buying power is insufficient, sell source holdings first",
+                "Wait for sell fill: `schwab orders wait <hash> <order_id> --until filled --json`",
+                "Re-check buying power, then place the buy"
+            ]
+        },
         "orders": {
             "schema": "schwab orders schema --json",
             "validate": "schwab orders validate --order '<json>' --json",

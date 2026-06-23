@@ -5,6 +5,7 @@ fn capabilities_has_trader_commands() {
     let cmds = capabilities::all_commands();
     assert!(cmds.iter().any(|c| c.path == "accounts numbers"));
     assert!(cmds.iter().any(|c| c.path == "portfolio summary"));
+    assert!(cmds.iter().any(|c| c.path == "portfolio buying-power"));
     assert!(cmds.iter().any(|c| c.path == "market info"));
     assert!(cmds.iter().any(|c| c.path == "market quotes"));
     assert!(cmds.iter().any(|c| c.path == "market hours"));

@@ -1,6 +1,8 @@
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use schwab_api::models::account::Account;
 use serde_json::{json, Value};
+
+use crate::safety_config::{estimate_notional, parse_order, ParsedOrder};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PortfolioSummary {
@@ -140,15 +142,147 @@ pub fn summarize_accounts(accounts: &[Account]) -> PortfolioSummary {
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BuyingPower {
+    pub cash_available_for_trading: f64,
+    pub cash_balance: f64,
+    pub liquidation_value: Option<f64>,
+}
+
 pub async fn account_equity(api: &schwab_api::TraderApi, account_hash: &str) -> Result<Option<f64>> {
-    let account = api
-        .accounts()
-        .get(account_hash, Some("positions"))
-        .await?;
-    Ok(account
+    let buying_power = account_buying_power(api, account_hash).await?;
+    Ok(buying_power.liquidation_value)
+}
+
+pub async fn account_buying_power(
+    api: &schwab_api::TraderApi,
+    account_hash: &str,
+) -> Result<BuyingPower> {
+    let account = api.accounts().get(account_hash, None).await?;
+    let sa = account
         .securities_account
         .as_ref()
-        .and_then(|sa| extract_equity(sa.current_balances.as_ref())))
+        .context("Account has no securitiesAccount payload")?;
+
+    Ok(extract_buying_power(
+        sa.current_balances.as_ref(),
+        sa.projected_balances.as_ref(),
+    ))
+}
+
+pub fn extract_buying_power(
+    current: Option<&Value>,
+    projected: Option<&Value>,
+) -> BuyingPower {
+    // Cash accounts expose cashAvailableForTrading; margin accounts use buyingPower /
+    // availableFunds instead. Try each in order so both account types work correctly.
+    let cash_available_for_trading = extract_balance_field(current, "cashAvailableForTrading")
+        .or_else(|| extract_balance_field(projected, "cashAvailableForTrading"))
+        .or_else(|| extract_balance_field(current, "buyingPower"))
+        .or_else(|| extract_balance_field(current, "availableFunds"))
+        .or_else(|| extract_balance_field(projected, "buyingPower"))
+        .or_else(|| extract_balance_field(projected, "availableFunds"))
+        .unwrap_or(0.0);
+    let cash_balance = extract_balance_field(current, "cashBalance")
+        .or_else(|| extract_balance_field(current, "totalCash"))
+        .unwrap_or(0.0);
+    let liquidation_value = extract_balance_field(current, "liquidationValue")
+        .or_else(|| extract_equity(current));
+
+    BuyingPower {
+        cash_available_for_trading,
+        cash_balance,
+        liquidation_value,
+    }
+}
+
+pub fn estimate_equity_buy_cost(
+    quantity: f64,
+    order_type: &str,
+    limit_price: Option<f64>,
+    market_ask: Option<f64>,
+) -> Result<f64> {
+    let order_type = order_type.to_uppercase();
+    match order_type.as_str() {
+        "LIMIT" | "STOP_LIMIT" | "LIMIT_ON_CLOSE" => {
+            let price = limit_price.context("limit price required to estimate buy cost")?;
+            Ok(quantity * price)
+        }
+        "MARKET" => {
+            let ask = market_ask.context(
+                "market ask price required to estimate buy cost for MARKET orders",
+            )?;
+            Ok(quantity * ask)
+        }
+        other => bail!("Cannot estimate buy cost for order type `{other}`"),
+    }
+}
+
+pub fn order_requires_buying_power(parsed: &ParsedOrder) -> bool {
+    parsed.legs.iter().any(|leg| {
+        leg.asset_type == "EQUITY" && leg.instruction == "BUY"
+    })
+}
+
+pub fn ensure_sufficient_buying_power(
+    buying_power: &BuyingPower,
+    estimated_cost: f64,
+) -> Result<()> {
+    let available = buying_power.cash_available_for_trading;
+    if estimated_cost > available {
+        let shortfall = estimated_cost - available;
+        bail!(
+            "Insufficient buying power: need ${estimated_cost:.2}, available ${available:.2} \
+             (shortfall ${shortfall:.2}). Sell holdings or wait for a prior sell to fill and \
+             settle before placing buys. Check with `schwab portfolio buying-power --account-number <hash> --json`."
+        );
+    }
+    Ok(())
+}
+
+pub async fn validate_buying_power_for_order(
+    api: &schwab_api::TraderApi,
+    account_hash: &str,
+    order: &Value,
+    market_ask: Option<f64>,
+) -> Result<BuyingPower> {
+    let parsed = parse_order(order)?;
+    if !order_requires_buying_power(&parsed) {
+        return account_buying_power(api, account_hash).await;
+    }
+
+    let buying_power = account_buying_power(api, account_hash).await?;
+    if let Some(cost) = estimate_notional(&parsed, None).or_else(|| {
+        parsed.legs.iter().find_map(|leg| {
+            if leg.instruction != "BUY" || leg.asset_type != "EQUITY" {
+                return None;
+            }
+            let price = parsed.limit_price.or(market_ask)?;
+            Some(leg.quantity * price)
+        })
+    }) {
+        ensure_sufficient_buying_power(&buying_power, cost)?;
+    }
+
+    Ok(buying_power)
+}
+
+pub async fn validate_buying_power_after_preview(
+    api: &schwab_api::TraderApi,
+    account_hash: &str,
+    order: &Value,
+    preview: &Value,
+) -> Result<()> {
+    let parsed = parse_order(order)?;
+    if !order_requires_buying_power(&parsed) {
+        return Ok(());
+    }
+
+    let buying_power = account_buying_power(api, account_hash).await?;
+    if let Some(cost) = estimate_notional(&parsed, Some(preview)) {
+        ensure_sufficient_buying_power(&buying_power, cost)?;
+    }
+    Ok(())
 }
 
 pub fn summary_to_json(summary: &PortfolioSummary) -> Value {
@@ -163,6 +297,10 @@ fn extract_equity(balances: Option<&Value>) -> Option<f64> {
         }
     }
     None
+}
+
+fn extract_balance_field(balances: Option<&Value>, key: &str) -> Option<f64> {
+    balances?.get(key).and_then(parse_num)
 }
 
 fn parse_num(v: &Value) -> Option<f64> {
@@ -231,5 +369,34 @@ mod tests {
         let summary = summarize_accounts(&accounts);
         assert_eq!(summary.total_equity, 5000.0);
         assert_eq!(summary.aggregated_holdings[0].symbol, "AAPL");
+    }
+
+    #[test]
+    fn extracts_buying_power() {
+        let current = json!({
+            "cashAvailableForTrading": 78.96,
+            "cashBalance": 78.96,
+            "liquidationValue": 28413.79
+        });
+        let power = extract_buying_power(Some(&current), None);
+        assert_eq!(power.cash_available_for_trading, 78.96);
+        assert_eq!(power.liquidation_value, Some(28413.79));
+    }
+
+    #[test]
+    fn blocks_buy_with_insufficient_funds() {
+        let power = BuyingPower {
+            cash_available_for_trading: 78.96,
+            cash_balance: 78.96,
+            liquidation_value: Some(28413.79),
+        };
+        let err = ensure_sufficient_buying_power(&power, 253.25).unwrap_err();
+        assert!(err.to_string().contains("Insufficient buying power"));
+    }
+
+    #[test]
+    fn estimates_limit_buy_cost() {
+        let cost = estimate_equity_buy_cost(5.0, "limit", Some(50.65), None).unwrap();
+        assert!((cost - 253.25).abs() < 0.01);
     }
 }
