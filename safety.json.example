@@ -4,7 +4,10 @@
     "Always run `schwab portfolio summary --json` before rebalancing.",
     "Preview every order before placement unless using --dry-run.",
     "Respect safety.json limits; the CLI rejects orders that exceed them.",
-    "Never pass --trust unless the user explicitly requests autonomous trading."
+    "Never pass --trust unless the user explicitly requests autonomous trading.",
+    "For options: prefer defined-risk spreads (vertical, iron condor). Preview max loss before placing.",
+    "For options: use LIMIT or NET_DEBIT/NET_CREDIT; avoid MARKET on multi-leg orders.",
+    "Close positions with BUY_TO_CLOSE / SELL_TO_CLOSE; do not leave orphan legs."
   ],
   "require_preview_before_place": true,
   "limits": {

@@ -1,0 +1,103 @@
+version: 1
+agent_id: options-pilot-9947
+
+accounts:
+  - hash: 1BA372D01BE13B486750C8433AFDCFB96C2A694770C4688417F0BEA6B676B25B
+    label: Beneficiary account ending 9947
+    type: margin
+    enabled: true
+
+schedule:
+  tick_interval_seconds: 120
+  market_hours_only: true
+  timezone: America/New_York
+
+strategies:
+  vertical:
+    enabled: true
+  iron_condor:
+    enabled: false
+
+watchlist:
+  - SPY
+  - IWM
+
+entry_rules:
+  vertical:
+    type: put_credit
+    dte_min: 30
+    dte_max: 45
+    min_credit: 0.25
+    max_width: 2
+    short_delta_min: 0.15
+    short_delta_max: 0.30
+    max_open_positions: 2
+    max_contracts_per_trade: 1
+  iron_condor:
+    dte_min: 30
+    dte_max: 45
+    min_credit: 1.00
+    wing_width: 2
+    short_delta: 0.16
+    max_open_positions: 0
+    max_contracts_per_trade: 1
+
+exit_rules:
+  profit_target_pct: 50
+  stop_loss_pct: 200
+  dte_close: 21
+
+risk:
+  max_portfolio_risk_usd: 500
+  max_risk_per_trade_usd: 250
+  max_trades_per_day: 1
+  allowed_underlyings:
+    - SPY
+    - IWM
+  blocked_events: []
+
+execution:
+  order_type: limit
+  require_preview: true
+  wait_for_fill: true
+  fill_timeout_seconds: 300
+
+# LLM advisor (OpenRouter). Set OPENROUTER_API_KEY in .env
+llm:
+  enabled: true
+  selection_model: anthropic/claude-3.5-sonnet
+  monitor_model: google/gemini-2.5-flash
+  web_model: perplexity/sonar
+  review_every_ticks: 5
+  web_research_every_reviews: 3
+  max_tokens: 2000
+  veto_entries: true
+  allow_llm_exits: false
+  prompts:
+    selection: |
+      You are a conservative income options advisor for a designated-beneficiary account.
+      Only approve put credit verticals on SPY/IWM when premium is adequate for risk,
+      IV is not elevated into a catalyst, and the setup fits a slow income thesis.
+      Default to defer when uncertain — max one new trade per day.
+    selection_web: |
+      You are a conservative income options advisor. Research current macro events,
+      FOMC/CPI calendar, and near-term earnings on SPY/IWM holdings. Defer entries
+      if a major catalyst falls inside the trade window. Prefer calm IV regimes.
+    selection_context: |
+      Pilot: account 9947 (~$3.5k options sleeve). Goal: defined-risk premium income,
+      not speculation. Strategies: $2-wide put credit verticals, 30-45 DTE, 50% profit /
+      2x credit stop / 21 DTE management. Do not recommend aggressive sizing.
+    monitor: |
+      You monitor open credit spreads for developing risk. Mechanical exits already
+      run every tick at 50% profit, 2x credit stop, and 21 DTE — focus on qualitative
+      risks (gap risk, event surprises, liquidity). Recommend hold unless thesis broke.
+    monitor_context: |
+      Same conservative income pilot on 9947. Flag anything that would justify early
+      exit before mechanical rules, but do not chase marginal gains.
+
+# Telegram notifications. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env
+notify:
+  telegram:
+    enabled: true
+    notify_every_tick: false
+    notify_on_actions: true

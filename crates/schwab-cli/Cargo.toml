@@ -37,7 +37,9 @@ urlencoding = "2"
 rcgen.workspace = true
 rustls.workspace = true
 tokio-rustls.workspace = true
+reqwest.workspace = true
 webbrowser = "1"
+libc = "0.2"
 
 [dev-dependencies]
 assert_cmd = "2"

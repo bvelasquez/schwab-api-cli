@@ -1,3 +1,4 @@
+mod agent;
 mod auth_callback;
 mod capabilities;
 mod cli;
@@ -8,12 +9,15 @@ mod human;
 mod instructions;
 mod market_info;
 mod mode;
+mod notify;
+mod options;
 mod output;
 mod order_builder;
 mod order_schema;
 mod order_status;
 mod portfolio;
 mod plan;
+mod rules;
 mod safety;
 mod safety_config;
 mod tls;
@@ -63,6 +67,8 @@ async fn run() -> Result<()> {
         Some(Commands::Safety { command }) => commands::trading::run_safety(&runtime, command).await,
         Some(Commands::Plan { command }) => commands::plan::run(&runtime, command).await,
         Some(Commands::Market { command }) => commands::market::run(&runtime, command).await,
+        Some(Commands::Options { command }) => commands::options::run(&runtime, command).await,
+        Some(Commands::Agent { command }) => commands::agent::run(&runtime, command).await,
         None => {
             print_top_level_help(&runtime);
             Ok(())

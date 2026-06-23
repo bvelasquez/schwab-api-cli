@@ -1,0 +1,151 @@
+# Monthly put-income strategy (from "Selling Puts for Monthly Income")
+#
+# PDF mapping:
+#   - Core idea: sell puts for premium, profit if price stays above strike
+#   - Risk control: PUT CREDIT SPREADS (not naked puts) — pages 30-31
+#   - Entry: ~30 DTE, short strike ~5% below spot (approximated via delta band)
+#   - Exit: close early at ~50% of max profit (page 8); don't always hold to expiration
+#   - Timing: prefer elevated IV; avoid entries after large rallies (LLM + web)
+#
+# Engine limits (not in rules yet): naked CSP, IV/VIX filters, auto-roll at expiry.
+# Run: schwab agent validate rules/options-monthly-income.yaml --json
+# Dry: schwab agent run rules/options-monthly-income.yaml --dry-run --once --json
+
+version: 1
+agent_id: options-monthly-income
+
+accounts:
+  - hash: 1BA372D01BE13B486750C8433AFDCFB96C2A694770C4688417F0BEA6B676B25B
+    label: Beneficiary account ending 9947
+    type: margin
+    enabled: true
+
+schedule:
+  tick_interval_seconds: 120
+  market_hours_only: true
+  timezone: America/New_York
+
+strategies:
+  vertical:
+    enabled: true
+  iron_condor:
+    enabled: false
+
+# Liquid index ETFs — PDF used AMZN; add single names only if safety.json allows
+watchlist:
+  - SPY
+  - QQQ
+  - IWM
+
+entry_rules:
+  vertical:
+    type: put_credit
+    # PDF: monthly standard cycle ~30 DTE (AMZN study rolled each monthly expiry)
+    dte_min: 28
+    dte_max: 38
+    # Minimum premium per share; raise if fills are too cheap
+    min_credit: 0.35
+    # Defined risk per PDF (spread vs naked). $5 wide on ETFs; tighten to 2 for smaller account
+    max_width: 5
+    # ~5% OTM at 30 DTE is roughly 0.12–0.22 delta (engine uses delta, not % OTM yet)
+    short_delta_min: 0.10
+    short_delta_max: 0.22
+    max_open_positions: 2
+    max_contracts_per_trade: 1
+  iron_condor:
+    dte_min: 30
+    dte_max: 45
+    min_credit: 1.00
+    wing_width: 5
+    short_delta: 0.16
+    max_open_positions: 0
+    max_contracts_per_trade: 1
+
+exit_rules:
+  # PDF page 8: closed at ~71% of max profit in 2 weeks — 50% is the standard rule
+  profit_target_pct: 50
+  # 2x credit collected = cut the loser
+  stop_loss_pct: 200
+  # Close before gamma picks up in final month (complements early profit-taking)
+  dte_close: 21
+
+risk:
+  max_portfolio_risk_usd: 1500
+  max_risk_per_trade_usd: 500
+  max_trades_per_day: 1
+  allowed_underlyings:
+    - SPY
+    - QQQ
+    - IWM
+  blocked_events: []
+
+execution:
+  order_type: limit
+  require_preview: true
+  wait_for_fill: true
+  fill_timeout_seconds: 300
+
+llm:
+  enabled: true
+  selection_model: anthropic/claude-3.5-sonnet
+  monitor_model: google/gemini-2.5-flash
+  web_model: perplexity/sonar
+  review_every_ticks: 5
+  web_research_every_reviews: 2
+  max_tokens: 2500
+  veto_entries: true
+  allow_llm_exits: false
+  prompts:
+    selection: |
+      You are an options income specialist following the "Selling Puts for Monthly Income"
+      framework. This agent trades PUT CREDIT SPREADS only — never recommend naked short puts.
+
+      Entry quality (approve proceed only when):
+      - Short strike is comfortably OTM (~5% below spot equivalent at ~30 DTE)
+      - Premium adequately compensates for width and margin at risk
+      - IV is elevated or at least not crushed (PDF: sell when options are "expensive")
+      - Stock/ETF is NOT extended after a large rally into resistance (PDF: Sept AMZN example)
+
+      Default defer/skip when uncertain. One new position per day max.
+    selection_web: |
+      Same monthly put-income framework (spreads only). Research:
+      - VIX level and recent direction (proxy for market IV)
+      - Upcoming FOMC, CPI, jobs, and mega-cap earnings affecting SPY/QQQ/IWM
+      - Whether the ETF recently had a sharp rally (defer — PDF risk lesson)
+
+      Proceed only if macro and IV support selling put premium this week.
+    selection_context: |
+      Strategy source: Selling Puts for Monthly Income (put credit spreads variant)
+
+      Thesis:
+      - Collect monthly premium from OTM put spreads on liquid index ETFs
+      - Profit when price stays above short strike; defined risk via long put wing
+      - Target ~30 DTE entries; aim to close winners early at 50% profit, not hold to $0
+      - Avoid chasing entries after extended rallies; prefer elevated-IV environments
+
+      Not in automated rules (your judgment):
+      - No naked CSP / assignment strategy
+      - No automatic roll at expiration — rules handle DTE and profit exits mechanically
+
+      Account: 9947 options sleeve. Max 2 open spreads, 1 new trade per day.
+    monitor: |
+      You monitor open put credit spreads for a monthly income program. Mechanical exits
+      already run every tick: 50% profit target, 2x credit stop, 21 DTE close.
+
+      Focus on:
+      - Is the underlying drifting toward the short strike faster than expected?
+      - Any new macro/event risk that appeared after entry?
+      - Should we hold for remaining theta vs. the PDF lesson to take profits early?
+
+      Recommend hold unless the income thesis is clearly broken. Do not duplicate
+      mechanical exit math.
+    monitor_context: |
+      Monthly put-income spreads on SPY/QQQ/IWM. Early profit-taking is a feature, not
+      a failure — the PDF closed winners at ~70% of max profit in two weeks. Flag gap
+      risk and assignment-adjacent danger (short strike breached) even before stop rules.
+
+notify:
+  telegram:
+    enabled: true
+    notify_every_tick: false
+    notify_on_actions: true
