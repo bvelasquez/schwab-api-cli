@@ -3,7 +3,9 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use crate::config::RuntimeConfig;
-use crate::portfolio::account_equity;
+use crate::portfolio::{
+    account_equity, validate_buying_power_after_preview, validate_buying_power_for_order,
+};
 use crate::safety_config::{validate_order, SafetyConfig};
 
 pub fn require_mutation_approval(
@@ -83,6 +85,8 @@ pub async fn execute_trading_order(
     // Static validation before preview (symbol, qty, types)
     runtime.safety.validate_order(order, None, equity)?;
 
+    validate_buying_power_for_order(api, account_number, order, None).await?;
+
     let preview = if runtime.safety.require_preview_before_place {
         Some(api.orders().preview(account_number, order).await?)
     } else {
@@ -93,6 +97,7 @@ pub async fn execute_trading_order(
         runtime
             .safety
             .validate_order(order, Some(preview_data), equity)?;
+        validate_buying_power_after_preview(api, account_number, order, preview_data).await?;
     }
 
     let place = api.orders().place(account_number, order).await?;

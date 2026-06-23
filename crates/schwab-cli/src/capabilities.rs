@@ -89,6 +89,13 @@ pub fn all_commands() -> Vec<CommandSpec> {
             requires_auth: true,
         },
         CommandSpec {
+            path: "portfolio buying-power",
+            description: "Cash available for trading on one account (pre-buy check)",
+            http: Some("GET /accounts/{accountNumber}"),
+            mutation: false,
+            requires_auth: true,
+        },
+        CommandSpec {
             path: "trade buy",
             description: "Buy equity shares with safety guardrails",
             http: Some("POST /accounts/{accountNumber}/orders"),
@@ -313,7 +320,7 @@ pub fn command_tree() -> Value {
         { "group": "meta", "commands": ["capabilities", "env schema", "instructions"] },
         { "group": "auth", "commands": ["login", "status", "refresh", "logout"] },
         { "group": "accounts", "commands": ["numbers", "list", "get"] },
-        { "group": "portfolio", "commands": ["summary"] },
+        { "group": "portfolio", "commands": ["summary", "buying-power"] },
         { "group": "trade", "commands": ["buy", "sell"] },
         { "group": "safety", "commands": ["show", "init", "path"] },
         { "group": "plan", "commands": ["schema", "prompt", "validate", "show", "run"] },

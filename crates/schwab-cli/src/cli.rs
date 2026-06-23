@@ -285,6 +285,12 @@ pub enum UserCommands {
 pub enum PortfolioCommands {
     /// Aggregate positions and equity across all linked accounts
     Summary,
+    /// Cash available for trading on one account (required before buys)
+    BuyingPower {
+        /// Account hash from `schwab accounts numbers`
+        #[arg(long)]
+        account_number: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
