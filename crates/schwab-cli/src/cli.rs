@@ -128,6 +128,18 @@ pub enum Commands {
         #[command(subcommand)]
         command: MarketCommands,
     },
+
+    /// Options chain, positions, and strategy orders (vertical, iron condor)
+    Options {
+        #[command(subcommand)]
+        command: OptionsCommands,
+    },
+
+    /// Long-running options agent driven by rules.yaml
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommands,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -459,6 +471,97 @@ pub enum MarketCommands {
         market: String,
         #[arg(long)]
         date: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum OptionsCommands {
+    /// GET /chains — option chain for an underlying
+    Chain {
+        #[arg(long)]
+        symbol: String,
+        /// CALL | PUT | ALL
+        #[arg(long, name = "type")]
+        contract_type: Option<String>,
+        #[arg(long)]
+        strike_count: Option<u32>,
+        #[arg(long)]
+        from_date: Option<String>,
+        #[arg(long)]
+        to_date: Option<String>,
+    },
+    /// List option positions (grouped into spreads where possible)
+    Positions {
+        #[arg(long)]
+        account_number: Option<String>,
+    },
+    /// Strategy templates and symbology for agents
+    Schema,
+    /// Validate strategy params + safety.json
+    Validate {
+        #[arg(long)]
+        strategy: String,
+        /// JSON string or path to .json/.yaml params file
+        #[arg(long)]
+        params: String,
+        #[arg(long)]
+        account_number: Option<String>,
+        #[arg(long, default_value = "margin")]
+        account_type: Option<String>,
+    },
+    /// Preview strategy order at Schwab
+    Preview {
+        #[arg(long)]
+        account_number: String,
+        #[arg(long)]
+        strategy: String,
+        #[arg(long)]
+        params: String,
+    },
+    /// Open a new options position (vertical or iron_condor)
+    Open {
+        #[arg(long)]
+        account_number: String,
+        #[arg(long)]
+        strategy: String,
+        #[arg(long)]
+        params: String,
+    },
+    /// Close an open spread by position group id
+    Close {
+        #[arg(long)]
+        account_number: String,
+        #[arg(long)]
+        position_id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AgentCommands {
+    /// JSON Schema for rules.yaml
+    Schema,
+    /// Validate rules.yaml structure
+    Validate {
+        file: PathBuf,
+    },
+    /// Show persisted agent state
+    Status {
+        #[arg(long)]
+        rules_file: Option<PathBuf>,
+    },
+    /// Run the options agent loop (requires --trust --yes for live trades)
+    Run {
+        file: PathBuf,
+        /// Execute a single tick then exit
+        #[arg(long)]
+        once: bool,
+        /// Detach as a background daemon (writes agent.pid and agent.log next to rules)
+        #[arg(long)]
+        background: bool,
+    },
+    /// Stop a background agent started with `agent run --background`
+    Stop {
+        file: PathBuf,
     },
 }
 

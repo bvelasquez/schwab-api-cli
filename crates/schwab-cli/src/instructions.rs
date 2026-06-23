@@ -121,6 +121,29 @@ pub fn instructions_json(safety: &SafetyConfig) -> Value {
             "docs": "plans/TRADE_PLAN.md",
             "workflow_summary": llm_prompt().get("workflow")
         },
+        "options_trading": {
+            "schema": "schwab options schema --json",
+            "chain": "schwab options chain --symbol SPY --json",
+            "positions": "schwab options positions --account-number <hash> --json",
+            "strategies_v1": ["vertical", "iron_condor"],
+            "workflow": [
+                "schwab options chain --symbol <UNDERLYING> --json",
+                "schwab options validate --strategy vertical --params '<json>' --json",
+                "schwab options preview --account-number <hash> --strategy vertical --params '<json>' --json",
+                "schwab options open --account-number <hash> --strategy vertical --params '<json>' --trust --yes --json"
+            ],
+            "skill": ".cursor/skills/schwab-options/SKILL.md",
+            "docs": "docs/OPTIONS_RULES.md"
+        },
+        "options_agent": {
+            "rules_schema": "schwab agent schema --json",
+            "validate": "schwab agent validate rules.yaml --json",
+            "dry_run_tick": "schwab agent run rules.yaml --dry-run --once --json",
+            "live_daemon": "schwab agent run rules.yaml --trust --yes",
+            "status": "schwab agent status --rules-file rules.yaml --json",
+            "example_rules": "rules/options-rules.example.yaml",
+            "note": "Agent auto-executes vertical and iron condor entries/exits within safety.json and rules.yaml risk limits"
+        },
         "system_prompt": "You operate the `schwab` CLI against Charles Schwab's Trader API. Discover capabilities before acting. Use JSON output. Authenticate first. Use account hash values for trading. Read schwab safety show --json and obey agent_rules and hard limits. Preview before placement. Never pass --trust unless the user explicitly requests autonomous trading. For live agent trades use --trust --yes together."
     })
 }

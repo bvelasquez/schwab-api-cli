@@ -1,7 +1,9 @@
 pub mod accounts;
+pub mod agent;
 pub mod auth;
 pub mod market;
 pub mod meta;
+pub mod options;
 pub mod orders;
 pub mod plan;
 pub mod trading;

@@ -27,3 +27,10 @@ safety.json
 # Plan runtime state (future)
 plans/*.state.json
 plans/local/
+
+# Options agent runtime state (per rules file)
+rules/agent-state.json
+rules/agent.pid
+
+# Cursor local IDE config
+.cursor/

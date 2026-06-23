@@ -13,4 +13,9 @@ fn capabilities_has_trader_commands() {
     assert!(cmds.iter().any(|c| c.path == "orders schema"));
     assert!(cmds.iter().any(|c| c.path == "orders validate"));
     assert!(cmds.iter().any(|c| c.path == "orders place" && c.mutation));
+    assert!(cmds.iter().any(|c| c.path == "options chain"));
+    assert!(cmds.iter().any(|c| c.path == "options open" && c.mutation));
+    assert!(cmds.iter().any(|c| c.path == "agent run" && c.mutation));
+    assert!(cmds.iter().any(|c| c.path == "agent stop" && c.mutation));
+    assert!(cmds.iter().any(|c| c.path == "agent validate"));
 }

@@ -142,10 +142,11 @@ pub fn summarize_accounts(accounts: &[Account]) -> PortfolioSummary {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BuyingPower {
     pub cash_available_for_trading: f64,
     pub cash_balance: f64,
+    pub option_buying_power: Option<f64>,
     pub liquidation_value: Option<f64>,
 }
 
@@ -183,15 +184,22 @@ pub fn extract_buying_power(
         .or_else(|| extract_balance_field(projected, "buyingPower"))
         .or_else(|| extract_balance_field(projected, "availableFunds"))
         .unwrap_or(0.0);
+    let option_buying_power = extract_balance_field(current, "optionBuyingPower")
+        .or_else(|| extract_balance_field(projected, "optionBuyingPower"));
     let cash_balance = extract_balance_field(current, "cashBalance")
         .or_else(|| extract_balance_field(current, "totalCash"))
         .unwrap_or(0.0);
     let liquidation_value = extract_balance_field(current, "liquidationValue")
         .or_else(|| extract_equity(current));
 
+    let effective_available = option_buying_power
+        .unwrap_or(cash_available_for_trading)
+        .max(cash_available_for_trading);
+
     BuyingPower {
-        cash_available_for_trading,
+        cash_available_for_trading: effective_available,
         cash_balance,
+        option_buying_power,
         liquidation_value,
     }
 }
@@ -219,9 +227,16 @@ pub fn estimate_equity_buy_cost(
 }
 
 pub fn order_requires_buying_power(parsed: &ParsedOrder) -> bool {
-    parsed.legs.iter().any(|leg| {
-        leg.asset_type == "EQUITY" && leg.instruction == "BUY"
-    })
+    if parsed.legs.iter().any(|leg| leg.asset_type == "EQUITY" && leg.instruction == "BUY") {
+        return true;
+    }
+    if parsed.legs.iter().any(|leg| leg.asset_type == "OPTION") {
+        return matches!(
+            parsed.order_type.as_str(),
+            "NET_DEBIT" | "LIMIT" | "MARKET"
+        );
+    }
+    false
 }
 
 pub fn ensure_sufficient_buying_power(
@@ -388,6 +403,7 @@ mod tests {
         let power = BuyingPower {
             cash_available_for_trading: 78.96,
             cash_balance: 78.96,
+            option_buying_power: None,
             liquidation_value: Some(28413.79),
         };
         let err = ensure_sufficient_buying_power(&power, 253.25).unwrap_err();

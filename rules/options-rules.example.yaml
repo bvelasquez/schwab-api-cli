@@ -1,0 +1,94 @@
+version: 1
+agent_id: spy-income-v1
+
+accounts:
+  - hash: "<hash-from-schwab-accounts-numbers>"
+    label: "Margin account"
+    type: margin
+    enabled: true
+  - hash: "<ira-hash>"
+    label: "IRA"
+    type: ira
+    enabled: false
+
+schedule:
+  tick_interval_seconds: 60
+  market_hours_only: true
+  timezone: America/New_York
+
+strategies:
+  vertical:
+    enabled: true
+  iron_condor:
+    enabled: true
+
+watchlist:
+  - SPY
+  - QQQ
+  - IWM
+
+entry_rules:
+  vertical:
+    type: put_credit
+    dte_min: 30
+    dte_max: 45
+    min_credit: 0.50
+    max_width: 5
+    short_delta_min: 0.15
+    short_delta_max: 0.30
+    max_open_positions: 3
+    max_contracts_per_trade: 2
+  iron_condor:
+    dte_min: 30
+    dte_max: 45
+    min_credit: 1.00
+    wing_width: 5
+    short_delta: 0.16
+    max_open_positions: 2
+    max_contracts_per_trade: 1
+
+exit_rules:
+  profit_target_pct: 50
+  stop_loss_pct: 200
+  dte_close: 21
+
+risk:
+  max_portfolio_risk_usd: 10000
+  max_risk_per_trade_usd: 2000
+  max_trades_per_day: 3
+  allowed_underlyings:
+    - SPY
+    - QQQ
+    - IWM
+  blocked_events: []
+
+execution:
+  order_type: limit
+  require_preview: true
+  wait_for_fill: true
+  fill_timeout_seconds: 300
+
+llm:
+  enabled: false
+  selection_model: anthropic/claude-3.5-sonnet
+  monitor_model: google/gemini-2.5-flash
+  web_model: perplexity/sonar
+  review_every_ticks: 5
+  web_research_every_reviews: 3
+  max_tokens: 2000
+  veto_entries: true
+  allow_llm_exits: false
+  prompts:
+    # Override per strategy file. Omit fields to use built-in defaults.
+    # selection: |
+    #   Aggressive speculative premium seller — favor high credit, accept higher delta...
+    # selection_context: |
+    #   Speculative sleeve: willing to trade 7-14 DTE, 0.35+ delta, earnings plays OK...
+    # monitor: |
+    #   Tight risk manager for short-dated speculative positions...
+
+notify:
+  telegram:
+    enabled: false
+    notify_every_tick: false
+    notify_on_actions: true

@@ -62,6 +62,27 @@ pub fn env_schema_json() -> Value {
                 "aliases": [],
                 "required": false,
                 "description": "Disable ANSI colors in pretty output"
+            },
+            {
+                "name": "OPENROUTER_API_KEY",
+                "aliases": [],
+                "required": false,
+                "secret": true,
+                "description": "OpenRouter API key for LLM-powered agent reviews (when llm.enabled in rules.yaml)"
+            },
+            {
+                "name": "TELEGRAM_BOT_TOKEN",
+                "aliases": [],
+                "required": false,
+                "secret": true,
+                "description": "Telegram bot token from @BotFather (when notify.telegram.enabled in rules.yaml)"
+            },
+            {
+                "name": "TELEGRAM_CHAT_ID",
+                "aliases": [],
+                "required": false,
+                "secret": true,
+                "description": "Telegram chat ID for agent notifications"
             }
         ]
     })
