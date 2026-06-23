@@ -1,0 +1,119 @@
+# Options agent rules (`rules.yaml`)
+
+The options agent is a long-running process that reads `rules.yaml`, evaluates entry/exit
+conditions on a schedule, and auto-executes **vertical spreads** and **iron condors** within
+`safety.json` hard limits. An optional **OpenRouter LLM advisor** reviews positions periodically
+and can veto new entries; **Telegram** can push trade and alert notifications.
+
+## Two-layer safety model
+
+| Layer | File | Purpose |
+|-------|------|---------|
+| Hard ceiling | `safety.json` | CLI rejects any order exceeding limits |
+| Strategy brain | `rules.yaml` | What to trade, when, how much |
+| LLM advisor | `rules.yaml` → `llm` | Periodic expert review (optional) |
+
+## Quick start
+
+```bash
+# 1. Enable options in safety.json (see safety.json.example)
+schwab safety show --json
+
+# 2. Set API keys in .env (for LLM / Telegram when enabled)
+# OPENROUTER_API_KEY=...
+# TELEGRAM_BOT_TOKEN=...
+# TELEGRAM_CHAT_ID=...
+
+# 3. Validate rules
+schwab agent validate rules/options-rules.example.yaml --json
+
+# 4. Dry-run one agent tick (no orders)
+schwab agent run rules/options-rules.example.yaml --dry-run --once --json
+
+# 5. Foreground daemon (requires --trust --yes for live trades)
+schwab agent run rules/options-rules.example.yaml --trust --yes --json
+
+# 6. Background daemon (pid + log next to rules file)
+schwab agent run rules/options-rules.example.yaml --background --trust --yes --json
+schwab agent stop rules/options-rules.example.yaml --json
+```
+
+## Exit rules (automatic)
+
+| Rule | Default | Behavior |
+|------|---------|----------|
+| `profit_target_pct` | 50 | Close when captured ≥50% of entry credit |
+| `stop_loss_pct` | 200 | Close when debit to close ≥ 2× entry credit |
+| `dte_close` | 21 | Close when DTE ≤ 21 regardless |
+
+Exits run **before** entry scans each tick. Marks come from live option chain quotes.
+
+## LLM advisor (two-model)
+
+When `llm.enabled: true`, the agent picks the model by phase:
+
+| Phase | When | Model (`rules.yaml`) |
+|-------|------|----------------------|
+| **Selection** | Rules produced `candidate_entries` | `llm.selection_model` (default: `anthropic/claude-3.5-sonnet`) |
+| **Monitor** | Open positions, every `review_every_ticks` | `llm.monitor_model` (default: `google/gemini-2.5-flash`) |
+| **Web** | Every `web_research_every_reviews` selection reviews | `llm.web_model` (default: `perplexity/sonar`) |
+
+**Skipped when flat** — no open positions and no candidate entries (no LLM call).
+
+Mechanical profit/stop/DTE exits run every tick without the LLM.
+
+### Configurable prompts (`llm.prompts`)
+
+Each `rules.yaml` can define strategy-specific LLM instructions:
+
+```yaml
+llm:
+  prompts:
+    selection: |          # system: role + entry judgment (Sonnet)
+    selection_web: |       # optional override when web_model runs
+    selection_context: |   # user message: strategy thesis, account notes
+    monitor: |             # system: open-position review (Flash)
+    monitor_context: |     # user message: monitoring priorities
+```
+
+Omit any field to use the built-in default for that phase. Run a separate rules file per strategy (conservative pilot vs aggressive spec) with different prompts, models, and `risk` limits.
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `veto_entries` | true | Block new entries when LLM says defer/skip |
+| `allow_llm_exits` | false | Execute exits on high-urgency LLM close recommendations |
+
+Rule-based profit/stop/DTE exits always run first; LLM adds judgment on top.
+
+## Telegram notifications
+
+When `notify.telegram.enabled: true`, set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env`.
+
+- `notify_on_actions: true` — entries, exits, LLM alerts
+- `notify_every_tick: true` — summary every tick (noisy)
+
+## Manual options commands
+
+```bash
+schwab options schema --json
+schwab options positions --account-number <hash> --json
+schwab options validate --strategy vertical --params '{"underlying":"SPY",...}' --json
+schwab options preview --account-number <hash> --strategy vertical --params '<json>' --json
+schwab options open --account-number <hash> --strategy vertical --params '<json>' --trust --yes --json
+schwab options close --account-number <hash> --position-id "<underlying>|<expiry>" --trust --yes --json
+```
+
+## v1 strategies
+
+- **vertical** — put/call credit or debit spreads (`VERTICAL`, `NET_CREDIT`/`NET_DEBIT`)
+- **iron_condor** — four-leg defined-risk condor (`IRON_CONDOR`, `NET_CREDIT`)
+
+Both are IRA-safe (defined risk). Covered calls, CSPs, and collars are deferred to v2.
+
+## State file
+
+Agent state is written next to the rules file as `agent-state.json` (open positions, daily trade count, recent actions).
+
+## Account types
+
+Set `accounts[].type` to `margin`, `ira`, or `cash`. v1 only allows vertical and iron condor on all types.

@@ -2,11 +2,13 @@ use schwab_api::client::SchwabClient;
 use schwab_api::Result;
 use serde_json::Value;
 
+pub mod chains;
 pub mod instruments;
 pub mod markets;
 pub mod price_history;
 pub mod quotes;
 
+pub use chains::ChainsApi;
 pub use instruments::InstrumentsApi;
 pub use markets::MarketsApi;
 pub use price_history::PriceHistoryApi;
@@ -77,5 +79,9 @@ impl MarketDataApi {
 
     pub fn markets(&self) -> MarketsApi<'_> {
         MarketsApi::new(&self.client)
+    }
+
+    pub fn chains(&self) -> ChainsApi<'_> {
+        ChainsApi::new(&self.client)
     }
 }

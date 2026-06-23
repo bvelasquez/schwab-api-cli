@@ -136,7 +136,7 @@ pub fn build_equity_order(
 }
 
 /// Build a single-leg option order (not a spread).
-#[allow(clippy::too_many_arguments, dead_code)]
+#[allow(clippy::too_many_arguments)]
 pub fn build_single_option_order(
     instruction: OrderInstruction,
     option_symbol: &str,
@@ -166,7 +166,6 @@ pub fn build_single_option_order(
 }
 
 /// Build a multi-leg complex option order (spread, iron condor, etc.).
-#[allow(dead_code)]
 pub fn build_complex_option_order(
     complex_strategy: ComplexOrderStrategyType,
     order_type: OrderTypeRequest,
