@@ -1,6 +1,7 @@
 pub mod daemon;
 pub mod exits;
 pub mod llm;
+pub mod market_context;
 pub mod runner;
 pub mod state;
 

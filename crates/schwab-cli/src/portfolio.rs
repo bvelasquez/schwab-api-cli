@@ -288,6 +288,9 @@ pub async fn validate_buying_power_after_preview(
     order: &Value,
     preview: &Value,
 ) -> Result<()> {
+    ensure_preview_accepted(preview)?;
+    ensure_preview_buying_power(preview)?;
+
     let parsed = parse_order(order)?;
     if !order_requires_buying_power(&parsed) {
         return Ok(());
@@ -296,6 +299,55 @@ pub async fn validate_buying_power_after_preview(
     let buying_power = account_buying_power(api, account_hash).await?;
     if let Some(cost) = estimate_notional(&parsed, Some(preview)) {
         ensure_sufficient_buying_power(&buying_power, cost)?;
+    }
+    Ok(())
+}
+
+/// Schwab embeds hard rejects in preview even when the preview HTTP call succeeds.
+pub fn ensure_preview_accepted(preview: &Value) -> Result<()> {
+    let Some(rejects) = preview
+        .pointer("/orderValidationResult/rejects")
+        .and_then(|v| v.as_array())
+    else {
+        return Ok(());
+    };
+    if rejects.is_empty() {
+        return Ok(());
+    }
+    let messages: Vec<String> = rejects
+        .iter()
+        .filter_map(|r| {
+            r.get("activityMessage")
+                .and_then(|m| m.as_str())
+                .map(str::to_string)
+        })
+        .collect();
+    bail!(
+        "Schwab preview rejected order: {}",
+        if messages.is_empty() {
+            "unknown reason".into()
+        } else {
+            messages.join("; ")
+        }
+    );
+}
+
+/// Block orders that would drive projected buying power negative (common on spread margin).
+pub fn ensure_preview_buying_power(preview: &Value) -> Result<()> {
+    let balance = preview
+        .pointer("/orderStrategy/orderBalance")
+        .or_else(|| preview.get("orderBalance"));
+    let Some(balance) = balance else {
+        return Ok(());
+    };
+    for key in ["projectedBuyingPower", "projectedAvailableFund"] {
+        if let Some(v) = balance.get(key).and_then(parse_num) {
+            if v < 0.0 {
+                bail!(
+                    "Schwab preview shows insufficient buying power after order ({key}: ${v:.2})"
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -336,6 +388,30 @@ mod tests {
     use super::*;
     use schwab_api::models::account::{Account, AccountsInstrument, Position, SecuritiesAccount};
     use serde_json::json;
+
+    #[test]
+    fn preview_reject_is_surfaced() {
+        let preview = json!({
+            "orderValidationResult": {
+                "rejects": [{
+                    "activityMessage": "You do not have enough available cash/buying power for this order."
+                }]
+            }
+        });
+        assert!(ensure_preview_accepted(&preview).is_err());
+    }
+
+    #[test]
+    fn preview_negative_projected_buying_power_is_blocked() {
+        let preview = json!({
+            "orderStrategy": {
+                "orderBalance": {
+                    "projectedBuyingPower": -100.0
+                }
+            }
+        });
+        assert!(ensure_preview_buying_power(&preview).is_err());
+    }
 
     #[test]
     fn summarizes_positions() {

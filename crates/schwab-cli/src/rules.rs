@@ -334,7 +334,7 @@ impl Default for LlmConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            selection_model: "anthropic/claude-3.5-sonnet".into(),
+            selection_model: "anthropic/claude-sonnet-4".into(),
             monitor_model: "google/gemini-2.5-flash".into(),
             web_model: "perplexity/sonar".into(),
             model: String::new(),
@@ -355,7 +355,7 @@ impl LlmConfig {
         } else if !self.model.is_empty() {
             &self.model
         } else {
-            "anthropic/claude-3.5-sonnet"
+            "anthropic/claude-sonnet-4"
         }
     }
 
@@ -547,7 +547,7 @@ mod tests {
         let cfg = LlmConfig::default();
         assert_eq!(
             cfg.resolve_model(LlmPhase::Selection, false),
-            "anthropic/claude-3.5-sonnet"
+            "anthropic/claude-sonnet-4"
         );
         assert_eq!(
             cfg.resolve_model(LlmPhase::Monitor, false),

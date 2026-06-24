@@ -54,7 +54,7 @@ When `llm.enabled: true`, the agent picks the model by phase:
 
 | Phase | When | Model (`rules.yaml`) |
 |-------|------|----------------------|
-| **Selection** | Rules produced `candidate_entries` | `llm.selection_model` (default: `anthropic/claude-3.5-sonnet`) |
+| **Selection** | Rules produced `candidate_entries` | `llm.selection_model` (default: `anthropic/claude-sonnet-4`) |
 | **Monitor** | Open positions, every `review_every_ticks` | `llm.monitor_model` (default: `google/gemini-2.5-flash`) |
 | **Web** | Every `web_research_every_reviews` selection reviews | `llm.web_model` (default: `perplexity/sonar`) |
 
