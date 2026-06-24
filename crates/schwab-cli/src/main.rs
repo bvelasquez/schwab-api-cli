@@ -81,7 +81,8 @@ fn load_dotenv() {
     while let Some(mut path) = dir {
         let candidate = path.join(".env");
         if candidate.is_file() {
-            let _ = dotenvy::from_path(&candidate);
+            // Project .env is source of truth (overrides stale keys from shell profile).
+            let _ = dotenvy::from_path_override(&candidate);
             return;
         }
         if !path.pop() {
@@ -93,7 +94,7 @@ fn load_dotenv() {
     if let Some(home) = directories::UserDirs::new().map(|d| d.home_dir().to_path_buf()) {
         let fallback = home.join(".config/schwabinvestbot/.env");
         if fallback.is_file() {
-            let _ = dotenvy::from_path(&fallback);
+            let _ = dotenvy::from_path_override(&fallback);
         }
     }
 }

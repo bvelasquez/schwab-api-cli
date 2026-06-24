@@ -93,14 +93,19 @@ impl OpenRouterClient {
         let status = resp.status();
         let payload: Value = resp.json().await.context("OpenRouter response parse failed")?;
         if !status.is_success() {
-            anyhow::bail!(
-                "OpenRouter error {}: {}",
-                status,
-                payload
-                    .pointer("/error/message")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(&payload.to_string())
-            );
+            let fallback = payload.to_string();
+            let message = payload
+                .pointer("/error/message")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&fallback);
+            if status.as_u16() == 401 {
+                anyhow::bail!(
+                    "OpenRouter error {status}: {message}. \
+                     Check OPENROUTER_API_KEY in the project .env (it overrides shell exports). \
+                     Create or rotate a key at https://openrouter.ai/keys"
+                );
+            }
+            anyhow::bail!("OpenRouter error {status}: {message}");
         }
 
         let content = payload

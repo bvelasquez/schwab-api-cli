@@ -5,7 +5,7 @@ pub fn env_schema_json() -> Value {
         "precedence": ["CLI flags", "environment variables", "defaults"],
         "dotenv": {
             "enabled": true,
-            "behavior": "Loads nearest .env walking up from current working directory"
+            "behavior": "Loads nearest .env walking up from cwd; values override existing shell exports"
         },
         "variables": [
             {
