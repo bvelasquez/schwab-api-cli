@@ -14,7 +14,9 @@ use crate::options::{
     VerticalParams,
 };
 use crate::options::positions::build_close_order_for_group;
-use crate::order_status::{wait_for_order, WaitCondition, WaitOptions};
+use crate::order_status::{
+    is_failure_status, wait_for_order, wait_result_json, WaitCondition, WaitOptions,
+};
 use crate::rules::{LlmPhase, RulesConfig};
 use crate::safety::{execute_trading_order, require_trading_approval};
 
@@ -23,6 +25,7 @@ use super::exits::{
     reconcile_open_positions,
 };
 use super::llm::OpenRouterClient;
+use super::market_context::{market_context_summary_for_llm, vertical_entry_market_context};
 use super::state::{default_state_path, load_state, save_state, AgentState, TrackedPosition};
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -273,6 +276,7 @@ pub async fn tick_once(
                     LlmPhase::Selection => "selection",
                     LlmPhase::Monitor => "monitor",
                 },
+                "market": market_context_summary_for_llm(),
                 "exit_rules": super::exits::exit_rules_summary(&rules.exit_rules),
                 "open_positions": position_snapshots,
                 "candidate_entries": pending_entries.iter().map(|(_, _, s)| s).collect::<Vec<_>>(),
@@ -281,6 +285,8 @@ pub async fn tick_once(
                 "risk": {
                     "max_trades_per_day": rules.risk.max_trades_per_day,
                     "trades_today": state.trades_today,
+                    "max_risk_per_trade_usd": rules.risk.max_risk_per_trade_usd,
+                    "max_portfolio_risk_usd": rules.risk.max_portfolio_risk_usd,
                 },
             });
 
@@ -358,8 +364,21 @@ pub async fn tick_once(
             .await
             {
                 if let Some(a) = action {
-                    result.actions.push(a);
-                    notify_action(telegram, "ENTRY", &signal).await;
+                    result.actions.push(a.clone());
+                    let label = a
+                        .pointer("/fill_status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("UNKNOWN");
+                    match label {
+                        "FILLED" => notify_action(telegram, "ENTRY FILLED", &a).await,
+                        "WORKING" | "ACCEPTED" | "PENDING_ACTIVATION" | "QUEUED" => {
+                            notify_action(telegram, "ORDER WORKING (limit)", &a).await
+                        }
+                        other if is_failure_status(other) => {
+                            notify_action(telegram, "ORDER REJECTED", &a).await
+                        }
+                        _ => notify_action(telegram, "ORDER", &a).await,
+                    }
                 }
             }
         }
@@ -519,12 +538,26 @@ async fn evaluate_vertical_entry(
         session: None,
     };
 
+    let market_context = vertical_entry_market_context(
+        &chain,
+        underlying,
+        expiry,
+        today,
+        &put_map,
+        short_strike,
+        long_strike,
+        entry.max_width,
+        credit,
+        entry.max_contracts_per_trade as f64,
+    );
+
     Ok(Some(json!({
         "type": "entry",
         "strategy": "vertical",
         "account_hash": account_hash,
         "params": params,
         "estimated_credit": credit,
+        "market_context": market_context,
     })))
 }
 
@@ -761,22 +794,62 @@ async fn maybe_execute_entry(
 
     let place = execute_trading_order(runtime, trader, account_hash, &order).await?;
 
-    if rules.execution.wait_for_fill {
-        if let Some(order_id) = place.get("order_id").and_then(|v| v.as_str()) {
-            let _ = wait_for_order(
+    let order_id = place
+        .get("order_id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+
+    let wait_result = if let Some(ref order_id) = order_id {
+        let condition = if rules.execution.wait_for_fill {
+            WaitCondition::Terminal
+        } else {
+            WaitCondition::Accepted
+        };
+        Some(
+            wait_for_order(
                 trader,
                 account_hash,
                 order_id,
                 WaitOptions {
-                    condition: WaitCondition::Filled,
+                    condition,
                     timeout: std::time::Duration::from_secs(rules.execution.fill_timeout_seconds),
                     interval: std::time::Duration::from_secs(5),
                     proceed_on_partial_fill: false,
                     requested_quantity: None,
                 },
             )
-            .await;
-        }
+            .await?,
+        )
+    } else {
+        None
+    };
+
+    let fill_status = wait_result
+        .as_ref()
+        .and_then(|w| w.final_status.as_deref())
+        .unwrap_or("ACCEPTED");
+
+    if is_failure_status(fill_status) {
+        let detail = json!({
+            "signal": signal,
+            "place": place,
+            "wait": wait_result.as_ref().map(wait_result_json),
+            "fill_status": fill_status,
+        });
+        state.record_action("entry_rejected", detail.clone());
+        return Ok(Some(detail));
+    }
+
+    if fill_status != "FILLED" && rules.execution.wait_for_fill {
+        let detail = json!({
+            "signal": signal,
+            "place": place,
+            "wait": wait_result.as_ref().map(wait_result_json),
+            "fill_status": fill_status,
+            "note": "Limit order working; position not opened in agent state until filled",
+        });
+        state.record_action("entry_working", detail.clone());
+        return Ok(Some(detail));
     }
 
     state.trades_today += 1;
@@ -806,7 +879,12 @@ async fn maybe_execute_entry(
     );
     state.record_action("entry", signal.clone());
 
-    Ok(Some(json!({ "entry": place, "signal": signal })))
+    Ok(Some(json!({
+        "entry": place,
+        "signal": signal,
+        "wait": wait_result.as_ref().map(wait_result_json),
+        "fill_status": fill_status,
+    })))
 }
 
 async fn execute_exit(

@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use crate::config::RuntimeConfig;
 use crate::portfolio::{
-    account_equity, validate_buying_power_after_preview, validate_buying_power_for_order,
+    account_equity, ensure_preview_accepted, ensure_preview_buying_power,
+    validate_buying_power_after_preview, validate_buying_power_for_order,
 };
 use crate::safety_config::{validate_order, SafetyConfig};
 
@@ -94,6 +95,8 @@ pub async fn execute_trading_order(
     };
 
     if let Some(ref preview_data) = preview {
+        ensure_preview_accepted(preview_data)?;
+        ensure_preview_buying_power(preview_data)?;
         runtime
             .safety
             .validate_order(order, Some(preview_data), equity)?;

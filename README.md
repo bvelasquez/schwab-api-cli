@@ -416,7 +416,7 @@ When `llm.enabled: true`:
 
 | Phase | When it runs | Model key | Default model |
 |-------|--------------|-----------|---------------|
-| **Selection** | Rules produced candidate entries | `selection_model` | `anthropic/claude-3.5-sonnet` |
+| **Selection** | Rules produced candidate entries | `selection_model` | `anthropic/claude-sonnet-4` |
 | **Monitor** | Open positions, every `review_every_ticks` | `monitor_model` | `google/gemini-2.5-flash` |
 | **Web** | Every Nth selection review | `web_model` | `perplexity/sonar` |
 

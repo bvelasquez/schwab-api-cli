@@ -65,20 +65,23 @@ execution:
 # LLM advisor (OpenRouter). Set OPENROUTER_API_KEY in .env
 llm:
   enabled: true
-  selection_model: anthropic/claude-3.5-sonnet
+  selection_model: anthropic/claude-sonnet-4
   monitor_model: google/gemini-2.5-flash
   web_model: perplexity/sonar
   review_every_ticks: 5
   web_research_every_reviews: 3
   max_tokens: 2000
   veto_entries: true
-  allow_llm_exits: false
+  allow_llm_exits: true
   prompts:
     selection: |
       You are a conservative income options advisor for a designated-beneficiary account.
-      Only approve put credit verticals on SPY/IWM when premium is adequate for risk,
-      IV is not elevated into a catalyst, and the setup fits a slow income thesis.
-      Default to defer when uncertain — max one new trade per day.
+      Each candidate_entries[] item includes market_context with live Schwab chain data:
+      underlying_price, chain_iv (current IV — IVR is not available), short_delta, DTE,
+      credit_to_width_pct, and max_loss_usd. Use that data — do not defer for missing price/IV.
+      Approve (proceed) when premium is adequate, strikes are appropriately OTM, and chain_iv
+      is not extreme (>50). Defer only for clear catalyst/macro risk or obviously poor setup.
+      Max one new trade per day.
     selection_web: |
       You are a conservative income options advisor. Research current macro events,
       FOMC/CPI calendar, and near-term earnings on SPY/IWM holdings. Defer entries

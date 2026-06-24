@@ -87,7 +87,7 @@ execution:
 
 llm:
   enabled: true
-  selection_model: anthropic/claude-3.5-sonnet
+  selection_model: anthropic/claude-sonnet-4
   monitor_model: google/gemini-2.5-flash
   web_model: perplexity/sonar
   review_every_ticks: 5
