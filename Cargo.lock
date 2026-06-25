@@ -1655,24 +1655,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "schwab-api"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "directories",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "url",
-]
-
-[[package]]
-name = "schwab-cli"
+name = "schwab-api-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1689,8 +1672,8 @@ dependencies = [
  "rcgen",
  "reqwest",
  "rustls",
- "schwab-api",
- "schwab-market-data",
+ "schwab-api-cli-core",
+ "schwab-api-cli-market-data",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -1705,10 +1688,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "schwab-market-data"
+name = "schwab-api-cli-core"
 version = "0.1.0"
 dependencies = [
- "schwab-api",
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "directories",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "schwab-api-cli-market-data"
+version = "0.1.0"
+dependencies = [
+ "schwab-api-cli-core",
  "serde_json",
  "tokio",
  "urlencoding",
