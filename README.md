@@ -2,6 +2,14 @@
 
 Agent-first Rust CLI for the [Charles Schwab Trader API](https://developer.schwab.com/) (Accounts and Trading Production). Built for **LLM-driven workflows**: discover capabilities via JSON, generate trade plans, validate against hard safety limits, and execute with explicit trust mode.
 
+> **⚠️ USE AT YOUR OWN RISK — EXPERIMENTAL SOFTWARE**
+>
+> This project is **experimental** and under active development. It can place **real orders** in your brokerage account when run with `--trust --yes`. Bugs, API changes, LLM misjudgments, and misconfiguration can cause **financial loss**.
+>
+> The maintainer uses this tool for **personal experimentation on their own accounts only**. By using, cloning, or forking this public project, **you accept full responsibility** for any outcomes. **You are solely liable** for trades, taxes, compliance, and losses. This is **not financial, investment, tax, or legal advice**. There is **no warranty** and **no guarantee** of correctness, uptime, or profitability.
+>
+> Read the full [Disclaimer](#disclaimer) before live trading. Prefer `--dry-run` until you understand every flag and config file.
+
 ## Features
 
 - **OAuth 2.0** — browser login, token refresh, secure local storage
@@ -37,6 +45,10 @@ cp .env.example .env
 
 # Authenticate (opens browser)
 schwab auth login
+
+# Accept risk disclaimer (required before live trading)
+schwab disclaimer show
+schwab disclaimer accept --yes
 
 # Agent discovery
 schwab capabilities --json
@@ -574,6 +586,7 @@ cargo build --release -p schwab-cli
 
 ## Security
 
+- **Accept the disclaimer** before live trading: `schwab disclaimer accept --yes` (shown on first run)
 - **Do not commit** `.env`, `tokens.json`, `safety.json` with personal limits, or API keys
 - **Do not commit** account hash values in public plans — use placeholders
 - Rotate Schwab app credentials if ever exposed
@@ -586,4 +599,48 @@ MIT — see [LICENSE](LICENSE).
 
 ## Disclaimer
 
-This software is not affiliated with or endorsed by Charles Schwab & Co., Inc. Use at your own risk. Trading involves substantial risk of loss. The authors are not responsible for financial losses from use of this tool.
+**READ THIS BEFORE USING THIS SOFTWARE FOR TRADING.**
+
+### No affiliation
+
+This software is **not affiliated with, endorsed by, or supported by** Charles Schwab & Co., Inc. or any broker-dealer. Schwab® is a registered trademark of its respective owner.
+
+### Experimental — use at your own risk
+
+This is an **experimental, hobby/research project** shared publicly for transparency and collaboration. It is **not production-grade trading infrastructure**. Features break, behavior changes without notice, and documentation may lag the code.
+
+**`safety.json`, dry-run, and preview are aids — not guarantees.** They reduce some mistakes; they do **not** eliminate risk from live markets, partial fills, stale quotes, rate limits, or autonomous agent loops.
+
+### Your responsibility
+
+If you use this CLI — especially with `--trust --yes`, trade plans, or the options agent daemon — **you do so entirely at your own risk**.
+
+You are responsible for:
+
+- Every order submitted through your Schwab API credentials
+- Verifying account numbers, hashes, symbols, quantities, and prices before execution
+- Monitoring background agents and stopping them when appropriate
+- Compliance with broker terms, pattern-day-trader rules, IRA restrictions, and applicable law
+- Securing `.env`, tokens, and API keys on your machine
+
+**The authors, contributors, and maintainers are not liable** for any direct, indirect, incidental, special, or consequential damages — including **loss of capital**, missed opportunities, tax consequences, or account restrictions — arising from use or inability to use this software, even if advised of the possibility.
+
+### Not advice
+
+Nothing in this repository constitutes financial, investment, tax, or legal advice. Example plans, rules files, and prompts are **illustrations only**. Past behavior of any strategy or backtest does not predict future results.
+
+### Maintainer’s use
+
+The project maintainer developed this for **personal account experimentation**. Public release does **not** imply recommendation that others trade with it, copy any strategy, or run autonomous agents unattended.
+
+### Trading risk
+
+**Trading securities and options involves substantial risk of loss** and is not suitable for every investor. You can lose more than your initial investment in some strategies. Only trade with capital you can afford to lose.
+
+### No warranty
+
+This software is provided **“AS IS”**, without warranty of any kind, express or implied, including merchantability, fitness for a particular purpose, and non-infringement. See the [LICENSE](LICENSE) (MIT).
+
+---
+
+**By using this project, you agree to these terms.** If you do not accept them, do not install, run, or deploy this CLI against a live account.

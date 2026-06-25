@@ -33,6 +33,27 @@ pub fn all_commands() -> Vec<CommandSpec> {
             requires_auth: false,
         },
         CommandSpec {
+            path: "disclaimer show",
+            description: "Print trading risk disclaimer (experimental software)",
+            http: None,
+            mutation: false,
+            requires_auth: false,
+        },
+        CommandSpec {
+            path: "disclaimer accept",
+            description: "Accept risk disclaimer (required before live trading)",
+            http: None,
+            mutation: true,
+            requires_auth: false,
+        },
+        CommandSpec {
+            path: "disclaimer status",
+            description: "Whether disclaimer was accepted on this machine",
+            http: None,
+            mutation: false,
+            requires_auth: false,
+        },
+        CommandSpec {
             path: "auth login",
             description: "OAuth authorization code flow",
             http: None,

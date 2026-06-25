@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+use crate::disclaimer::HELP_DISCLAIMER;
 use crate::mode::CliMode;
 use crate::output::OutputFormat;
 
@@ -9,14 +10,17 @@ use crate::output::OutputFormat;
 #[command(
     name = "schwab",
     version,
-    about = "Agent-first CLI for Charles Schwab Trader API",
+    about = "Agent-first CLI for Charles Schwab Trader API (experimental — use at your own risk)",
     long_about = "Schwab Trader API CLI (Accounts and Trading Production).\n\n\
+        ⚠️  EXPERIMENTAL — USE AT YOUR OWN RISK. Can submit real trades.\n\
+        Run `schwab disclaimer show` and `schwab disclaimer accept --yes` before live trading.\n\n\
         AGENTS: Prefer --mode agent (default). Discover commands with:\n\
           schwab --help --json\n\
           schwab capabilities --json\n\
           schwab env schema --json\n\
           schwab instructions --json\n\n\
-        HUMANS: Use --mode human for guided prompts when arguments are omitted."
+        HUMANS: Use --mode human for guided prompts when arguments are omitted.",
+    after_help = HELP_DISCLAIMER
 )]
 pub struct Cli {
     /// Operating mode: agent (structured, default) or human (interactive prompts)
@@ -68,6 +72,12 @@ pub enum Commands {
 
     /// Agent system prompt / tool-use instructions
     Instructions,
+
+    /// Trading risk disclaimer (required before live trades)
+    Disclaimer {
+        #[command(subcommand)]
+        command: DisclaimerCommands,
+    },
 
     /// OAuth authentication and token management
     Auth {
@@ -358,6 +368,16 @@ pub enum SafetyCommands {
     Init,
     /// Print safety.json path only
     Path,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DisclaimerCommands {
+    /// Print the full trading risk disclaimer
+    Show,
+    /// Record acceptance (required before live trading; use --yes in agent mode)
+    Accept,
+    /// Show whether disclaimer has been accepted on this machine
+    Status,
 }
 
 #[derive(Debug, Subcommand)]

@@ -42,6 +42,18 @@ pub fn env_schema_json() -> Value {
                 "description": "Override path to safety.json trading limits (default: platform config dir)"
             },
             {
+                "name": "SCHWAB_CONFIG_DIR",
+                "aliases": [],
+                "required": false,
+                "description": "Override schwabinvestbot config directory (disclaimer markers, etc.)"
+            },
+            {
+                "name": "SCHWAB_DISCLAIMER_ACCEPTED",
+                "aliases": [],
+                "required": false,
+                "description": "Set to any non-empty value to skip disclaimer acceptance file check (automation you control)"
+            },
+            {
                 "name": "SCHWAB_MODE",
                 "aliases": [],
                 "required": false,
