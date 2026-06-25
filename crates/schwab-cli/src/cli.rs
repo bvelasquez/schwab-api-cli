@@ -150,6 +150,27 @@ pub enum Commands {
         #[command(subcommand)]
         command: AgentCommands,
     },
+
+    /// Rich terminal dashboard (agent status, rules summary, positions)
+    Dashboard {
+        /// Path to rules.yaml (or set SCHWAB_RULES)
+        file: Option<PathBuf>,
+    },
+
+    /// Live TUI watch — runs the agent in-process (or attach to an existing daemon)
+    Watch {
+        /// Path to rules.yaml (or set SCHWAB_RULES)
+        file: Option<PathBuf>,
+        /// Monitor only — do not start the agent loop (attach to existing daemon or view state)
+        #[arg(long)]
+        monitor_only: bool,
+    },
+
+    /// Human-readable rules configuration
+    Rules {
+        #[command(subcommand)]
+        command: RulesCommands,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -583,6 +604,16 @@ pub enum AgentCommands {
     Stop {
         file: PathBuf,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RulesCommands {
+    /// Full rules breakdown (entry, exit, risk, LLM)
+    Show {
+        file: Option<PathBuf>,
+    },
+    /// List discoverable rules/*.yaml files
+    List,
 }
 
 /// Resolved output path for clap parse result.

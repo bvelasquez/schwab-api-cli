@@ -119,3 +119,37 @@ fn process_alive(pid: u32) -> bool {
         false
     }
 }
+
+/// Background agent process metadata for dashboard / status UIs.
+#[derive(Debug, Clone)]
+pub struct DaemonStatus {
+    pub running: bool,
+    pub pid: Option<u32>,
+    pub pid_file: std::path::PathBuf,
+    pub log_file: std::path::PathBuf,
+}
+
+pub fn daemon_status(rules_path: &Path) -> DaemonStatus {
+    let pid_file = pid_path(rules_path);
+    let log_file = log_path(rules_path);
+    match read_pid(&pid_file) {
+        Ok(pid) if process_alive(pid) => DaemonStatus {
+            running: true,
+            pid: Some(pid),
+            pid_file,
+            log_file,
+        },
+        Ok(pid) => DaemonStatus {
+            running: false,
+            pid: Some(pid),
+            pid_file,
+            log_file,
+        },
+        Err(_) => DaemonStatus {
+            running: false,
+            pid: None,
+            pid_file,
+            log_file,
+        },
+    }
+}

@@ -15,9 +15,14 @@ anyhow = "1"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env", "string"] }
+comfy-table = "7"
 console = "0.15"
+crossterm = "0.28"
 directories = "5"
 indicatif = "0.17"
+ratatui = "0.29"
+textwrap = "0.16"
+unicode-width = "0.2"
 inquire = "0.7"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "gzip"] }
 serde = { version = "1", features = ["derive"] }
