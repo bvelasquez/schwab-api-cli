@@ -63,6 +63,36 @@ pub struct ScheduleConfig {
     pub tick_interval_seconds: u64,
     pub market_hours_only: bool,
     pub timezone: String,
+    #[serde(default)]
+    pub overnight: OvernightConfig,
+}
+
+/// Low-frequency overnight / pre-market behavior when the option market is closed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OvernightConfig {
+    /// When true, the agent keeps running after the close with a slower tick.
+    pub enabled: bool,
+    /// Seconds between overnight wakes (default 1 hour). LLM digest respects this interval.
+    pub tick_interval_seconds: u64,
+    /// Run web-model digest to build an open playbook (no chain calls, no entries).
+    pub web_digest: bool,
+    /// Skip overnight LLM when flat (no open positions).
+    pub skip_llm_when_flat: bool,
+    /// Telegram only when risk_alerts is non-empty (digest still saved to state).
+    pub alert_on_risk_only: bool,
+}
+
+impl Default for OvernightConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            tick_interval_seconds: 3600,
+            web_digest: true,
+            skip_llm_when_flat: true,
+            alert_on_risk_only: true,
+        }
+    }
 }
 
 impl Default for ScheduleConfig {
@@ -71,6 +101,7 @@ impl Default for ScheduleConfig {
             tick_interval_seconds: 60,
             market_hours_only: true,
             timezone: "America/New_York".into(),
+            overnight: OvernightConfig::default(),
         }
     }
 }
@@ -218,6 +249,7 @@ impl Default for ExecutionConfig {
 pub enum LlmPhase {
     Selection,
     Monitor,
+    OvernightDigest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -262,6 +294,10 @@ pub struct LlmPromptsConfig {
     pub monitor: String,
     /// Extra strategy context prepended to the user message during monitoring.
     pub monitor_context: String,
+    /// System instructions for overnight web digest (market closed).
+    pub overnight: String,
+    /// Extra context for overnight digest user message.
+    pub overnight_context: String,
 }
 
 impl Default for LlmPromptsConfig {
@@ -272,6 +308,8 @@ impl Default for LlmPromptsConfig {
             selection_context: String::new(),
             monitor: String::new(),
             monitor_context: String::new(),
+            overnight: String::new(),
+            overnight_context: String::new(),
         }
     }
 }
@@ -293,9 +331,32 @@ pub fn default_selection_web_prompt() -> &'static str {
 
 pub fn default_monitor_prompt() -> &'static str {
     "You are monitoring existing open option spreads. Mechanical exits (profit target, \
-     stop loss, DTE) run every tick without you — do not duplicate those rules. Review \
-     progress, flag watch items, and note any developing risks. For new_entries, recommend \
-     proceed unless adding risk would violate the strategy context."
+     stop loss, DTE) run every tick without you — do not duplicate those rules.\n\
+     Each open_positions[] item includes mechanical_rules (stop_debit_threshold_per_share, \
+     current_debit_to_close, stop_triggered) and market_context (greeks, OTM distance).\n\
+     CRITICAL: Never use net_market_value for stop-loss or profit-target decisions — it is \
+     Schwab leg market value in dollars, not per-share debit_to_close. Only cite a stop hit \
+     in risk_alerts when mechanical_rules.stop_triggered is true. If status is holding and \
+     stop_triggered is false, the position has NOT hit the mechanical stop.\n\
+     Early in a 30-45 DTE trade, mark-to-market swings are normal; theta needs time.\n\
+     Use market_context for recommendations:\n\
+     - hold: thesis intact, short leg comfortably OTM (typically |short_delta| < 0.30, \
+     short_otm_pct > 3% for put credits)\n\
+     - watch: elevated delta (|short_delta| >= 0.30), price within ~2% of short strike, \
+     or developing macro/event risk\n\
+     - close: thesis broken (recommendation only; mechanical stop handles P/L) — use \
+     urgency high only for imminent assignment/gap risk through short strike\n\
+     Do not recommend close for routine profit — mechanics handle 50% target."
+}
+
+pub fn default_overnight_prompt() -> &'static str {
+    "The US options market is CLOSED. Research overnight and pre-market news (futures, \
+     macro, geopolitical, scheduled data) affecting the watchlist and open positions. \
+     Build a concise OPEN PLAYBOOK for the next session: what to watch at the bell, \
+     whether any open spread thesis is broken, and suggested actions at the open \
+     (hold, close at market, or wait). Do NOT recommend opening new trades overnight. \
+     For new_entries always recommend skip. Only flag high-urgency risk_alerts for \
+     thesis-breaking developments."
 }
 
 impl LlmPromptsConfig {
@@ -322,10 +383,18 @@ impl LlmPromptsConfig {
         default_monitor_prompt()
     }
 
+    pub fn effective_overnight_instructions(&self) -> &str {
+        if !self.overnight.is_empty() {
+            return &self.overnight;
+        }
+        default_overnight_prompt()
+    }
+
     pub fn effective_context(&self, phase: LlmPhase) -> &str {
         match phase {
             LlmPhase::Selection => &self.selection_context,
             LlmPhase::Monitor => &self.monitor_context,
+            LlmPhase::OvernightDigest => &self.overnight_context,
         }
     }
 }
@@ -377,6 +446,7 @@ impl LlmConfig {
         match phase {
             LlmPhase::Selection => self.effective_selection_model(),
             LlmPhase::Monitor => self.effective_monitor_model(),
+            LlmPhase::OvernightDigest => &self.web_model,
         }
     }
 }
@@ -485,7 +555,17 @@ pub fn rules_json_schema() -> Value {
                 "properties": {
                     "tick_interval_seconds": { "type": "integer", "minimum": 5 },
                     "market_hours_only": { "type": "boolean" },
-                    "timezone": { "type": "string" }
+                    "timezone": { "type": "string" },
+                    "overnight": {
+                        "type": "object",
+                        "properties": {
+                            "enabled": { "type": "boolean" },
+                            "tick_interval_seconds": { "type": "integer", "minimum": 300 },
+                            "web_digest": { "type": "boolean" },
+                            "skip_llm_when_flat": { "type": "boolean" },
+                            "alert_on_risk_only": { "type": "boolean" }
+                        }
+                    }
                 }
             },
             "strategies": {

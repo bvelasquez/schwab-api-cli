@@ -28,7 +28,11 @@ safety.json
 plans/*.state.json
 plans/local/
 
-# Options agent runtime state (per rules file)
+# Options agent runtime state (per rules file: agent-state-<rules-stem>.json)
+rules/agent-state-*.json
+rules/agent-*.pid
+rules/agent-*.log
+# Legacy shared paths (pre per-file state)
 rules/agent-state.json
 rules/agent.pid
 

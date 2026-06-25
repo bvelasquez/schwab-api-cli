@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use serde_json::json;
 
-use crate::agent::{default_state_path, load_state, log_path, pid_path, run_agent_loop, spawn_background, state_summary, stop_daemon};
+use crate::agent::{default_state_path, load_agent_state, load_state, log_path, pid_path, run_agent_loop, spawn_background, state_summary, stop_daemon};
 use crate::cli::AgentCommands;
 use crate::config::RuntimeConfig;
 use crate::output::ResponseEnvelope;
@@ -29,14 +29,24 @@ pub async fn run(runtime: &RuntimeConfig, command: AgentCommands) -> Result<()> 
             ));
         }
         AgentCommands::Status { rules_file } => {
-            let path = rules_file
-                .map(|p| default_state_path(&p))
-                .unwrap_or_else(|| {
-                    directories::ProjectDirs::from("com", "schwabinvestbot", "schwab")
-                        .map(|d| d.data_local_dir().join("agent-state.json"))
-                        .unwrap_or_else(|| PathBuf::from("agent-state.json"))
-                });
-            let state = load_state(&path)?;
+            let (path, state) = if let Some(p) = rules_file {
+                let path = default_state_path(&p);
+                let agent_id = RulesConfig::load(&p)
+                    .map(|r| r.agent_id)
+                    .unwrap_or_default();
+                let state = if path.exists() {
+                    load_state(&path)?
+                } else {
+                    load_agent_state(&p, &agent_id)
+                };
+                (path, state)
+            } else {
+                let path = directories::ProjectDirs::from("com", "schwabinvestbot", "schwab")
+                    .map(|d| d.data_local_dir().join("agent-state.json"))
+                    .unwrap_or_else(|| PathBuf::from("agent-state.json"));
+                let state = load_state(&path)?;
+                (path, state)
+            };
             runtime.emit(ResponseEnvelope::ok(
                 "agent status",
                 json!({ "state_path": path, "state": state_summary(&state) }),

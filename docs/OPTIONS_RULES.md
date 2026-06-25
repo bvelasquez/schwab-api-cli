@@ -5,6 +5,10 @@ conditions on a schedule, and auto-executes **vertical spreads** and **iron cond
 `safety.json` hard limits. An optional **OpenRouter LLM advisor** reviews positions periodically
 and can veto new entries; **Telegram** can push trade and alert notifications.
 
+**LLM authoring guide:** [LLM_SCHEMA_REFERENCE.md](LLM_SCHEMA_REFERENCE.md) (full schema, field reference, monitor context).
+
+**Schedule:** [AGENT_SCHEDULE.md](AGENT_SCHEDULE.md) (regular / overnight / at-open).
+
 ## Two-layer safety model
 
 | Layer | File | Purpose |
@@ -46,7 +50,9 @@ schwab agent stop rules/options-rules.example.yaml --json
 | `stop_loss_pct` | 200 | Close when debit to close ≥ 2× entry credit |
 | `dte_close` | 21 | Close when DTE ≤ 21 regardless |
 
-Exits run **before** entry scans each tick. Marks come from live option chain quotes.
+Exits run **before** entry scans each regular tick. Marks come from live option chain **`debit_to_close`** (not Schwab `net_market_value`).
+
+Monitor LLM context includes `mechanical_rules.stop_triggered` — only treat a stop as hit when that field is `true`. See [LLM_SCHEMA_REFERENCE.md](LLM_SCHEMA_REFERENCE.md#field-reference--exit_rules-mechanical--authoritative).
 
 ## LLM advisor (two-model)
 
@@ -62,6 +68,29 @@ When `llm.enabled: true`, the agent picks the model by phase:
 
 Mechanical profit/stop/DTE exits run every tick without the LLM.
 
+## Schedule (regular / overnight / at open)
+
+See [AGENT_SCHEDULE.md](AGENT_SCHEDULE.md) for the full model.
+
+| Session | LLM | Chains |
+|---------|-----|--------|
+| **regular** (market open) | selection + monitor | yes |
+| **overnight** (`schedule.overnight.enabled`) | web digest only (~hourly) | no |
+| **idle** (closed, overnight off) | none | no |
+
+```yaml
+schedule:
+  tick_interval_seconds: 120
+  overnight:
+    enabled: true
+    tick_interval_seconds: 3600
+    web_digest: true
+    skip_llm_when_flat: true
+    alert_on_risk_only: true
+```
+
+Overnight digest uses `llm.prompts.overnight` and saves `open_playbook` in agent state for the first regular tick at the open.
+
 ### Configurable prompts (`llm.prompts`)
 
 Each `rules.yaml` can define strategy-specific LLM instructions:
@@ -74,6 +103,8 @@ llm:
     selection_context: |   # user message: strategy thesis, account notes
     monitor: |             # system: open-position review (Flash)
     monitor_context: |     # user message: monitoring priorities
+    overnight: |           # system: overnight web digest (Sonar)
+    overnight_context: |   # user message: overnight priorities
 ```
 
 Omit any field to use the built-in default for that phase. Run a separate rules file per strategy (conservative pilot vs aggressive spec) with different prompts, models, and `risk` limits.

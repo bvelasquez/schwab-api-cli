@@ -2,6 +2,8 @@
 
 This document describes how to author files consumed by `schwab plan validate` and `schwab plan run`.
 
+**Full LLM authoring guide (plans + options rules):** [docs/LLM_SCHEMA_REFERENCE.md](../docs/LLM_SCHEMA_REFERENCE.md)
+
 ## Commands
 
 | Command | Purpose |

@@ -21,18 +21,24 @@ use crate::rules::{LlmPhase, RulesConfig};
 use crate::safety::{execute_trading_order, require_trading_approval};
 
 use super::exits::{
-    evaluate_exit_for_group, exit_signal_json, find_tracked_position, position_key,
+    evaluate_position_monitor, exit_signal_json, find_tracked_position, position_key,
     reconcile_open_positions,
 };
 use super::llm::OpenRouterClient;
 use super::market_context::{market_context_summary_for_llm, vertical_entry_market_context};
-use super::state::{default_state_path, load_state, save_state, AgentState, TrackedPosition};
+use super::paths::{default_state_path, load_agent_state};
+use super::schedule::{self, AgentSession};
+use super::state::{save_state, AgentState, TrackedPosition};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TickResult {
+    pub session: String,
+    pub at_open: bool,
+    pub next_sleep_seconds: u64,
     pub signals: Vec<Value>,
     pub actions: Vec<Value>,
     pub skipped: Vec<String>,
+    pub monitored_positions: Vec<Value>,
     pub llm_review: Option<Value>,
 }
 
@@ -43,7 +49,7 @@ pub async fn run_agent_loop(
 ) -> Result<()> {
     let rules = RulesConfig::load(rules_path)?;
     let state_path = default_state_path(rules_path);
-    let mut state = load_state(&state_path)?;
+    let mut state = load_agent_state(rules_path, &rules.agent_id);
     state.agent_id = rules.agent_id.clone();
 
     if !runtime.dry_run {
@@ -81,9 +87,13 @@ pub async fn run_agent_loop(
             if once { "agent run once" } else { "agent tick" },
             json!({
                 "agent_id": rules.agent_id,
+                "session": result.session,
+                "at_open": result.at_open,
+                "next_sleep_seconds": result.next_sleep_seconds,
                 "signals": result.signals,
                 "actions": result.actions,
                 "skipped": result.skipped,
+                "monitored_positions": result.monitored_positions,
                 "llm_review": result.llm_review,
                 "dry_run": runtime.dry_run,
             }),
@@ -95,10 +105,8 @@ pub async fn run_agent_loop(
             break;
         }
 
-        tokio::time::sleep(std::time::Duration::from_secs(
-            rules.schedule.tick_interval_seconds.max(5),
-        ))
-        .await;
+        tokio::time::sleep(std::time::Duration::from_secs(result.next_sleep_seconds))
+            .await;
     }
 
     Ok(())
@@ -118,52 +126,73 @@ pub async fn tick_once(
     state.tick_count += 1;
 
     let mut result = TickResult {
+        session: "unknown".into(),
+        at_open: false,
+        next_sleep_seconds: rules.schedule.tick_interval_seconds.max(5),
         signals: vec![],
         actions: vec![],
         skipped: vec![],
+        monitored_positions: vec![],
         llm_review: None,
     };
 
     reconcile_open_positions(trader, state, rules).await?;
 
-    if rules.schedule.market_hours_only && !market_is_open(market).await? {
-        result
-            .skipped
-            .push("market closed (option hours)".into());
-        return Ok(result);
+    let market_open = market_is_open(market).await?;
+    let transition = schedule::resolve_session(
+        market_open,
+        &rules.schedule,
+        state.last_session.as_deref(),
+    );
+    result.session = transition.session.as_str().to_string();
+    result.next_sleep_seconds = transition.sleep_seconds;
+    state.last_session = Some(result.session.clone());
+
+    match transition.session {
+        AgentSession::Idle => {
+            result
+                .skipped
+                .push("market closed (option hours)".into());
+            return Ok(result);
+        }
+        AgentSession::Overnight => {
+            return tick_overnight(
+                runtime,
+                rules,
+                state,
+                llm_client,
+                telegram,
+                &mut result,
+            )
+            .await;
+        }
+        AgentSession::RegularHours => {
+            if transition.just_opened {
+                result.at_open = true;
+                result
+                    .skipped
+                    .push("market open — full evaluation (mechanical exits + live marks)".into());
+                notify_at_open(telegram, state.open_playbook.as_ref()).await;
+            }
+            state.regular_tick_count += 1;
+        }
     }
 
-    if state.trades_today >= rules.risk.max_trades_per_day {
-        result.skipped.push(format!(
-            "max_trades_per_day ({}) reached",
-            rules.risk.max_trades_per_day
-        ));
-        return Ok(result);
-    }
+    let entries_paused = state.trades_today >= rules.risk.max_trades_per_day;
 
-    let mut position_snapshots = Vec::new();
-
-    // Exit evaluation first
+    // Exit evaluation and position monitoring (always runs when market is open)
     for account in rules.enabled_accounts() {
         let legs = list_option_positions(trader, Some(&account.hash)).await?;
         let groups = group_option_legs(&legs);
         for group in &groups {
             let tracked = find_tracked_position(state, &account.hash, group);
-            if let Some(tracked) = tracked {
-                position_snapshots.push(json!({
-                    "position_id": group.id,
-                    "underlying": group.underlying,
-                    "expiry": group.expiry,
-                    "strategy": tracked.strategy,
-                    "entry_credit": tracked.entry_credit,
-                    "max_loss_usd": tracked.max_loss_usd,
-                    "net_market_value": group.net_market_value,
-                }));
+            let monitor = evaluate_position_monitor(market, group, rules, today, tracked).await?;
+
+            if !group.legs.is_empty() {
+                result.monitored_positions.push(monitor.snapshot);
             }
 
-            if let Some(eval) =
-                evaluate_exit_for_group(market, group, rules, today, tracked).await?
-            {
+            if let Some(eval) = monitor.exit {
                 let exit = exit_signal_json(group, &eval);
                 result.signals.push(exit.clone());
                 if !runtime.dry_run {
@@ -186,68 +215,75 @@ pub async fn tick_once(
         }
     }
 
-    // Entry scan (signals always collected; execution after LLM review)
+    // Entry scan (signals collected; execution after LLM review)
     let mut pending_entries: Vec<(String, StrategyKind, Value)> = Vec::new();
-    for account in rules.enabled_accounts() {
-        for underlying in &rules.watchlist {
-            let sym = underlying.to_uppercase();
-            if !rules.risk.allowed_underlyings.is_empty()
-                && !rules
-                    .risk
-                    .allowed_underlyings
-                    .iter()
-                    .any(|u| u.eq_ignore_ascii_case(&sym))
-            {
-                continue;
-            }
-
-            if rules.strategies.vertical.enabled {
-                match evaluate_vertical_entry(
-                    market,
-                    rules,
-                    &sym,
-                    today,
-                    state,
-                    &account.hash,
-                )
-                .await
+    if entries_paused {
+        result.skipped.push(format!(
+            "new entries paused — max_trades_per_day ({}) reached",
+            rules.risk.max_trades_per_day
+        ));
+    } else {
+        for account in rules.enabled_accounts() {
+            for underlying in &rules.watchlist {
+                let sym = underlying.to_uppercase();
+                if !rules.risk.allowed_underlyings.is_empty()
+                    && !rules
+                        .risk
+                        .allowed_underlyings
+                        .iter()
+                        .any(|u| u.eq_ignore_ascii_case(&sym))
                 {
-                    Ok(Some(signal)) => {
-                        pending_entries.push((
-                            account.hash.clone(),
-                            StrategyKind::Vertical,
-                            signal,
-                        ));
-                    }
-                    Ok(None) => {}
-                    Err(e) => result
-                        .skipped
-                        .push(format!("{sym} vertical: {e:#}")),
+                    continue;
                 }
-            }
 
-            if rules.strategies.iron_condor.enabled {
-                match evaluate_condor_entry(
-                    market,
-                    rules,
-                    &sym,
-                    today,
-                    state,
-                    &account.hash,
-                )
-                .await
-                {
-                    Ok(Some(signal)) => {
-                        pending_entries.push((
-                            account.hash.clone(),
-                            StrategyKind::IronCondor,
-                            signal,
-                        ));
+                if rules.strategies.vertical.enabled {
+                    match evaluate_vertical_entry(
+                        market,
+                        rules,
+                        &sym,
+                        today,
+                        state,
+                        &account.hash,
+                    )
+                    .await
+                    {
+                        Ok(Some(signal)) => {
+                            pending_entries.push((
+                                account.hash.clone(),
+                                StrategyKind::Vertical,
+                                signal,
+                            ));
+                        }
+                        Ok(None) => {}
+                        Err(e) => result
+                            .skipped
+                            .push(format!("{sym} vertical: {e:#}")),
                     }
-                    Ok(None) => {}
-                    Err(e) => result
-                        .skipped
-                        .push(format!("{sym} iron_condor: {e:#}")),
+                }
+
+                if rules.strategies.iron_condor.enabled {
+                    match evaluate_condor_entry(
+                        market,
+                        rules,
+                        &sym,
+                        today,
+                        state,
+                        &account.hash,
+                    )
+                    .await
+                    {
+                        Ok(Some(signal)) => {
+                            pending_entries.push((
+                                account.hash.clone(),
+                                StrategyKind::IronCondor,
+                                signal,
+                            ));
+                        }
+                        Ok(None) => {}
+                        Err(e) => result
+                            .skipped
+                            .push(format!("{sym} iron_condor: {e:#}")),
+                    }
                 }
             }
         }
@@ -261,7 +297,7 @@ pub async fn tick_once(
     let mut llm_veto_entries = false;
     let mut llm_close_ids: Vec<String> = Vec::new();
     let has_candidates = !pending_entries.is_empty();
-    let has_positions = !position_snapshots.is_empty();
+    let has_positions = !result.monitored_positions.is_empty();
 
     if let Some(client) = llm_client {
         if let Some(phase) = resolve_llm_phase(rules, state, has_candidates, has_positions) {
@@ -270,15 +306,17 @@ pub async fn tick_once(
 
             let context = json!({
                 "agent_id": rules.agent_id,
-                "tick": state.tick_count,
+                "tick": state.regular_tick_count,
                 "date": today.to_string(),
                 "phase": match phase {
                     LlmPhase::Selection => "selection",
                     LlmPhase::Monitor => "monitor",
+                    LlmPhase::OvernightDigest => "overnight_digest",
                 },
                 "market": market_context_summary_for_llm(),
                 "exit_rules": super::exits::exit_rules_summary(&rules.exit_rules),
-                "open_positions": position_snapshots,
+                "open_positions": result.monitored_positions,
+                "open_playbook": state.open_playbook,
                 "candidate_entries": pending_entries.iter().map(|(_, _, s)| s).collect::<Vec<_>>(),
                 "recent_signals": result.signals,
                 "watchlist": rules.watchlist,
@@ -294,7 +332,7 @@ pub async fn tick_once(
                 Ok(review) => {
                     let review_json = review.to_json();
                     result.llm_review = Some(review_json.clone());
-                    state.last_llm_review_tick = Some(state.tick_count);
+                    state.last_llm_review_tick = Some(state.regular_tick_count);
                     state.llm_review_count += 1;
                     state.last_llm_summary = Some(review_json.clone());
                     state.record_action("llm_review", review_json.clone());
@@ -387,6 +425,164 @@ pub async fn tick_once(
     Ok(result)
 }
 
+fn should_run_monitor_review(rules: &RulesConfig, state: &AgentState) -> bool {
+    schedule::should_run_monitor_review(
+        state.regular_tick_count,
+        state.last_llm_review_tick,
+        rules.llm.review_every_ticks,
+    )
+}
+
+async fn tick_overnight(
+    _runtime: &RuntimeConfig,
+    rules: &RulesConfig,
+    state: &mut AgentState,
+    llm_client: Option<&OpenRouterClient>,
+    telegram: Option<&TelegramNotifier>,
+    result: &mut TickResult,
+) -> Result<TickResult> {
+    let today = Local::now().date_naive();
+    result.monitored_positions = overnight_position_snapshots(state);
+
+    if result.monitored_positions.is_empty() {
+        result.skipped.push("overnight — no open positions".into());
+    } else {
+        result.skipped.push(format!(
+            "overnight — monitoring {} open position(s) (no live marks)",
+            result.monitored_positions.len()
+        ));
+    }
+
+    let digest_due = schedule::should_run_overnight_digest(
+        state,
+        &rules.schedule.overnight,
+        Utc::now(),
+    );
+
+    if !digest_due {
+        result.skipped.push(format!(
+            "overnight digest next in ~{} min",
+            rules.schedule.overnight.tick_interval_seconds / 60
+        ));
+        return Ok(result.clone());
+    }
+
+    if !rules.llm.enabled {
+        result.skipped.push("overnight digest skipped (llm.enabled false)".into());
+        return Ok(result.clone());
+    }
+
+    let Some(client) = llm_client else {
+        result.skipped.push("overnight digest skipped (no LLM client)".into());
+        return Ok(result.clone());
+    };
+
+    let context = json!({
+        "agent_id": rules.agent_id,
+        "date": today.to_string(),
+        "phase": "overnight_digest",
+        "market_closed": true,
+        "open_positions": result.monitored_positions,
+        "prior_open_playbook": state.open_playbook,
+        "watchlist": rules.watchlist,
+        "exit_rules": super::exits::exit_rules_summary(&rules.exit_rules),
+        "note": "Build open playbook for next session. No chain data. new_entries must be skip.",
+    });
+
+    match client
+        .review(
+            &rules.llm,
+            LlmPhase::OvernightDigest,
+            &context,
+            true,
+        )
+        .await
+    {
+        Ok(review) => {
+            let review_json = review.to_json();
+            result.llm_review = Some(review_json.clone());
+            state.last_overnight_digest_at = Some(Utc::now());
+            state.open_playbook = Some(json!({
+                "updated_at": Utc::now(),
+                "market_commentary": review.market_commentary,
+                "positions": review.position_reviews,
+                "risk_alerts": review.risk_alerts,
+                "open_actions": review.entry_reasoning,
+            }));
+            state.last_llm_summary = Some(review_json.clone());
+            state.record_action("overnight_digest", review_json);
+
+            let should_notify = if rules.schedule.overnight.alert_on_risk_only {
+                !review.risk_alerts.is_empty()
+            } else {
+                !review.risk_alerts.is_empty() || !review.market_commentary.is_empty()
+            };
+            if should_notify {
+                notify_overnight_alert(telegram, &review).await;
+            }
+        }
+        Err(e) => result.skipped.push(format!("overnight digest failed: {e:#}")),
+    }
+
+    Ok(result.clone())
+}
+
+fn overnight_position_snapshots(state: &AgentState) -> Vec<Value> {
+    state
+        .open_positions
+        .values()
+        .map(|p| {
+            json!({
+                "position_id": p.position_id,
+                "underlying": p.underlying,
+                "expiry": p.expiry,
+                "strategy": p.strategy,
+                "entry_credit": p.entry_credit,
+                "max_loss_usd": p.max_loss_usd,
+                "status": "overnight (reconciled, no live marks)",
+            })
+        })
+        .collect()
+}
+
+async fn notify_at_open(telegram: Option<&TelegramNotifier>, playbook: Option<&Value>) {
+    let Some(tg) = telegram else { return };
+    if !tg.wants_actions() {
+        return;
+    }
+    let body = if let Some(pb) = playbook {
+        let commentary = pb
+            .get("market_commentary")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(no overnight playbook)");
+        format!("Market open — running full evaluation.\n\nOvernight playbook:\n{commentary}")
+    } else {
+        "Market open — running full evaluation.".into()
+    };
+    let _ = tg.send(&body).await;
+}
+
+async fn notify_overnight_alert(
+    telegram: Option<&TelegramNotifier>,
+    review: &super::llm::LlmReview,
+) {
+    let Some(tg) = telegram else { return };
+    if !tg.wants_actions() {
+        return;
+    }
+    let alerts = if review.risk_alerts.is_empty() {
+        String::new()
+    } else {
+        format!("\nAlerts: {}", review.risk_alerts.join("; "))
+    };
+    let _ = tg
+        .send(&format!(
+            "OVERNIGHT DIGEST\n{}{}",
+            review.market_commentary, alerts
+        ))
+        .await;
+}
+
 async fn market_is_open(market: &MarketDataApi) -> Result<bool> {
     let hours = market.markets().hours("option", None).await?;
     let open = hours
@@ -413,14 +609,6 @@ fn resolve_llm_phase(
         return Some(LlmPhase::Monitor);
     }
     None
-}
-
-fn should_run_monitor_review(rules: &RulesConfig, state: &AgentState) -> bool {
-    let every = rules.llm.review_every_ticks.max(1);
-    match state.last_llm_review_tick {
-        None => true,
-        Some(last) => state.tick_count.saturating_sub(last) >= every,
-    }
 }
 
 /// Every Nth LLM review uses web_model during selection phase.

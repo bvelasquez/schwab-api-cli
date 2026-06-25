@@ -1,22 +1,10 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
 
-pub fn pid_path(rules_path: &Path) -> PathBuf {
-    rules_path
-        .parent()
-        .map(|p| p.join("agent.pid"))
-        .unwrap_or_else(|| PathBuf::from("agent.pid"))
-}
-
-pub fn log_path(rules_path: &Path) -> PathBuf {
-    rules_path
-        .parent()
-        .map(|p| p.join("agent.log"))
-        .unwrap_or_else(|| PathBuf::from("agent.log"))
-}
+use super::paths::{log_path, pid_path};
 
 pub fn spawn_background(rules_path: &Path, extra_args: &[String]) -> Result<u32> {
     let pid_file = pid_path(rules_path);
