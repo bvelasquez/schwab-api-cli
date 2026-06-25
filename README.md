@@ -39,8 +39,8 @@ cd schwab-api-cli
 # Install from source
 cargo install --path crates/schwab-cli --force
 
-# Or install from crates.io (after published)
-# cargo install schwab-cli
+# Or install from crates.io
+cargo install schwab-api-cli
 
 # Configure credentials
 cp .env.example .env
@@ -580,27 +580,27 @@ schwab-api-cli/
 
 ## Publish to crates.io
 
-The CLI is published as [`schwab-cli`](https://crates.io/crates/schwab-cli) (library crates: `schwab-api`, `schwab-market-data`). Homepage: [soki-creative.com](https://soki-creative.com).
+The CLI is published as [`schwab-api-cli`](https://crates.io/crates/schwab-api-cli). Supporting libraries: `schwab-api-cli-core`, `schwab-api-cli-market-data`. Homepage: [soki-creative.com](https://soki-creative.com).
 
 ```bash
-cargo install schwab-cli
+cargo install schwab-api-cli
 ```
 
 The crates.io README includes the same **use at your own risk** disclaimer as this repository.
 
 ### Maintainer release flow
 
-1. Bump `version` in `crates/schwab-api`, `crates/schwab-market-data`, and `crates/schwab-cli` (keep versions aligned).
-2. Commit and push to `main`.
+1. Bump `version` in all three `crates/*/Cargo.toml` files (keep versions aligned).
+2. Commit and push to `main` (or run **Publish crates.io** workflow manually).
 
-The [`publish-crates`](.github/workflows/publish-crates.yml) GitHub Action publishes each crate whose version is not yet on crates.io (in dependency order). Requires repository secret `CRATES_IO_TOKEN` (same as the [simple-cycle](https://github.com/bvelasquez/simple-cycle) project).
-
-Local publish (requires `cargo login`):
+See **[docs/CRATES_IO_PUBLISH.md](docs/CRATES_IO_PUBLISH.md)** for crate name mapping and `CRATES_IO_TOKEN` setup.
 
 ```bash
-bash scripts/publish-crate.sh schwab-api
-bash scripts/publish-crate.sh schwab-market-data
-bash scripts/publish-crate.sh schwab-cli
+bash scripts/publish-crate.sh schwab-api-cli-core
+bash scripts/wait-for-crate.sh schwab-api-cli-core
+bash scripts/publish-crate.sh schwab-api-cli-market-data
+bash scripts/wait-for-crate.sh schwab-api-cli-market-data
+bash scripts/publish-crate.sh schwab-api-cli
 ```
 
 ## Development
@@ -609,7 +609,7 @@ bash scripts/publish-crate.sh schwab-cli
 cargo check --workspace
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
-cargo build --release -p schwab-cli
+cargo build --release -p schwab-api-cli
 ```
 
 ## Security
