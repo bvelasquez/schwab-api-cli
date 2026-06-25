@@ -10,6 +10,7 @@ on:
       - "Cargo.lock"
       - "scripts/publish-crate.sh"
       - ".github/workflows/publish-crates.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -24,23 +25,23 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Publish schwab-api
+      - name: Publish schwab-api-cli-core
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: bash scripts/publish-crate.sh schwab-api
+        run: bash scripts/publish-crate.sh schwab-api-cli-core
 
-      - name: Wait for schwab-api index
-        run: bash scripts/wait-for-crate.sh schwab-api
+      - name: Wait for schwab-api-cli-core index
+        run: bash scripts/wait-for-crate.sh schwab-api-cli-core
 
-      - name: Publish schwab-market-data
+      - name: Publish schwab-api-cli-market-data
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: bash scripts/publish-crate.sh schwab-market-data
+        run: bash scripts/publish-crate.sh schwab-api-cli-market-data
 
-      - name: Wait for schwab-market-data index
-        run: bash scripts/wait-for-crate.sh schwab-market-data
+      - name: Wait for schwab-api-cli-market-data index
+        run: bash scripts/wait-for-crate.sh schwab-api-cli-market-data
 
-      - name: Publish schwab-cli
+      - name: Publish schwab-api-cli
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-        run: bash scripts/publish-crate.sh schwab-cli
+        run: bash scripts/publish-crate.sh schwab-api-cli
