@@ -1,6 +1,7 @@
 pub mod accounts;
 pub mod agent;
 pub mod auth;
+pub mod disclaimer;
 pub mod market;
 pub mod meta;
 pub mod options;
