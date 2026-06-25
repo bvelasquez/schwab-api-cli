@@ -1,13 +1,19 @@
+use std::io::{stdout, Write};
 use std::path::PathBuf;
 
 use anyhow::Result;
 use serde_json::json;
 
-use crate::agent::{default_state_path, load_agent_state, load_state, log_path, pid_path, run_agent_loop, spawn_background, state_summary, stop_daemon};
+use crate::agent::{
+    load_state, log_path, pid_path, run_agent_loop, spawn_background, state_summary, stop_daemon,
+};
 use crate::cli::AgentCommands;
 use crate::config::RuntimeConfig;
-use crate::output::ResponseEnvelope;
+use crate::output::{OutputFormat, ResponseEnvelope};
 use crate::rules::{rules_json_schema, RulesConfig};
+use crate::ui::context::DashboardContext;
+use crate::ui::dashboard::render_dashboard;
+use crate::ui::discover::resolve_rules_file;
 
 pub async fn run(runtime: &RuntimeConfig, command: AgentCommands) -> Result<()> {
     match command {
@@ -29,28 +35,24 @@ pub async fn run(runtime: &RuntimeConfig, command: AgentCommands) -> Result<()> 
             ));
         }
         AgentCommands::Status { rules_file } => {
-            let (path, state) = if let Some(p) = rules_file {
-                let path = default_state_path(&p);
-                let agent_id = RulesConfig::load(&p)
-                    .map(|r| r.agent_id)
-                    .unwrap_or_default();
-                let state = if path.exists() {
-                    load_state(&path)?
+            if runtime.output == OutputFormat::Json {
+                if let Some(rules_path) = rules_file {
+                    let ctx = DashboardContext::load(&rules_path)?;
+                    runtime.emit(ResponseEnvelope::ok("agent status", ctx.to_json()));
                 } else {
-                    load_agent_state(&p, &agent_id)
-                };
-                (path, state)
+                    emit_legacy_status(runtime)?;
+                }
+            } else if let Some(rules_path) = rules_file {
+                let ctx = DashboardContext::load(&rules_path)?;
+                print!("{}", render_dashboard(&ctx));
+                stdout().flush().ok();
+            } else if let Ok(rules_path) = resolve_rules_file(None, runtime.is_interactive()) {
+                let ctx = DashboardContext::load(&rules_path)?;
+                print!("{}", render_dashboard(&ctx));
+                stdout().flush().ok();
             } else {
-                let path = directories::ProjectDirs::from("com", "schwabinvestbot", "schwab")
-                    .map(|d| d.data_local_dir().join("agent-state.json"))
-                    .unwrap_or_else(|| PathBuf::from("agent-state.json"));
-                let state = load_state(&path)?;
-                (path, state)
-            };
-            runtime.emit(ResponseEnvelope::ok(
-                "agent status",
-                json!({ "state_path": path, "state": state_summary(&state) }),
-            ));
+                emit_legacy_status(runtime)?;
+            }
         }
         AgentCommands::Run { file, once, background } => {
             if background {
@@ -67,7 +69,7 @@ pub async fn run(runtime: &RuntimeConfig, command: AgentCommands) -> Result<()> 
                 if runtime.yes {
                     extra.push("--yes".into());
                 }
-                if runtime.output == crate::output::OutputFormat::Json {
+                if runtime.output == OutputFormat::Json {
                     extra.push("--json".into());
                 }
                 let pid = spawn_background(&file, &extra)?;
@@ -92,5 +94,17 @@ pub async fn run(runtime: &RuntimeConfig, command: AgentCommands) -> Result<()> 
             ));
         }
     }
+    Ok(())
+}
+
+fn emit_legacy_status(runtime: &RuntimeConfig) -> Result<()> {
+    let path = directories::ProjectDirs::from("com", "schwabinvestbot", "schwab")
+        .map(|d| d.data_local_dir().join("agent-state.json"))
+        .unwrap_or_else(|| PathBuf::from("agent-state.json"));
+    let state = load_state(&path)?;
+    runtime.emit(ResponseEnvelope::ok(
+        "agent status",
+        json!({ "state_path": path, "state": state_summary(&state) }),
+    ));
     Ok(())
 }

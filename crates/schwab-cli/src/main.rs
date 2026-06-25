@@ -8,6 +8,7 @@ mod disclaimer;
 mod env_schema;
 mod human;
 mod instructions;
+mod market_hours;
 mod market_info;
 mod mode;
 mod notify;
@@ -22,6 +23,7 @@ mod rules;
 mod safety;
 mod safety_config;
 mod tls;
+mod ui;
 
 use anyhow::Result;
 use clap::Parser;
@@ -77,9 +79,21 @@ async fn run() -> Result<()> {
         Some(Commands::Market { command }) => commands::market::run(&runtime, command).await,
         Some(Commands::Options { command }) => commands::options::run(&runtime, command).await,
         Some(Commands::Agent { command }) => commands::agent::run(&runtime, command).await,
+        Some(Commands::Dashboard { file }) => commands::ui_cmd::run_dashboard(&runtime, file).await,
+        Some(Commands::Watch { file, monitor_only }) => {
+            commands::ui_cmd::run_watch(&runtime, file, monitor_only).await
+        }
+        Some(Commands::Rules { command }) => commands::ui_cmd::run_rules(&runtime, command).await,
         None => {
-            print_top_level_help(&runtime);
-            Ok(())
+            if runtime.mode.is_human()
+                && runtime.output == crate::output::OutputFormat::Pretty
+                && runtime.is_tty()
+            {
+                ui::menu::run_interactive_menu(&runtime).await
+            } else {
+                print_top_level_help(&runtime);
+                Ok(())
+            }
         }
     }
 }
@@ -118,7 +132,9 @@ fn print_top_level_help(runtime: &RuntimeConfig) {
             "schwab --help --json",
             "schwab capabilities --json",
             "schwab env schema --json",
-            "schwab instructions --json"
+            "schwab instructions --json",
+            "schwab dashboard",
+            "schwab watch"
         ],
         "mode": runtime.mode.as_str(),
     }))

@@ -17,6 +17,9 @@ fn capabilities_has_trader_commands() {
     assert!(cmds.iter().any(|c| c.path == "options open" && c.mutation));
     assert!(cmds.iter().any(|c| c.path == "agent run" && c.mutation));
     assert!(cmds.iter().any(|c| c.path == "agent stop" && c.mutation));
+    assert!(cmds.iter().any(|c| c.path == "dashboard"));
+    assert!(cmds.iter().any(|c| c.path == "watch"));
+    assert!(cmds.iter().any(|c| c.path == "rules show"));
     assert!(cmds.iter().any(|c| c.path == "disclaimer show"));
     assert!(cmds.iter().any(|c| c.path == "disclaimer accept" && c.mutation));
 }

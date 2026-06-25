@@ -18,6 +18,8 @@ pub struct RuntimeConfig {
     pub dry_run: bool,
     /// Explicit trusted agent mode — required with --yes for autonomous trading.
     pub trust: bool,
+    /// When true, agent ticks do not print to stdout (watch TUI mode).
+    pub suppress_tick_output: bool,
     pub safety: SafetyContext,
     pub sink: OutputSink,
 }
@@ -31,6 +33,7 @@ impl RuntimeConfig {
             yes: cli.yes,
             dry_run: cli.dry_run,
             trust: cli.trust,
+            suppress_tick_output: false,
             safety: SafetyContext::new(safety_cfg),
             sink: OutputSink::stdout(),
         })

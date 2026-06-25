@@ -35,6 +35,21 @@ pub fn log_path(rules_path: &Path) -> PathBuf {
     dir.join(format!("agent-{stem}.log"))
 }
 
+/// Append a line to the per-rules agent log (used by background daemon stdout and watch-mode ticks).
+pub fn append_agent_log(rules_path: &Path, line: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let log = log_path(rules_path);
+    if let Some(parent) = log.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log)?;
+    writeln!(file, "{line}")?;
+    Ok(())
+}
+
 /// Load persisted state for a rules file, migrating legacy `agent-state.json` when agent_id matches.
 pub fn load_agent_state(rules_path: &Path, agent_id: &str) -> super::state::AgentState {
     use super::state::{load_state, save_state};

@@ -74,7 +74,7 @@ llm:
   selection_model: anthropic/claude-sonnet-4
   monitor_model: google/gemini-2.5-flash
   web_model: perplexity/sonar
-  review_every_ticks: 5
+  review_every_ticks: 15
   web_research_every_reviews: 3
   max_tokens: 2000
   veto_entries: true
