@@ -11,6 +11,7 @@ use crate::options::{
 };
 use crate::rules::{ExitRules, RulesConfig};
 
+use super::market_context::vertical_open_position_context;
 use super::state::{AgentState, TrackedPosition};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +73,256 @@ pub fn infer_entry_credit_from_legs(legs: &[OptionPositionLeg]) -> Option<f64> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct PositionMonitorResult {
+    pub exit: Option<ExitEvaluation>,
+    pub snapshot: Value,
+}
+
+struct VerticalChainSnapshot {
+    chain: Value,
+    strike_map: Value,
+    short_strike: f64,
+    long_strike: f64,
+    is_put: bool,
+    debit_to_close: f64,
+}
+
+/// Evaluate mechanical exit rules and build an LLM-ready monitor snapshot (single chain fetch).
+pub async fn evaluate_position_monitor(
+    market: &MarketDataApi,
+    group: &OptionPositionGroup,
+    rules: &RulesConfig,
+    today: NaiveDate,
+    tracked: Option<&TrackedPosition>,
+) -> Result<PositionMonitorResult> {
+    let entry_credit = tracked
+        .and_then(|p| p.entry_credit)
+        .or_else(|| infer_entry_credit_from_legs(&group.legs));
+
+    let dte = group
+        .legs
+        .first()
+        .and_then(|l| l.parsed.as_ref())
+        .map(|p| days_to_expiry(p.expiry, today))
+        .unwrap_or(0);
+
+    let chain_result = fetch_vertical_chain_snapshot(market, group).await;
+
+    let (exit, mark_opt, market_context) = match chain_result {
+        Ok(chain_snap) => {
+            let profit_pct = entry_credit.filter(|c| *c > f64::EPSILON).map(|entry| {
+                ((entry - chain_snap.debit_to_close) / entry) * 100.0
+            });
+            let mark = SpreadMark {
+                entry_credit: entry_credit.unwrap_or(0.0),
+                debit_to_close: chain_snap.debit_to_close,
+                profit_pct: profit_pct.unwrap_or(0.0),
+                dte,
+                source: "chain".into(),
+            };
+            let exit = evaluate_exit_from_mark(rules, entry_credit, &mark);
+            let expiry_date = chrono::NaiveDate::parse_from_str(&group.expiry, "%Y-%m-%d")
+                .ok()
+                .or_else(|| {
+                    group
+                        .legs
+                        .first()
+                        .and_then(|l| l.parsed.as_ref())
+                        .map(|p| p.expiry)
+                })
+                .unwrap_or(today);
+            let ctx = vertical_open_position_context(
+                &chain_snap.chain,
+                &group.underlying,
+                today,
+                expiry_date,
+                &chain_snap.strike_map,
+                chain_snap.short_strike,
+                chain_snap.long_strike,
+                chain_snap.is_put,
+                entry_credit,
+                Some(chain_snap.debit_to_close),
+                profit_pct,
+                dte,
+            );
+            (exit, Some(mark), Some(ctx))
+        }
+        Err(_) => {
+            let exit = if let Some(credit) = entry_credit.filter(|c| *c > 0.0) {
+                evaluate_dte_only_with_credit(group, rules, today, credit, dte)?
+            } else {
+                evaluate_dte_only(group, rules, today)?
+            };
+            (exit, None, None)
+        }
+    };
+
+    let snapshot = monitor_snapshot_json(
+        group,
+        tracked,
+        &exit,
+        mark_opt.as_ref(),
+        market_context,
+        &rules.exit_rules,
+    );
+    Ok(PositionMonitorResult { exit, snapshot })
+}
+
+fn evaluate_exit_from_mark(
+    rules: &RulesConfig,
+    entry_credit: Option<f64>,
+    mark: &SpreadMark,
+) -> Option<ExitEvaluation> {
+    let entry_credit = entry_credit.filter(|c| *c > f64::EPSILON)?;
+    let mark = SpreadMark {
+        entry_credit,
+        ..mark.clone()
+    };
+
+    if mark.profit_pct >= rules.exit_rules.profit_target_pct {
+        return Some(ExitEvaluation {
+            reason: "profit_target".into(),
+            mark,
+        });
+    }
+
+    let stop_debit = entry_credit * (rules.exit_rules.stop_loss_pct / 100.0);
+    if mark.debit_to_close >= stop_debit {
+        return Some(ExitEvaluation {
+            reason: "stop_loss".into(),
+            mark,
+        });
+    }
+
+    if mark.dte <= rules.exit_rules.dte_close as i64 {
+        return Some(ExitEvaluation {
+            reason: "dte_close".into(),
+            mark,
+        });
+    }
+
+    None
+}
+
+async fn fetch_vertical_chain_snapshot(
+    market: &MarketDataApi,
+    group: &OptionPositionGroup,
+) -> Result<VerticalChainSnapshot> {
+    let (short_leg, long_leg) = vertical_legs(group)?;
+    let short_strike = short_leg
+        .parsed
+        .as_ref()
+        .map(|p| p.strike)
+        .context("short leg missing strike")?;
+    let long_strike = long_leg
+        .parsed
+        .as_ref()
+        .map(|p| p.strike)
+        .context("long leg missing strike")?;
+    let is_put = short_leg
+        .parsed
+        .as_ref()
+        .is_some_and(|p| p.put_call == 'P');
+
+    let contract_type = if is_put { "PUT" } else { "CALL" };
+    let chain = market
+        .chains()
+        .get(&ChainQuery {
+            symbol: &group.underlying,
+            contract_type: Some(contract_type),
+            strike_count: Some(20),
+            include_underlying_quote: Some(true),
+            ..Default::default()
+        })
+        .await?;
+
+    let map_key = if is_put {
+        "putExpDateMap"
+    } else {
+        "callExpDateMap"
+    };
+    let strike_map = find_expiry_strikes(&chain, map_key, &group.expiry)
+        .context("expiry not found in chain")?;
+
+    let short_ask = strike_quote_field(&strike_map, short_strike, "ask")?;
+    let long_bid = strike_quote_field(&strike_map, long_strike, "bid")?;
+    let debit_to_close = (short_ask - long_bid).max(0.0);
+
+    Ok(VerticalChainSnapshot {
+        chain,
+        strike_map,
+        short_strike,
+        long_strike,
+        is_put,
+        debit_to_close,
+    })
+}
+
+pub fn monitor_snapshot_json(
+    group: &OptionPositionGroup,
+    tracked: Option<&TrackedPosition>,
+    exit_eval: &Option<ExitEvaluation>,
+    mark: Option<&SpreadMark>,
+    market_context: Option<Value>,
+    exit_rules: &ExitRules,
+) -> Value {
+    let entry_credit = tracked
+        .and_then(|p| p.entry_credit)
+        .or_else(|| infer_entry_credit_from_legs(&group.legs));
+
+    let status = match exit_eval {
+        Some(e) => format!("exit: {}", e.reason),
+        None => "holding".into(),
+    };
+
+    let mut snapshot = json!({
+        "position_id": group.id,
+        "underlying": group.underlying,
+        "expiry": group.expiry,
+        "strategy": tracked
+            .map(|t| t.strategy.as_str())
+            .unwrap_or_else(|| group.strategy_hint.as_str()),
+        "entry_credit": entry_credit,
+        "net_market_value": group.net_market_value,
+        "status": status,
+    });
+
+    if let Some(eval) = exit_eval {
+        snapshot["profit_pct"] = json!(eval.mark.profit_pct);
+        snapshot["dte"] = json!(eval.mark.dte);
+        snapshot["debit_to_close"] = json!(eval.mark.debit_to_close);
+    } else if let Some(m) = mark {
+        snapshot["profit_pct"] = json!(m.profit_pct);
+        snapshot["dte"] = json!(m.dte);
+        snapshot["debit_to_close"] = json!(m.debit_to_close);
+    }
+
+    if let Some(ctx) = market_context {
+        snapshot["market_context"] = ctx;
+    }
+
+    if let Some(m) = mark.or(exit_eval.as_ref().map(|e| &e.mark)) {
+        let entry = m.entry_credit;
+        let stop_debit = entry * (exit_rules.stop_loss_pct / 100.0);
+        snapshot["mechanical_rules"] = json!({
+            "profit_target_pct": exit_rules.profit_target_pct,
+            "stop_loss_pct": exit_rules.stop_loss_pct,
+            "stop_debit_threshold_per_share": stop_debit,
+            "current_debit_to_close": m.debit_to_close,
+            "stop_triggered": m.debit_to_close >= stop_debit,
+            "profit_target_triggered": m.profit_pct >= exit_rules.profit_target_pct,
+            "note": "Mechanical exits use debit_to_close from the chain, NOT net_market_value. If stop_triggered is false, do not alert that the stop was hit."
+        });
+    }
+
+    snapshot["net_market_value_note"] = json!(
+        "Schwab leg market_value sum in dollars; not comparable to per-share entry_credit or stop_debit_threshold."
+    );
+
+    snapshot
+}
+
 pub async fn evaluate_exit_for_group(
     market: &MarketDataApi,
     group: &OptionPositionGroup,
@@ -120,29 +371,7 @@ pub async fn evaluate_exit_for_group(
         source: "chain".into(),
     };
 
-    if profit_pct >= rules.exit_rules.profit_target_pct {
-        return Ok(Some(ExitEvaluation {
-            reason: "profit_target".into(),
-            mark,
-        }));
-    }
-
-    let stop_debit = entry_credit * (rules.exit_rules.stop_loss_pct / 100.0);
-    if debit_to_close >= stop_debit {
-        return Ok(Some(ExitEvaluation {
-            reason: "stop_loss".into(),
-            mark,
-        }));
-    }
-
-    if dte <= rules.exit_rules.dte_close as i64 {
-        return Ok(Some(ExitEvaluation {
-            reason: "dte_close".into(),
-            mark,
-        }));
-    }
-
-    Ok(None)
+    Ok(evaluate_exit_from_mark(rules, Some(entry_credit), &mark))
 }
 
 fn evaluate_dte_only(
@@ -197,45 +426,9 @@ async fn estimate_debit_to_close(
     market: &MarketDataApi,
     group: &OptionPositionGroup,
 ) -> Result<f64> {
-    let (short_leg, long_leg) = vertical_legs(group)?;
-    let short_strike = short_leg
-        .parsed
-        .as_ref()
-        .map(|p| p.strike)
-        .context("short leg missing strike")?;
-    let long_strike = long_leg
-        .parsed
-        .as_ref()
-        .map(|p| p.strike)
-        .context("long leg missing strike")?;
-    let put = short_leg
-        .parsed
-        .as_ref()
-        .is_some_and(|p| p.put_call == 'P');
-
-    let contract_type = if put { "PUT" } else { "CALL" };
-    let chain = market
-        .chains()
-        .get(&ChainQuery {
-            symbol: &group.underlying,
-            contract_type: Some(contract_type),
-            strike_count: Some(20),
-            include_underlying_quote: Some(false),
-            ..Default::default()
-        })
-        .await?;
-
-    let map_key = if put {
-        "putExpDateMap"
-    } else {
-        "callExpDateMap"
-    };
-    let strike_map = find_expiry_strikes(&chain, map_key, &group.expiry)
-        .context("expiry not found in chain")?;
-
-    let short_ask = strike_quote_field(&strike_map, short_strike, "ask")?;
-    let long_bid = strike_quote_field(&strike_map, long_strike, "bid")?;
-    Ok((short_ask - long_bid).max(0.0))
+    Ok(fetch_vertical_chain_snapshot(market, group)
+        .await?
+        .debit_to_close)
 }
 
 fn vertical_legs(group: &OptionPositionGroup) -> Result<(&OptionPositionLeg, &OptionPositionLeg)> {
@@ -348,6 +541,39 @@ pub fn exit_rules_summary(rules: &ExitRules) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rules::{ExitRules, RulesConfig};
+
+    #[test]
+    fn evaluate_exit_from_mark_profit_target() {
+        let exit_rules = ExitRules {
+            profit_target_pct: 50.0,
+            stop_loss_pct: 200.0,
+            dte_close: 21,
+        };
+        let rules = RulesConfig {
+            version: 1,
+            agent_id: "t".into(),
+            accounts: vec![],
+            schedule: Default::default(),
+            strategies: Default::default(),
+            watchlist: vec![],
+            entry_rules: Default::default(),
+            exit_rules,
+            risk: Default::default(),
+            execution: Default::default(),
+            llm: Default::default(),
+            notify: Default::default(),
+        };
+        let mark = SpreadMark {
+            entry_credit: 0.25,
+            debit_to_close: 0.10,
+            profit_pct: 60.0,
+            dte: 30,
+            source: "test".into(),
+        };
+        let exit = evaluate_exit_from_mark(&rules, Some(0.25), &mark);
+        assert_eq!(exit.as_ref().map(|e| e.reason.as_str()), Some("profit_target"));
+    }
 
     #[test]
     fn profit_target_triggers_at_half_credit() {

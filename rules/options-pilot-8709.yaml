@@ -1,0 +1,125 @@
+version: 1
+agent_id: options-pilot-8709
+
+accounts:
+  - hash: FB796575B24D9362CD379B656C39362CE53CAD49C5218098E9D890C00A71AFD8
+    label: IRA account ending 8709
+    type: ira
+    enabled: true
+
+schedule:
+  tick_interval_seconds: 120
+  market_hours_only: true
+  timezone: America/New_York
+  overnight:
+    enabled: true
+    tick_interval_seconds: 3600
+    web_digest: true
+    skip_llm_when_flat: true
+    alert_on_risk_only: true
+
+strategies:
+  vertical:
+    enabled: true
+  iron_condor:
+    enabled: false
+
+watchlist:
+  - SPY
+  - IWM
+
+entry_rules:
+  vertical:
+    type: put_credit
+    dte_min: 30
+    dte_max: 45
+    min_credit: 0.25
+    max_width: 2
+    short_delta_min: 0.15
+    short_delta_max: 0.30
+    max_open_positions: 2
+    max_contracts_per_trade: 1
+  iron_condor:
+    dte_min: 30
+    dte_max: 45
+    min_credit: 1.00
+    wing_width: 2
+    short_delta: 0.16
+    max_open_positions: 0
+    max_contracts_per_trade: 1
+
+exit_rules:
+  profit_target_pct: 50
+  stop_loss_pct: 200
+  dte_close: 21
+
+risk:
+  # ~$4k cash sleeve; 2 spreads × ~$170 max loss each
+  max_portfolio_risk_usd: 500
+  max_risk_per_trade_usd: 250
+  max_trades_per_day: 1
+  allowed_underlyings:
+    - SPY
+    - IWM
+  blocked_events: []
+
+execution:
+  order_type: limit
+  require_preview: true
+  wait_for_fill: true
+  fill_timeout_seconds: 300
+
+llm:
+  enabled: true
+  selection_model: anthropic/claude-sonnet-4
+  monitor_model: google/gemini-2.5-flash
+  web_model: perplexity/sonar
+  review_every_ticks: 5
+  web_research_every_reviews: 3
+  max_tokens: 2000
+  veto_entries: true
+  allow_llm_exits: false
+  prompts:
+    selection: |
+      You are a conservative income options advisor for an IRA (~$637k total, ~$4k
+      options cash sleeve). Each candidate_entries[] item includes market_context with
+      live Schwab chain data. Use it — do not defer for missing price/IV.
+      Approve (proceed) when premium is adequate, strikes are OTM, chain_iv is not
+      extreme (>50). Defer only for clear catalyst/macro risk. Max one new trade per day.
+    selection_web: |
+      Research macro events, FOMC/CPI, and earnings affecting SPY/IWM. Defer entries
+      if a major catalyst falls inside the trade window.
+    selection_context: |
+      IRA 8709 options pilot: ~$4k cash from SGOV trim. Income ETF core (JAAA/JEPI/JEPQ)
+      is separate — do not recommend touching those holdings. $2-wide put credit verticals,
+      30-45 DTE, 50% profit / 2x credit stop / 21 DTE. Max 2 open spreads, 1 contract each.
+    monitor: |
+      Monitor open put credit verticals using each position's market_context (live price,
+      short_delta, short_otm_pct, approx OTM/ITM probability, distance to short strike).
+      Mechanical exits already run every tick at 50% profit, 2x credit stop, and 21 DTE —
+      do NOT recommend close for routine P/L.
+      CRITICAL: Use mechanical_rules.current_debit_to_close vs stop_debit_threshold_per_share
+      for stop logic. NEVER use net_market_value — it is dollars, not per-share debit.
+      Only risk_alert a stop hit when mechanical_rules.stop_triggered is true.
+      Early DTE swings are normal; do not panic on unrealized marks hours after entry.
+      Recommend hold when |short_delta| < 0.30 and short_otm_pct > 3%.
+      Recommend watch when |short_delta| >= 0.30, watch_near_short_strike is true, or
+      macro/event risk is developing.
+      Recommend close (urgency high only) only for thesis-breaking gap/assignment risk —
+      we do not auto-close on LLM advice in this pilot.
+    monitor_context: |
+      IRA 8709 pilot: IWM/SPY $2-wide put credit verticals, ~5% OTM at entry, 30-45 DTE.
+      Use market_context greeks — do not infer delta from memory. Flag watch items early;
+      reserve close for genuine breach of the income thesis.
+    overnight: |
+      US options market is closed. Research futures, Asia/Europe, and today's calendar for
+      SPY/IWM. Build an OPEN PLAYBOOK for the bell: gap risk vs short strikes, hold/close
+      guidance. new_entries must be skip. Only high-urgency risk_alerts for thesis breaks.
+    overnight_context: |
+      IRA 8709 pilot. IWM put credit spreads ~5% OTM, 30-45 DTE. Mechanical exits at open.
+
+notify:
+  telegram:
+    enabled: true
+    notify_every_tick: false
+    notify_on_actions: true

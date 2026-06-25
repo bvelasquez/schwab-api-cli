@@ -16,6 +16,104 @@ Respond ONLY with valid JSON matching this schema:
   "risk_alerts": ["string"]
 }"#;
 
+#[derive(Debug, Clone, Copy)]
+enum LlmResponseFormat {
+    JsonSchema,
+    JsonObject,
+    Plain,
+}
+
+fn llm_review_json_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "market_commentary": {
+                "type": "string",
+                "description": "Brief market / portfolio commentary"
+            },
+            "web_insights": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Optional web research bullets (empty array if none)"
+            },
+            "positions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "position_id": {
+                            "type": "string",
+                            "description": "Position id, e.g. IWM|2026-07-31"
+                        },
+                        "recommendation": {
+                            "type": "string",
+                            "description": "hold (comfortably OTM), watch (elevated delta/near strike), or close (thesis break only)"
+                        },
+                        "urgency": {
+                            "type": "string",
+                            "description": "low, medium, or high (high only for imminent assignment/gap through short strike)"
+                        },
+                        "reasoning": {
+                            "type": "string",
+                            "description": "Cite market_context: short_delta, short_otm_pct, distance_to_short_strike_usd"
+                        }
+                    },
+                    "required": ["position_id", "recommendation", "urgency", "reasoning"],
+                    "additionalProperties": false
+                }
+            },
+            "new_entries": {
+                "type": "object",
+                "properties": {
+                    "recommendation": {
+                        "type": "string",
+                        "description": "proceed, defer, or skip"
+                    },
+                    "reasoning": { "type": "string" }
+                },
+                "required": ["recommendation", "reasoning"],
+                "additionalProperties": false
+            },
+            "risk_alerts": {
+                "type": "array",
+                "items": { "type": "string" }
+            }
+        },
+        "required": [
+            "market_commentary",
+            "web_insights",
+            "positions",
+            "new_entries",
+            "risk_alerts"
+        ],
+        "additionalProperties": false
+    })
+}
+
+fn response_format_for_mode(mode: LlmResponseFormat) -> Option<Value> {
+    match mode {
+        LlmResponseFormat::JsonSchema => Some(json!({
+            "type": "json_schema",
+            "json_schema": {
+                "name": "agent_review",
+                "strict": true,
+                "schema": llm_review_json_schema()
+            }
+        })),
+        LlmResponseFormat::JsonObject => Some(json!({ "type": "json_object" })),
+        LlmResponseFormat::Plain => None,
+    }
+}
+
+fn plugins_for_mode(mode: LlmResponseFormat) -> Option<Value> {
+    match mode {
+        LlmResponseFormat::JsonSchema | LlmResponseFormat::JsonObject => {
+            Some(json!([{ "id": "response-healing" }]))
+        }
+        LlmResponseFormat::Plain => None,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmReview {
     pub phase: String,
@@ -64,18 +162,49 @@ impl OpenRouterClient {
         let system = build_system_prompt(config, phase, use_web);
         let user = build_user_message(config, phase, context)?;
 
+        let modes = if use_web {
+            vec![LlmResponseFormat::Plain]
+        } else {
+            vec![LlmResponseFormat::JsonSchema, LlmResponseFormat::JsonObject]
+        };
+
+        let mut last_err = None;
+        for mode in modes {
+            match self
+                .review_with_format(&model, &system, &user, config.max_tokens, mode)
+                .await
+            {
+                Ok(review) => return Ok(parse_llm_review(phase, &model, use_web, review)),
+                Err(err) if use_web || !is_retryable_format_error(&err) => return Err(err),
+                Err(err) => last_err = Some(err),
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("LLM review failed")))
+    }
+
+    async fn review_with_format(
+        &self,
+        model: &str,
+        system: &str,
+        user: &str,
+        max_tokens: u32,
+        mode: LlmResponseFormat,
+    ) -> Result<Value> {
         let mut body = json!({
             "model": model,
             "messages": [
                 { "role": "system", "content": system },
                 { "role": "user", "content": user }
             ],
-            "max_tokens": config.max_tokens,
+            "max_tokens": max_tokens,
         });
 
-        // Perplexity/Sonar has built-in web search but rejects json_object response_format.
-        if !use_web {
-            body["response_format"] = json!({ "type": "json_object" });
+        if let Some(response_format) = response_format_for_mode(mode) {
+            body["response_format"] = response_format;
+        }
+        if let Some(plugins) = plugins_for_mode(mode) {
+            body["plugins"] = plugins;
         }
 
         let resp = self
@@ -108,23 +237,88 @@ impl OpenRouterClient {
             anyhow::bail!("OpenRouter error {status}: {message}");
         }
 
-        let content = payload
-            .pointer("/choices/0/message/content")
-            .and_then(|v| v.as_str())
-            .context("OpenRouter response missing content")?;
-
-        let parsed: Value = serde_json::from_str(content)
-            .or_else(|_| extract_json_object(content))
-            .context("LLM returned non-JSON content")?;
-
-        Ok(parse_llm_review(phase, model, use_web, parsed))
+        let content = extract_message_content(&payload)?;
+        parse_llm_json_content(&content)
     }
+}
+
+fn is_retryable_format_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string().to_ascii_lowercase();
+    msg.contains("json_schema")
+        || msg.contains("structured")
+        || msg.contains("response_format")
+        || msg.contains("not support")
+        || msg.contains("unsupported")
+        || msg.contains("invalid parameter")
+}
+
+fn extract_message_content(payload: &Value) -> Result<String> {
+    let message = payload
+        .pointer("/choices/0/message")
+        .context("OpenRouter response missing message")?;
+
+    if let Some(text) = message_content_as_str(message.get("content")) {
+        if !text.trim().is_empty() {
+            return Ok(text);
+        }
+    }
+
+    if let Some(reasoning) = message_content_as_str(message.get("reasoning")) {
+        if !reasoning.trim().is_empty() {
+            return Ok(reasoning);
+        }
+    }
+
+    if let Some(refusal) = message.get("refusal").and_then(|v| v.as_str()) {
+        if !refusal.trim().is_empty() {
+            anyhow::bail!("LLM refused request: {refusal}");
+        }
+    }
+
+    anyhow::bail!(
+        "OpenRouter response missing usable content (model may not support structured output for this route)"
+    )
+}
+
+fn message_content_as_str(content: Option<&Value>) -> Option<String> {
+    let content = content?;
+    if let Some(text) = content.as_str() {
+        return Some(text.to_string());
+    }
+    if let Some(parts) = content.as_array() {
+        let mut out = String::new();
+        for part in parts {
+            if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                out.push_str(text);
+            }
+        }
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
+        }
+    } else {
+        None
+    }
+}
+
+fn parse_llm_json_content(content: &str) -> Result<Value> {
+    serde_json::from_str(content.trim())
+        .or_else(|_| extract_json_object(content))
+        .with_context(|| format_llm_parse_error(content))
+}
+
+fn format_llm_parse_error(content: &str) -> String {
+    let preview: String = content.chars().take(240).collect();
+    let suffix = if content.chars().count() > 240 { "…" } else { "" };
+    format!("LLM returned non-JSON content: {preview}{suffix}")
 }
 
 pub fn build_system_prompt(config: &LlmConfig, phase: LlmPhase, use_web: bool) -> String {
     let instructions = match phase {
         LlmPhase::Selection => config.prompts.effective_selection_instructions(use_web),
         LlmPhase::Monitor => config.prompts.effective_monitor_instructions(),
+        LlmPhase::OvernightDigest => config.prompts.effective_overnight_instructions(),
     };
     format!("{instructions}\n{RESPONSE_JSON_SCHEMA}")
 }
@@ -219,6 +413,7 @@ fn phase_label(phase: LlmPhase) -> &'static str {
     match phase {
         LlmPhase::Selection => "selection",
         LlmPhase::Monitor => "monitor",
+        LlmPhase::OvernightDigest => "overnight_digest",
     }
 }
 
@@ -258,14 +453,31 @@ impl LlmReview {
 }
 
 /// Extract JSON object from markdown fences or leading prose (web models).
-fn extract_json_object(content: &str) -> Result<Value> {
-    if let Ok(v) = serde_json::from_str(content) {
+pub fn extract_json_object(content: &str) -> Result<Value> {
+    let trimmed = content.trim();
+    if let Ok(v) = serde_json::from_str(trimmed) {
         return Ok(v);
     }
-    if let Some(start) = content.find('{') {
-        if let Some(end) = content.rfind('}') {
+
+    for fence in ["```json", "```JSON", "```"] {
+        if let Some(start) = trimmed.find(fence) {
+            let after = &trimmed[start + fence.len()..];
+            if let Some(end) = after.find("```") {
+                let block = after[..end].trim();
+                if let Ok(v) = serde_json::from_str(block) {
+                    return Ok(v);
+                }
+                if let Ok(v) = extract_json_object(block) {
+                    return Ok(v);
+                }
+            }
+        }
+    }
+
+    if let Some(start) = trimmed.find('{') {
+        if let Some(end) = trimmed.rfind('}') {
             if end > start {
-                return Ok(serde_json::from_str(&content[start..=end])?);
+                return Ok(serde_json::from_str(&trimmed[start..=end])?);
             }
         }
     }
@@ -326,5 +538,29 @@ mod tests {
         };
         let msg = build_user_message(&config, LlmPhase::Selection, &json!({})).unwrap();
         assert!(!msg.contains("Strategy context:"));
+    }
+
+    #[test]
+    fn extracts_json_from_markdown_fence() {
+        let raw = r#"Here is the review:
+```json
+{"market_commentary":"ok","web_insights":[],"positions":[],"new_entries":{"recommendation":"proceed","reasoning":"fine"},"risk_alerts":[]}
+```"#;
+        let parsed = parse_llm_json_content(raw).unwrap();
+        assert_eq!(
+            parsed.pointer("/new_entries/recommendation").and_then(|v| v.as_str()),
+            Some("proceed")
+        );
+    }
+
+    #[test]
+    fn llm_review_schema_has_required_fields() {
+        let schema = llm_review_json_schema();
+        let required = schema
+            .get("required")
+            .and_then(|v| v.as_array())
+            .expect("required array");
+        assert!(required.iter().any(|v| v.as_str() == Some("positions")));
+        assert!(required.iter().any(|v| v.as_str() == Some("new_entries")));
     }
 }
