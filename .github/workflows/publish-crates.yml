@@ -9,6 +9,8 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "scripts/publish-crate.sh"
+      - "scripts/wait-for-crate.sh"
+      - "scripts/crates-io-common.sh"
       - ".github/workflows/publish-crates.yml"
   workflow_dispatch:
 

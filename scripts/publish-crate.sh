@@ -2,14 +2,14 @@
 # Publish a workspace crate to crates.io if this version is not already published.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=crates-io-common.sh
+source "${SCRIPT_DIR}/crates-io-common.sh"
+
 CRATE="${1:?usage: publish-crate.sh <crate-name>}"
+VERSION="$(crate_version "$CRATE")"
 
-VERSION="$(cargo metadata --format-version=1 --no-deps \
-  | python3 -c "import json,sys; pkgs=json.load(sys.stdin)['packages']; print(next(p['version'] for p in pkgs if p['name']=='${CRATE}'))")"
-
-STATUS="$(curl -s -o /dev/null -w "%{http_code}" "https://crates.io/api/v1/crates/${CRATE}/${VERSION}")"
-
-if [ "$STATUS" = "200" ]; then
+if crate_version_on_registry "$CRATE" "$VERSION"; then
   echo "SKIP: ${CRATE} ${VERSION} is already on crates.io"
   exit 0
 fi
