@@ -417,6 +417,34 @@ pub fn all_commands() -> Vec<CommandSpec> {
             mutation: true,
             requires_auth: false,
         },
+        CommandSpec {
+            path: "dashboard",
+            description: "Rich terminal dashboard (agent, rules, positions)",
+            http: None,
+            mutation: false,
+            requires_auth: false,
+        },
+        CommandSpec {
+            path: "watch",
+            description: "Run agent in-process with live TUI (or attach to existing daemon)",
+            http: None,
+            mutation: false,
+            requires_auth: false,
+        },
+        CommandSpec {
+            path: "rules show",
+            description: "Human-readable rules configuration breakdown",
+            http: None,
+            mutation: false,
+            requires_auth: false,
+        },
+        CommandSpec {
+            path: "rules list",
+            description: "List discoverable rules/*.yaml files",
+            http: None,
+            mutation: false,
+            requires_auth: false,
+        },
     ]
 }
 
@@ -432,6 +460,9 @@ pub fn command_tree() -> Value {
         { "group": "market", "commands": ["info", "quotes", "quote", "history", "instrument", "instrument-by-cusip", "hours", "hours-for"] },
         { "group": "options", "commands": ["chain", "positions", "schema", "validate", "preview", "open", "close"] },
         { "group": "agent", "commands": ["schema", "validate", "status", "run", "stop"] },
+        { "group": "dashboard", "commands": ["dashboard"] },
+        { "group": "watch", "commands": ["watch"] },
+        { "group": "rules", "commands": ["show", "list"] },
         { "group": "orders", "commands": ["schema", "validate", "list", "all", "get", "wait", "place", "preview", "cancel", "replace"] },
         { "group": "transactions", "commands": ["list", "get"] },
         { "group": "user", "commands": ["preference"] }

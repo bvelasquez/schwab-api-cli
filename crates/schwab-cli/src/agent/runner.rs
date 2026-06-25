@@ -83,21 +83,35 @@ pub async fn run_agent_loop(
         state.last_tick = Some(Utc::now());
         save_state(&state_path, &state)?;
 
-        runtime.emit(crate::output::ResponseEnvelope::ok(
-            if once { "agent run once" } else { "agent tick" },
-            json!({
-                "agent_id": rules.agent_id,
-                "session": result.session,
-                "at_open": result.at_open,
-                "next_sleep_seconds": result.next_sleep_seconds,
-                "signals": result.signals,
-                "actions": result.actions,
-                "skipped": result.skipped,
-                "monitored_positions": result.monitored_positions,
-                "llm_review": result.llm_review,
-                "dry_run": runtime.dry_run,
-            }),
-        ));
+        let tick_payload = json!({
+            "agent_id": rules.agent_id,
+            "session": result.session,
+            "at_open": result.at_open,
+            "next_sleep_seconds": result.next_sleep_seconds,
+            "signals": result.signals,
+            "actions": result.actions,
+            "skipped": result.skipped,
+            "monitored_positions": result.monitored_positions,
+            "llm_review": result.llm_review,
+            "dry_run": runtime.dry_run,
+        });
+
+        if runtime.suppress_tick_output {
+            let summary = format!(
+                "{} session={} signals={} actions={} skipped={}",
+                Utc::now().format("%Y-%m-%d %H:%M:%S"),
+                result.session,
+                result.signals.len(),
+                result.actions.len(),
+                result.skipped.len()
+            );
+            let _ = super::paths::append_agent_log(rules_path, &summary);
+        } else {
+            runtime.emit(crate::output::ResponseEnvelope::ok(
+                if once { "agent run once" } else { "agent tick" },
+                tick_payload,
+            ));
+        }
 
         notify_tick(telegram.as_ref(), &rules, &result, runtime.dry_run).await;
 
@@ -588,12 +602,8 @@ async fn notify_overnight_alert(
 
 async fn market_is_open(market: &MarketDataApi) -> Result<bool> {
     let hours = market.markets().hours("option", None).await?;
-    let open = hours
-        .pointer("/option/EQO/isOpen")
-        .or_else(|| hours.pointer("/option/option/isOpen"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
-    Ok(open)
+    Ok(crate::market_hours::option_market_open_from_hours(&hours, chrono::Utc::now())
+        .unwrap_or(false))
 }
 
 fn resolve_llm_phase(

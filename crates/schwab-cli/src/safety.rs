@@ -164,6 +164,7 @@ mod tests {
             yes,
             dry_run: false,
             trust,
+            suppress_tick_output: false,
             safety: SafetyContext::new(SafetyConfig::default()),
             sink: OutputSink::stdout(),
         }

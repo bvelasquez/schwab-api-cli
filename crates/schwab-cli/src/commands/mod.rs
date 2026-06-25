@@ -9,4 +9,5 @@ pub mod orders;
 pub mod plan;
 pub mod trading;
 pub mod transactions;
+pub mod ui_cmd;
 pub mod user;

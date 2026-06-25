@@ -25,17 +25,22 @@ path = "src/main.rs"
 anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
+comfy-table.workspace = true
 console.workspace = true
+crossterm.workspace = true
 directories.workspace = true
 dotenvy = "0.15"
 indicatif.workspace = true
 inquire.workspace = true
+ratatui.workspace = true
 schwab-api-cli-core = { path = "../schwab-api", version = "0.1.0" }
 schwab-api-cli-market-data = { path = "../schwab-market-data", version = "0.1.0" }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
+textwrap.workspace = true
 tokio.workspace = true
+unicode-width.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 url.workspace = true
