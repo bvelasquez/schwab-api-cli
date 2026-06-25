@@ -346,6 +346,10 @@ pub fn default_monitor_prompt() -> &'static str {
      or developing macro/event risk\n\
      - close: thesis broken (recommendation only; mechanical stop handles P/L) — use \
      urgency high only for imminent assignment/gap risk through short strike\n\
+     If market_context is missing but market_context_error is set, rely on mechanical_rules \
+     and recommend hold unless mechanical_rules indicate a triggered exit.\n\
+     For new_entries during monitor phase: recommend proceed only when candidate_entries is \
+     non-empty; otherwise use skip with brief reasoning.\n\
      Do not recommend close for routine profit — mechanics handle 50% target."
 }
 
