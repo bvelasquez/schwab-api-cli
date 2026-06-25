@@ -36,8 +36,11 @@ Agent-first Rust CLI for the [Charles Schwab Trader API](https://developer.schwa
 git clone https://github.com/bvelasquez/schwab-api-cli.git
 cd schwab-api-cli
 
-# Build and install the `schwab` binary
-cargo install --path crates/schwab-cli
+# Install from source
+cargo install --path crates/schwab-cli --force
+
+# Or install from crates.io (after published)
+# cargo install schwab-cli
 
 # Configure credentials
 cp .env.example .env
@@ -573,6 +576,31 @@ schwab-api-cli/
 ├── safety.json.example
 ├── .env.example
 └── README.md
+```
+
+## Publish to crates.io
+
+The CLI is published as [`schwab-cli`](https://crates.io/crates/schwab-cli) (library crates: `schwab-api`, `schwab-market-data`). Homepage: [soki-creative.com](https://soki-creative.com).
+
+```bash
+cargo install schwab-cli
+```
+
+The crates.io README includes the same **use at your own risk** disclaimer as this repository.
+
+### Maintainer release flow
+
+1. Bump `version` in `crates/schwab-api`, `crates/schwab-market-data`, and `crates/schwab-cli` (keep versions aligned).
+2. Commit and push to `main`.
+
+The [`publish-crates`](.github/workflows/publish-crates.yml) GitHub Action publishes each crate whose version is not yet on crates.io (in dependency order). Requires repository secret `CRATES_IO_TOKEN` (same as the [simple-cycle](https://github.com/bvelasquez/simple-cycle) project).
+
+Local publish (requires `cargo login`):
+
+```bash
+bash scripts/publish-crate.sh schwab-api
+bash scripts/publish-crate.sh schwab-market-data
+bash scripts/publish-crate.sh schwab-cli
 ```
 
 ## Development
