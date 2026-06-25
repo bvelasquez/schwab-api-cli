@@ -12,7 +12,8 @@ pub fn instructions_json(safety: &SafetyConfig) -> Value {
             "schwab capabilities --json",
             "schwab env schema --json",
             "schwab instructions --json",
-            "schwab safety show --json"
+            "schwab disclaimer show",
+            "schwab disclaimer accept --yes"
         ],
         "operating_mode": {
             "default": "agent",
@@ -36,6 +37,13 @@ pub fn instructions_json(safety: &SafetyConfig) -> Value {
         "trading_safety": {
             "config_path": config_path(),
             "config_command": "schwab safety show --json",
+            "disclaimer": {
+                "show": "schwab disclaimer show",
+                "accept": "schwab disclaimer accept --yes",
+                "status": "schwab disclaimer status --json",
+                "required_before_live_trading": true,
+                "docs": "README.md#disclaimer"
+            },
             "hard_limits": safety.limits,
             "require_preview_before_place": safety.require_preview_before_place,
             "agent_rules": safety.agent_rules,
@@ -146,6 +154,6 @@ pub fn instructions_json(safety: &SafetyConfig) -> Value {
             "llm_schema_reference": "docs/LLM_SCHEMA_REFERENCE.md",
             "note": "Agent auto-executes vertical and iron condor entries/exits within safety.json and rules.yaml risk limits"
         },
-        "system_prompt": "You operate the `schwab` CLI against Charles Schwab's Trader API. Discover capabilities before acting. Use JSON output. Authenticate first. Use account hash values for trading. Read schwab safety show --json and obey agent_rules and hard limits. Preview before placement. Never pass --trust unless the user explicitly requests autonomous trading. For live agent trades use --trust --yes together."
+        "system_prompt": "You operate the `schwab` CLI against Charles Schwab's Trader API. This is experimental software — use at your own risk. Before live trading, ensure the user has run `schwab disclaimer accept --yes`. Discover capabilities before acting. Use JSON output. Authenticate first. Use account hash values for trading. Read schwab safety show --json and obey agent_rules and hard limits. Preview before placement. Never pass --trust unless the user explicitly requests autonomous trading. For live agent trades use --trust --yes together."
     })
 }

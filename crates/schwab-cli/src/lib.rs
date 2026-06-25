@@ -4,6 +4,7 @@ pub mod capabilities;
 pub mod cli;
 pub mod commands;
 pub mod config;
+pub mod disclaimer;
 pub mod env_schema;
 pub mod human;
 pub mod instructions;

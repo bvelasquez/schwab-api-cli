@@ -47,6 +47,8 @@ pub fn require_trading_approval(
         return Ok(());
     }
 
+    crate::disclaimer::require_accepted_for_live_trading()?;
+
     if runtime.is_interactive() {
         let confirm = inquire::Confirm::new(&format!("{summary} Proceed?"))
             .with_default(false)

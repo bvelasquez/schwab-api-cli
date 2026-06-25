@@ -4,6 +4,7 @@ mod capabilities;
 mod cli;
 mod commands;
 mod config;
+mod disclaimer;
 mod env_schema;
 mod human;
 mod instructions;
@@ -53,10 +54,17 @@ async fn run() -> Result<()> {
         return print_help_json(&runtime);
     }
 
+    if !should_skip_first_run_banner(&cli.command) {
+        disclaimer::maybe_show_first_run()?;
+    }
+
     match cli.command {
         Some(Commands::Capabilities) => commands::meta::capabilities(&runtime).await,
         Some(Commands::Env { command }) => commands::meta::env(&runtime, command).await,
         Some(Commands::Instructions) => commands::meta::instructions(&runtime).await,
+        Some(Commands::Disclaimer { command }) => {
+            commands::disclaimer::run(&runtime, command).await
+        }
         Some(Commands::Auth { command }) => commands::auth::run(&runtime, command).await,
         Some(Commands::Accounts { command }) => commands::accounts::run(&runtime, command).await,
         Some(Commands::Orders { command }) => commands::orders::run(&runtime, command).await,
@@ -99,6 +107,10 @@ fn load_dotenv() {
     }
 }
 
+fn should_skip_first_run_banner(command: &Option<Commands>) -> bool {
+    matches!(command, Some(Commands::Disclaimer { .. }))
+}
+
 fn print_top_level_help(runtime: &RuntimeConfig) {
     let envelope = ResponseEnvelope::ok("help", serde_json::json!({
         "message": "Schwab Trader API CLI — agent-first. Run subcommand --help for details.",
@@ -125,6 +137,13 @@ fn print_help_json(runtime: &RuntimeConfig) -> Result<()> {
             "name": "schwab",
             "version": env!("CARGO_PKG_VERSION"),
             "description": "Agent-first CLI for Charles Schwab Trader API (Accounts and Trading Production)",
+            "experimental": true,
+            "disclaimer": crate::disclaimer::HELP_DISCLAIMER,
+            "disclaimer_commands": [
+                "schwab disclaimer show",
+                "schwab disclaimer accept --yes",
+                "schwab disclaimer status --json"
+            ],
             "base_url": schwab_api::TRADER_BASE_URL,
             "modes": ["agent", "human"],
             "output_formats": ["pretty", "json", "md"],
