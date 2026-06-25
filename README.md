@@ -10,7 +10,7 @@ Agent-first Rust CLI for the [Charles Schwab Trader API](https://developer.schwa
 - **Portfolio summary** — aggregated equity and holdings across accounts
 - **Trading** — `trade buy` / `trade sell` with preview and safety guardrails
 - **Trade plans** — YAML/JSON multi-step rebalances; LLM-authored, CLI-validated
-- **Options agent** — long-running daemon from `rules/*.yaml`; put credit spreads, mechanical exits, OpenRouter LLM advisor, Telegram alerts
+- **Options agent** — long-running daemon from `rules/*.yaml`; put credit spreads, mechanical exits, phased schedule (regular / overnight), OpenRouter LLM advisor, Telegram alerts
 - **Order wait** — poll until limit orders fill before advancing a plan
 - **Safety config** — `safety.json` enforces max trade size, symbols, order types (cannot be bypassed)
 - **Trust mode** — autonomous agent execution requires `--trust --yes`
@@ -101,6 +101,17 @@ Example limits: max trade value, max shares per order, allowed symbols, blocked 
 | **Human** | `--mode human` | Guided prompts when args are omitted |
 
 Global flags: `--json`, `--yes`, `--trust`, `--dry-run`
+
+## Documentation
+
+| Doc | Audience | Contents |
+|-----|----------|----------|
+| **[docs/LLM_SCHEMA_REFERENCE.md](docs/LLM_SCHEMA_REFERENCE.md)** | **LLMs authoring configs** | Full trade plan + options rules schema, workflows, field reference, monitor context |
+| [plans/TRADE_PLAN.md](plans/TRADE_PLAN.md) | Humans + LLMs | Equity trade plan format |
+| [docs/OPTIONS_RULES.md](docs/OPTIONS_RULES.md) | Operators | Options agent quick reference |
+| [docs/AGENT_SCHEDULE.md](docs/AGENT_SCHEDULE.md) | Operators | Regular / overnight / at-open sessions |
+
+Machine-readable discovery: `schwab instructions --json`, `schwab plan schema --json`, `schwab agent schema --json`, `schwab plan prompt --json`.
 
 ## Authentication
 
@@ -218,7 +229,7 @@ schwab orders wait <hash> <order_id> \
 
 ## Trade plans (LLM workflow)
 
-Trade plans are YAML/JSON files under `plans/` that describe multi-step rebalances.
+Trade plans are YAML/JSON files under `plans/` that describe multi-step **equity** rebalances.
 
 ```bash
 schwab plan schema --json     # JSON Schema
@@ -228,7 +239,7 @@ schwab plan run plans/my-plan.yaml --dry-run --json
 schwab plan run plans/my-plan.yaml --trust --yes --json
 ```
 
-See `plans/TRADE_PLAN.md` for the file format.
+See [plans/TRADE_PLAN.md](plans/TRADE_PLAN.md) for the file format and **[docs/LLM_SCHEMA_REFERENCE.md](docs/LLM_SCHEMA_REFERENCE.md)** for the full LLM authoring guide (plans + options rules).
 
 ### Fill-aware plan execution
 
@@ -262,20 +273,21 @@ steps:
 
 ## Options trading agent
 
-The options agent is a **long-running process** that reads a `rules/*.yaml` file, scans Schwab option chains on a schedule, applies mechanical entry/exit rules, optionally consults an **OpenRouter LLM** for entry judgment and position review, and can push **Telegram** notifications.
+The options agent is a **long-running process** that reads a `rules/*.yaml` file, evaluates entry/exit conditions on a schedule (regular hours + optional overnight digest), applies mechanical entry/exit rules, optionally consults an **OpenRouter LLM** for entry judgment and position review, and can push **Telegram** notifications.
 
-See also [docs/OPTIONS_RULES.md](docs/OPTIONS_RULES.md) for a concise reference.
+See [docs/OPTIONS_RULES.md](docs/OPTIONS_RULES.md) for operator reference, [docs/AGENT_SCHEDULE.md](docs/AGENT_SCHEDULE.md) for session modes, and **[docs/LLM_SCHEMA_REFERENCE.md](docs/LLM_SCHEMA_REFERENCE.md)** to author new rules files.
 
 ### Architecture
 
 ```
-Every tick (e.g. 120s)
+Every tick — session: regular | overnight | idle
   │
   ├─ 1. Reconcile open positions (Schwab ↔ agent-state.json)
-  ├─ 2. EXIT scan (rules — every tick, no LLM)
+  ├─ 2. EXIT scan (regular only — live chains, no LLM)
   │      profit_target_pct · stop_loss_pct · dte_close
-  ├─ 3. ENTRY scan (rules — chain, delta, credit, DTE)
-  ├─ 4. LLM review (optional — selection OR monitor OR skip)
+  ├─ 3. ENTRY scan (regular only — chain, delta, credit, DTE)
+  │      skipped when max_trades_per_day hit; exits/monitor still run
+  ├─ 4. LLM review (optional — selection | monitor | overnight digest)
   │      Sonnet on new signals · Flash on open positions · Sonar for web
   └─ 5. Execute entries (if LLM did not veto) · save state
 ```
@@ -287,13 +299,24 @@ Every tick (e.g. 120s)
 | LLM advisor | `rules.yaml` → `llm` | Entry veto + qualitative monitoring (optional) |
 | Persistence | `rules/agent-state.json` | Open positions, tick count, daily trades, LLM history |
 
-**Important:** Mechanical exits (50% profit, 2× credit stop, 21 DTE) run **every tick** from live chain quotes. The LLM does not replace those rules — it adds judgment on entries and optional commentary on open trades.
+**Important:** Mechanical exits (50% profit, 2× credit stop, 21 DTE) run **every regular-hours tick** from live chain `debit_to_close`. The LLM does not replace those rules — it adds judgment on entries and optional commentary on open trades. Monitor context includes `market_context` (greeks, OTM %) and `mechanical_rules` (`stop_triggered`, thresholds) so the LLM does not confuse Schwab `net_market_value` with stop logic.
+
+### Phased schedule
+
+| Session | When | Behavior |
+|---------|------|----------|
+| **regular** | Options market open | Full chains, mechanical exits, entries, monitor LLM |
+| **overnight** | Closed + `schedule.overnight.enabled` | Hourly reconcile + web digest LLM; no chains/entries |
+| **idle** | Closed, overnight off | Reconcile + sleep only |
+
+Details: [docs/AGENT_SCHEDULE.md](docs/AGENT_SCHEDULE.md).
 
 ### Bundled rules files
 
 | File | Purpose |
 |------|---------|
 | [rules/options-rules.example.yaml](rules/options-rules.example.yaml) | Template with all fields documented |
+| [rules/options-pilot-8709.yaml](rules/options-pilot-8709.yaml) | IRA pilot — $2-wide IWM/SPY spreads, LLM + Telegram |
 | [rules/options-pilot-9947.yaml](rules/options-pilot-9947.yaml) | Conservative pilot — $2-wide spreads, SPY/IWM, account 9947 |
 | [rules/options-monthly-income.yaml](rules/options-monthly-income.yaml) | “Selling Puts for Monthly Income” — put credit spreads, ~30 DTE, PDF-aligned prompts |
 
@@ -365,16 +388,18 @@ version: 1
 agent_id: my-strategy
 
 accounts:           # Schwab hash values from `schwab accounts numbers`
-schedule:           # tick_interval_seconds, market_hours_only
+schedule:           # tick_interval_seconds, market_hours_only, overnight
 strategies:         # vertical, iron_condor toggles
 watchlist:          # underlyings to scan
 entry_rules:        # DTE window, delta, min credit, max width
 exit_rules:         # profit_target_pct, stop_loss_pct, dte_close
 risk:               # portfolio caps, max trades/day, allowed symbols
 execution:          # limit orders, wait_for_fill
-llm:                # models, prompts, veto_entries
+llm:                # models, prompts, veto_entries, allow_llm_exits
 notify:             # telegram settings
 ```
+
+Full field reference for LLMs: [docs/LLM_SCHEMA_REFERENCE.md](docs/LLM_SCHEMA_REFERENCE.md#part-2--options-agent-rules).
 
 ### Entry rules (v1 — vertical put credit spreads)
 
@@ -405,10 +430,10 @@ entry_rules:
 | Rule | Typical value | Behavior |
 |------|---------------|----------|
 | `profit_target_pct` | `50` | Close when ≥50% of entry credit captured |
-| `stop_loss_pct` | `200` | Close when debit to close ≥ 2× entry credit |
+| `stop_loss_pct` | `200` | Close when debit to close ≥ 2× entry credit (per-share, from chain) |
 | `dte_close` | `21` | Close when ≤21 DTE (gamma management) |
 
-Marks come from live option chain quotes plus `entry_credit` from state or Schwab leg averages.
+Marks come from live option chain quotes (`debit_to_close`) plus `entry_credit` from state or Schwab leg averages. **Not** from Schwab `net_market_value`.
 
 ### LLM advisor (OpenRouter, two-model)
 
@@ -417,7 +442,8 @@ When `llm.enabled: true`:
 | Phase | When it runs | Model key | Default model |
 |-------|--------------|-----------|---------------|
 | **Selection** | Rules produced candidate entries | `selection_model` | `anthropic/claude-sonnet-4` |
-| **Monitor** | Open positions, every `review_every_ticks` | `monitor_model` | `google/gemini-2.5-flash` |
+| **Monitor** | Open positions, every `review_every_ticks` regular ticks | `monitor_model` | `google/gemini-2.5-flash` |
+| **Overnight** | Market closed + `overnight.web_digest` | `web_model` | `perplexity/sonar` |
 | **Web** | Every Nth selection review | `web_model` | `perplexity/sonar` |
 
 **Skipped when flat** — no open positions and no candidate entries (saves cost).
@@ -437,11 +463,13 @@ llm:
     selection: |           # system: role + entry judgment
     selection_web: |        # optional override when web_model runs
     selection_context: |    # user message: strategy thesis, account notes
-    monitor: |              # system: open-position review
+    monitor: |              # system: open-position review (uses market_context greeks)
     monitor_context: |      # user message: monitoring priorities
+    overnight: |            # system: overnight web digest
+    overnight_context: |    # user message: overnight priorities
 ```
 
-Omit any field to use the built-in default. The LLM always receives a **Context JSON** blob with open positions, candidate entries, exit rules, watchlist, and risk caps.
+Omit any field to use the built-in default. The LLM receives a **Context JSON** blob with open positions (including `mechanical_rules` and `market_context`), candidate entries, exit rules, watchlist, and risk caps.
 
 ### Telegram notifications
 
@@ -518,10 +546,13 @@ schwab-api-cli/
 │   ├── schwab-market-data/  # Market Data API client (quotes, history, instruments)
 │   └── schwab-cli/          # CLI binary (`schwab`)
 ├── docs/
-│   └── OPTIONS_RULES.md     # Options agent reference
+│   ├── LLM_SCHEMA_REFERENCE.md  # LLM authoring: trade plans + options rules
+│   ├── OPTIONS_RULES.md         # Options agent reference
+│   └── AGENT_SCHEDULE.md        # Regular / overnight sessions
 ├── plans/                   # Example trade plans + TRADE_PLAN.md
 ├── rules/                   # Options agent rules + runtime state
 │   ├── options-rules.example.yaml
+│   ├── options-pilot-8709.yaml
 │   ├── options-pilot-9947.yaml
 │   ├── options-monthly-income.yaml
 │   ├── agent-state.json     # written at runtime

@@ -97,23 +97,43 @@ fn print_pretty(envelope: &ResponseEnvelope) {
     let title = Style::new().cyan().bold();
     let ok = Style::new().green().bold();
     let err = Style::new().red().bold();
+    let dim = Style::new().dim();
 
-    println!("{}", title.apply_to(format!("schwab {}", envelope.command)));
-    println!(
-        "status: {}",
-        if envelope.success {
-            ok.apply_to("success")
-        } else {
-            err.apply_to("error")
-        }
+    let is_agent_tick = matches!(
+        envelope.command.as_str(),
+        "agent tick" | "agent run once"
     );
 
-    if envelope.data != Value::Null {
-        println!("\ndata:");
+    if !is_agent_tick {
+        println!("{}", title.apply_to(format!("schwab {}", envelope.command)));
         println!(
-            "{}",
-            serde_json::to_string_pretty(&envelope.data).unwrap_or_else(|_| "null".into())
+            "status: {}",
+            if envelope.success {
+                ok.apply_to("success")
+            } else {
+                err.apply_to("error")
+            }
         );
+    }
+
+    if envelope.data != Value::Null {
+        if let Some(body) = format_agent_pretty_body(&envelope.command, &envelope.data) {
+            if is_agent_tick {
+                println!(
+                    "{}",
+                    dim.apply_to(format!("── {} ──", envelope.timestamp))
+                );
+            } else {
+                println!();
+            }
+            println!("{body}");
+        } else {
+            println!("\ndata:");
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&envelope.data).unwrap_or_else(|_| "null".into())
+            );
+        }
     }
 
     if !envelope.warnings.is_empty() {
@@ -135,6 +155,16 @@ fn print_pretty(envelope: &ResponseEnvelope) {
         for n in &envelope.next_actions {
             println!("  {n}");
         }
+    }
+}
+
+fn format_agent_pretty_body(command: &str, data: &Value) -> Option<String> {
+    match command {
+        "agent tick" | "agent run once" => Some(crate::agent::format::format_tick_data(data)),
+        "agent status" => Some(crate::agent::format::format_status_data(data)),
+        "agent validate" => Some(crate::agent::format::format_validate_data(data)),
+        "agent background" => Some(crate::agent::format::format_background_data(data)),
+        _ => None,
     }
 }
 

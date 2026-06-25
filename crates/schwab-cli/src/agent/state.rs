@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Result;
 use chrono::{DateTime, NaiveDate, Utc};
@@ -26,6 +26,14 @@ pub struct AgentState {
     pub llm_review_count: u64,
     #[serde(default)]
     pub last_llm_summary: Option<Value>,
+    #[serde(default)]
+    pub last_session: Option<String>,
+    #[serde(default)]
+    pub regular_tick_count: u64,
+    #[serde(default)]
+    pub last_overnight_digest_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub open_playbook: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,13 +53,6 @@ pub struct AgentAction {
     pub at: DateTime<Utc>,
     pub action: String,
     pub detail: Value,
-}
-
-pub fn default_state_path(rules_path: &Path) -> PathBuf {
-    rules_path
-        .parent()
-        .map(|p| p.join("agent-state.json"))
-        .unwrap_or_else(|| PathBuf::from("agent-state.json"))
 }
 
 pub fn load_state(path: &Path) -> Result<AgentState> {
@@ -108,6 +109,10 @@ pub fn state_summary(state: &AgentState) -> Value {
         "tick_count": state.tick_count,
         "last_llm_review_tick": state.last_llm_review_tick,
         "last_llm_summary": state.last_llm_summary,
+        "last_session": state.last_session,
+        "regular_tick_count": state.regular_tick_count,
+        "last_overnight_digest_at": state.last_overnight_digest_at,
+        "open_playbook": state.open_playbook,
         "pending_orders": state.pending_order_ids.len(),
         "recent_actions": state.last_actions.iter().rev().take(10).collect::<Vec<_>>(),
     })
