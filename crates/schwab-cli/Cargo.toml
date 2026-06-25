@@ -1,11 +1,17 @@
 [package]
 name = "schwab-cli"
-description = "Agent-first CLI for Charles Schwab Trader API"
+description = "Agent-first CLI for Charles Schwab Trader API (experimental — use at your own risk)"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["schwab", "cli", "trading", "options", "brokerage"]
+categories = ["command-line-utilities", "finance"]
+include = ["src/**/*", "Cargo.toml", "README.md", "../../LICENSE"]
 
 [lib]
 name = "schwab_cli"
@@ -24,8 +30,8 @@ directories.workspace = true
 dotenvy = "0.15"
 indicatif.workspace = true
 inquire.workspace = true
-schwab-api = { path = "../schwab-api" }
-schwab-market-data = { path = "../schwab-market-data" }
+schwab-api = { path = "../schwab-api", version = "0.1.0" }
+schwab-market-data = { path = "../schwab-market-data", version = "0.1.0" }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
