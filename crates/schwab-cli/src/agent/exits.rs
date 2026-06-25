@@ -109,7 +109,7 @@ pub async fn evaluate_position_monitor(
 
     let chain_result = fetch_vertical_chain_snapshot(market, group).await;
 
-    let (exit, mark_opt, market_context) = match chain_result {
+    let (exit, mark_opt, market_context, chain_error) = match chain_result {
         Ok(chain_snap) => {
             let profit_pct = entry_credit.filter(|c| *c > f64::EPSILON).map(|entry| {
                 ((entry - chain_snap.debit_to_close) / entry) * 100.0
@@ -146,15 +146,15 @@ pub async fn evaluate_position_monitor(
                 profit_pct,
                 dte,
             );
-            (exit, Some(mark), Some(ctx))
+            (exit, Some(mark), Some(ctx), None)
         }
-        Err(_) => {
+        Err(e) => {
             let exit = if let Some(credit) = entry_credit.filter(|c| *c > 0.0) {
                 evaluate_dte_only_with_credit(group, rules, today, credit, dte)?
             } else {
                 evaluate_dte_only(group, rules, today)?
             };
-            (exit, None, None)
+            (exit, None, None, Some(e.to_string()))
         }
     };
 
@@ -164,6 +164,7 @@ pub async fn evaluate_position_monitor(
         &exit,
         mark_opt.as_ref(),
         market_context,
+        chain_error.as_deref(),
         &rules.exit_rules,
     );
     Ok(PositionMonitorResult { exit, snapshot })
@@ -226,22 +227,59 @@ async fn fetch_vertical_chain_snapshot(
         .is_some_and(|p| p.put_call == 'P');
 
     let contract_type = if is_put { "PUT" } else { "CALL" };
-    let chain = market
-        .chains()
-        .get(&ChainQuery {
-            symbol: &group.underlying,
-            contract_type: Some(contract_type),
-            strike_count: Some(20),
-            include_underlying_quote: Some(true),
-            ..Default::default()
-        })
-        .await?;
-
     let map_key = if is_put {
         "putExpDateMap"
     } else {
         "callExpDateMap"
     };
+
+    let mut last_err = None;
+    for strike_count in [50u32, 100] {
+        match fetch_vertical_chain_at_strikes(
+            market,
+            group,
+            contract_type,
+            map_key,
+            short_strike,
+            long_strike,
+            is_put,
+            strike_count,
+        )
+        .await
+        {
+            Ok(snap) => return Ok(snap),
+            Err(e) => last_err = Some(e),
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("chain fetch failed")))
+}
+
+async fn fetch_vertical_chain_at_strikes(
+    market: &MarketDataApi,
+    group: &OptionPositionGroup,
+    contract_type: &str,
+    map_key: &str,
+    short_strike: f64,
+    long_strike: f64,
+    is_put: bool,
+    strike_count: u32,
+) -> Result<VerticalChainSnapshot> {
+    let strike_anchor = format_chain_strike(short_strike);
+    let chain = market
+        .chains()
+        .get(&ChainQuery {
+            symbol: &group.underlying,
+            contract_type: Some(contract_type),
+            strike: Some(&strike_anchor),
+            strike_count: Some(strike_count),
+            include_underlying_quote: Some(true),
+            from_date: Some(&group.expiry),
+            to_date: Some(&group.expiry),
+            ..Default::default()
+        })
+        .await?;
+
     let strike_map = find_expiry_strikes(&chain, map_key, &group.expiry)
         .context("expiry not found in chain")?;
 
@@ -259,12 +297,21 @@ async fn fetch_vertical_chain_snapshot(
     })
 }
 
+fn format_chain_strike(strike: f64) -> String {
+    if (strike.fract() * 10.0).round() as i64 % 10 == 0 {
+        format!("{strike:.1}")
+    } else {
+        format!("{strike:.2}")
+    }
+}
+
 pub fn monitor_snapshot_json(
     group: &OptionPositionGroup,
     tracked: Option<&TrackedPosition>,
     exit_eval: &Option<ExitEvaluation>,
     mark: Option<&SpreadMark>,
     market_context: Option<Value>,
+    chain_error: Option<&str>,
     exit_rules: &ExitRules,
 ) -> Value {
     let entry_credit = tracked
@@ -300,6 +347,11 @@ pub fn monitor_snapshot_json(
 
     if let Some(ctx) = market_context {
         snapshot["market_context"] = ctx;
+    } else if let Some(err) = chain_error {
+        snapshot["market_context_error"] = json!(err);
+        snapshot["market_context_note"] = json!(
+            "Live chain greeks unavailable; mechanical exits still use chain debit when fetch succeeds on exit ticks."
+        );
     }
 
     if let Some(m) = mark.or(exit_eval.as_ref().map(|e| &e.mark)) {
@@ -612,5 +664,22 @@ mod tests {
         ];
         let credit = infer_entry_credit_from_legs(&legs).unwrap();
         assert!((credit - 0.24).abs() < 0.001);
+    }
+
+    #[test]
+    fn find_expiry_strikes_matches_schwab_key() {
+        let chain = json!({
+            "putExpDateMap": {
+                "2026-07-31:36": { "282.0": [] }
+            }
+        });
+        let strikes = find_expiry_strikes(&chain, "putExpDateMap", "2026-07-31").unwrap();
+        assert!(strikes.is_object());
+    }
+
+    #[test]
+    fn format_chain_strike_uses_one_decimal_for_whole_strikes() {
+        assert_eq!(format_chain_strike(282.0), "282.0");
+        assert_eq!(format_chain_strike(282.5), "282.50");
     }
 }

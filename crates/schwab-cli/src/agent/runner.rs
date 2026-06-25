@@ -337,7 +337,10 @@ pub async fn tick_once(
                     state.last_llm_summary = Some(review_json.clone());
                     state.record_action("llm_review", review_json.clone());
 
-                    if rules.llm.veto_entries && review.should_veto_entries() {
+                    if rules.llm.veto_entries
+                        && matches!(phase, LlmPhase::Selection)
+                        && review.should_veto_entries()
+                    {
                         llm_veto_entries = true;
                         result.skipped.push(format!(
                             "LLM veto entries: {}",

@@ -101,6 +101,11 @@ fn format_monitored_position(pos: &Value, hold: &Style, exit: &Style) -> String 
     let greeks_s = pos
         .get("market_context")
         .map(format_monitor_greeks_suffix)
+        .or_else(|| {
+            pos.get("market_context_error")
+                .and_then(|v| v.as_str())
+                .map(|e| format!("  [no chain: {e}]"))
+        })
         .unwrap_or_default();
 
     let status_s = if status.starts_with("exit:") {
