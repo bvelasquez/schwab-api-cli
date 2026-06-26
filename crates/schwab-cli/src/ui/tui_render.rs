@@ -5,17 +5,76 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Gauge, ListItem};
 
+use super::agent_health::{format_tick_error, SharedAgentHealth};
 use super::context::DashboardContext;
 use super::market_status::market_label;
 use super::watch::WatchAgentMode;
 use super::{ago_secs, format_duration_secs};
 
-pub fn header_line(ctx: &DashboardContext, agent_mode: WatchAgentMode) -> Line<'static> {
+fn truncate_err(msg: &str, max: usize) -> String {
+    if msg.len() <= max {
+        msg.to_string()
+    } else {
+        format!("{}…", &msg[..max.saturating_sub(1)])
+    }
+}
+
+fn embedded_agent_label(
+    ctx: &DashboardContext,
+    health: Option<&SharedAgentHealth>,
+) -> (String, bool) {
+    let Some(h) = health.and_then(|h| h.lock().ok()) else {
+        return ("running (in-process)".into(), true);
+    };
+    if h.auth_required {
+        return ("auth required — schwab auth login".into(), false);
+    }
+    if !h.loop_running {
+        let err = h
+            .last_error
+            .as_deref()
+            .map(|e| truncate_err(&format_tick_error(e), 48))
+            .unwrap_or_else(|| "exited".into());
+        return (format!("stopped ({err})"), false);
+    }
+    if ctx.tick_is_stale() && h.ticks_completed == 0 {
+        let starting = h.started_at.elapsed().as_secs();
+        let err = h
+            .last_error
+            .as_deref()
+            .map(|e| truncate_err(&format_tick_error(e), 36))
+            .unwrap_or_else(|| {
+                if starting > 120 {
+                    format!("no tick in {}s", starting)
+                } else {
+                    "starting…".into()
+                }
+            });
+        return (format!("running ({err})"), true);
+    }
+    if ctx.tick_is_stale() {
+        return ("running (tick stale)".into(), true);
+    }
+    (format!("running ({} ticks)", h.ticks_completed), true)
+}
+
+pub fn header_line(
+    ctx: &DashboardContext,
+    agent_mode: WatchAgentMode,
+    agent_health: Option<&SharedAgentHealth>,
+) -> Line<'static> {
     let daemon = match agent_mode {
-        WatchAgentMode::Embedded => Span::styled(
-            "● running (watch) ",
-            Style::default().fg(Color::Green),
-        ),
+        WatchAgentMode::Embedded => {
+            let (label, ok) = embedded_agent_label(ctx, agent_health);
+            let style = if ok && !ctx.tick_is_stale() {
+                Style::default().fg(Color::Green)
+            } else if ok {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::Red)
+            };
+            Span::styled(format!("● {label} "), style)
+        }
         WatchAgentMode::External => Span::styled(
             format!("● running pid {} ", ctx.daemon.pid.unwrap_or(0)),
             Style::default().fg(Color::Green),
@@ -32,27 +91,18 @@ pub fn header_line(ctx: &DashboardContext, agent_mode: WatchAgentMode) -> Line<'
         }
     };
 
-    let session = ctx
-        .state
-        .last_session
-        .as_deref()
-        .unwrap_or("—");
+    let session = ctx.effective_session();
     let session_style = match session {
         "regular" => Style::default().fg(Color::Green),
         "overnight" => Style::default().fg(Color::Magenta),
         _ => Style::default().fg(Color::DarkGray),
     };
 
-    let (mkt_label, mkt_open) = market_label(
-        ctx.market_option_open,
-        ctx.state.last_session.as_deref(),
-    );
+    let (mkt_label, mkt_open) = market_label(ctx.market_status, Some(session));
     let mkt_style = if mkt_open {
         Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
-    } else if ctx.market_option_open.is_some() {
-        Style::default().fg(Color::Red)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(Color::Red)
     };
 
     Line::from(vec![
@@ -70,15 +120,19 @@ pub fn header_line(ctx: &DashboardContext, agent_mode: WatchAgentMode) -> Line<'
         Span::raw(format!(
             " · {} open · tick {}s",
             ctx.state.open_positions.len(),
-            ctx.rules.schedule.tick_interval_seconds
+            ctx.expected_tick_interval_secs()
         )),
     ])
 }
 
-pub fn agent_status_lines(ctx: &DashboardContext, agent_mode: WatchAgentMode) -> Vec<Line<'static>> {
+pub fn agent_status_lines(
+    ctx: &DashboardContext,
+    agent_mode: WatchAgentMode,
+    agent_health: Option<&SharedAgentHealth>,
+) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let daemon_val = match agent_mode {
-        WatchAgentMode::Embedded => "running (in-process)".into(),
+        WatchAgentMode::Embedded => embedded_agent_label(ctx, agent_health).0,
         WatchAgentMode::External => format!("running (pid {})", ctx.daemon.pid.unwrap_or(0)),
         WatchAgentMode::MonitorOnly => {
             if ctx.daemon.running {
@@ -90,18 +144,44 @@ pub fn agent_status_lines(ctx: &DashboardContext, agent_mode: WatchAgentMode) ->
     };
     lines.push(kv_line("daemon", daemon_val, 12));
 
-    let (mkt_label, _) = market_label(
-        ctx.market_option_open,
-        ctx.state.last_session.as_deref(),
-    );
+    let session = ctx.effective_session();
+    let (mkt_label, _) = market_label(ctx.market_status, Some(session));
     lines.push(kv_line("EQO regular", mkt_label.to_string(), 12));
+    lines.push(kv_line(
+        "session",
+        format!(
+            "{} (now){}",
+            session,
+            ctx.state
+                .last_session
+                .as_deref()
+                .filter(|s| *s != session)
+                .map(|s| format!(" · saved: {s}"))
+                .unwrap_or_default()
+        ),
+        12,
+    ));
 
-    if let Some(at) = ctx.state.last_tick {
-        let secs = (Utc::now() - at).num_seconds();
-        lines.push(kv_line("last tick", ago_secs(secs), 12));
+    if let Some(age) = ctx.last_tick_age_secs() {
+        let tick_label = ago_secs(age);
+        let style = if ctx.tick_is_stale() {
+            Style::default().fg(Color::Red)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(vec![
+            Span::styled("  last tick  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(tick_label, style),
+        ]));
     } else {
         lines.push(kv_line("last tick", "never".into(), 12));
     }
+
+    lines.push(kv_line(
+        "next tick",
+        format!("~{}", format_duration_secs(ctx.expected_tick_interval_secs())),
+        12,
+    ));
     lines.push(kv_line(
         "positions",
         format!(
@@ -120,6 +200,17 @@ pub fn agent_status_lines(ctx: &DashboardContext, agent_mode: WatchAgentMode) ->
         ),
         12,
     ));
+    if let Some(h) = agent_health.and_then(|h| h.lock().ok()) {
+        if let Some(err) = h.last_error.as_ref() {
+            lines.push(Line::from(vec![
+                Span::styled("  last error ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    truncate_err(&format_tick_error(err), 56),
+                    Style::default().fg(Color::Red),
+                ),
+            ]));
+        }
+    }
     if ctx.rules.llm.enabled {
         let phase = ctx
             .state

@@ -1,5 +1,6 @@
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -18,7 +19,9 @@ use ratatui::widgets::{
 };
 use ratatui::Terminal;
 
+use super::agent_health::SharedAgentHealth;
 use super::context::DashboardContext;
+use super::market_status::MarketSnapshot;
 use super::tui_render::{
     activity_items, agent_status_lines, daemon_hint, header_line, latest_llm_lines,
     llm_history_lines, position_items, risk_gauge, rules_detail_lines, rules_summary_lines,
@@ -41,6 +44,8 @@ pub enum WatchAgentMode {
 pub struct WatchConfig {
     pub rules_path: PathBuf,
     pub agent_mode: WatchAgentMode,
+    pub market_snapshot: Arc<Mutex<MarketSnapshot>>,
+    pub agent_health: Option<SharedAgentHealth>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -100,9 +105,11 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
 
     let rules_path = &config.rules_path;
     let agent_mode = config.agent_mode;
+    let market_snapshot = &config.market_snapshot;
+    let agent_health = config.agent_health.as_ref();
 
     let mut tab = WatchTab::Overview;
-    let mut ctx = DashboardContext::load(rules_path)?;
+    let mut ctx = DashboardContext::load_with_shared_snapshot(rules_path, market_snapshot)?;
     let mut last_refresh = Instant::now();
     let mut status_msg = match agent_mode {
         WatchAgentMode::Embedded => "agent running in-process".to_string(),
@@ -128,6 +135,7 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
                 &status_msg,
                 &mut state,
                 agent_mode,
+                agent_health,
             );
         })?;
 
@@ -150,7 +158,10 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
                             scroll_active_tab(tab, &mut state, -1)
                         }
                         KeyCode::Char('r') => {
-                            match DashboardContext::load(rules_path) {
+                            match DashboardContext::load_with_shared_snapshot(
+                                rules_path,
+                                market_snapshot,
+                            ) {
                                 Ok(c) => {
                                     ctx = c;
                                     last_refresh = Instant::now();
@@ -167,7 +178,9 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
                 }
             }
         } else if last_refresh.elapsed() >= REFRESH_INTERVAL {
-            if let Ok(c) = DashboardContext::load(rules_path) {
+            if let Ok(c) =
+                DashboardContext::load_with_shared_snapshot(rules_path, market_snapshot)
+            {
                 ctx = c;
             }
             last_refresh = Instant::now();
@@ -202,6 +215,7 @@ fn draw_ui(
     status_msg: &str,
     state: &mut WatchState,
     agent_mode: WatchAgentMode,
+    agent_health: Option<&SharedAgentHealth>,
 ) {
     let outer = Layout::default()
         .direction(Direction::Vertical)
@@ -213,7 +227,10 @@ fn draw_ui(
         ])
         .split(area);
 
-    f.render_widget(Paragraph::new(header_line(ctx, agent_mode)), outer[0]);
+    f.render_widget(
+        Paragraph::new(header_line(ctx, agent_mode, agent_health)),
+        outer[0],
+    );
 
     let titles: Vec<Line> = WatchTab::all()
         .iter()
@@ -230,7 +247,7 @@ fn draw_ui(
     f.render_widget(tabs, outer[1]);
 
     match tab {
-        WatchTab::Overview => render_overview(f, outer[2], ctx, agent_mode),
+        WatchTab::Overview => render_overview(f, outer[2], ctx, agent_mode, agent_health),
         WatchTab::Rules => render_rules_tab(f, outer[2], ctx, state),
         WatchTab::Log => render_log_tab(f, outer[2], ctx, state),
         WatchTab::Positions => render_positions_tab(f, outer[2], ctx),
@@ -264,6 +281,7 @@ fn render_overview(
     area: Rect,
     ctx: &DashboardContext,
     agent_mode: WatchAgentMode,
+    agent_health: Option<&SharedAgentHealth>,
 ) {
     let show_hint =
         matches!(agent_mode, WatchAgentMode::MonitorOnly) && !ctx.daemon.running;
@@ -293,7 +311,8 @@ fn render_overview(
         .split(rows[0]);
 
     f.render_widget(
-        Paragraph::new(agent_status_lines(ctx, agent_mode)).block(panel_block("Agent")),
+        Paragraph::new(agent_status_lines(ctx, agent_mode, agent_health))
+            .block(panel_block("Agent")),
         top[0],
     );
 
