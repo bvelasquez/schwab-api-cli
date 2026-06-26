@@ -375,57 +375,6 @@ pub fn monitor_snapshot_json(
     snapshot
 }
 
-pub async fn evaluate_exit_for_group(
-    market: &MarketDataApi,
-    group: &OptionPositionGroup,
-    rules: &RulesConfig,
-    today: NaiveDate,
-    tracked: Option<&TrackedPosition>,
-) -> Result<Option<ExitEvaluation>> {
-    if group.legs.len() != 2 {
-        return evaluate_dte_only(group, rules, today);
-    }
-
-    let entry_credit = tracked
-        .and_then(|p| p.entry_credit)
-        .or_else(|| infer_entry_credit_from_legs(&group.legs))
-        .filter(|c| *c > 0.0);
-
-    let Some(entry_credit) = entry_credit else {
-        return evaluate_dte_only(group, rules, today);
-    };
-
-    let dte = group
-        .legs
-        .first()
-        .and_then(|l| l.parsed.as_ref())
-        .map(|p| days_to_expiry(p.expiry, today))
-        .unwrap_or(0);
-
-    let debit_to_close = match estimate_debit_to_close(market, group).await {
-        Ok(v) => v,
-        Err(_) => {
-            return evaluate_dte_only_with_credit(group, rules, today, entry_credit, dte);
-        }
-    };
-
-    let profit_pct = if entry_credit > f64::EPSILON {
-        ((entry_credit - debit_to_close) / entry_credit) * 100.0
-    } else {
-        0.0
-    };
-
-    let mark = SpreadMark {
-        entry_credit,
-        debit_to_close,
-        profit_pct,
-        dte,
-        source: "chain".into(),
-    };
-
-    Ok(evaluate_exit_from_mark(rules, Some(entry_credit), &mark))
-}
-
 fn evaluate_dte_only(
     group: &OptionPositionGroup,
     rules: &RulesConfig,
@@ -472,15 +421,6 @@ fn evaluate_dte_only_with_credit(
             source: "dte_fallback".into(),
         },
     }))
-}
-
-async fn estimate_debit_to_close(
-    market: &MarketDataApi,
-    group: &OptionPositionGroup,
-) -> Result<f64> {
-    Ok(fetch_vertical_chain_snapshot(market, group)
-        .await?
-        .debit_to_close)
 }
 
 fn vertical_legs(group: &OptionPositionGroup) -> Result<(&OptionPositionLeg, &OptionPositionLeg)> {

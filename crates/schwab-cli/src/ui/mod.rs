@@ -1,3 +1,4 @@
+pub mod agent_health;
 pub mod context;
 pub mod dashboard;
 pub mod discover;

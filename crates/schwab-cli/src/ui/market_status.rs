@@ -1,51 +1,145 @@
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::fs;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use chrono::Utc;
-use schwab_api::{ClientConfig, SchwabClient};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use crate::agent::paths::rules_runtime_stem;
+use crate::agent::state::AgentState;
+use crate::config::RuntimeConfig;
+use crate::market_hours::{
+    resolve_eqo_market_open, MarketStatusSource, ResolvedMarketStatus,
+};
 use schwab_market_data::MarketDataApi;
 
-use crate::market_hours::option_market_open_from_hours;
+const DISK_CACHE_MAX_AGE: Duration = Duration::from_secs(86_400);
 
-static CACHE: Mutex<Option<(Instant, Option<bool>)>> = Mutex::new(None);
-const CACHE_TTL: Duration = Duration::from_secs(120);
+/// Live Schwab hours payload shared between watch refresh task and TUI.
+#[derive(Debug, Clone, Default)]
+pub struct MarketSnapshot {
+    pub hours: Option<Value>,
+}
 
-/// Cached Schwab option market open flag (`None` if credentials unavailable).
-pub fn fetch_option_market_open_cached() -> Option<bool> {
-    let mut guard = CACHE.lock().ok()?;
-    if let Some((fetched_at, value)) = guard.as_ref() {
-        if fetched_at.elapsed() < CACHE_TTL {
-            return *value;
+impl MarketSnapshot {
+    pub fn hours_source(&self) -> Option<MarketStatusSource> {
+        self.hours
+            .as_ref()
+            .map(|_| MarketStatusSource::SchwabApi)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct DiskHoursCache {
+    fetched_at: DateTime<Utc>,
+    hours: Value,
+}
+
+pub fn market_hours_cache_path(rules_path: &Path) -> std::path::PathBuf {
+    let dir = rules_path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = rules_runtime_stem(rules_path);
+    dir.join(format!(".eqo-market-hours-{stem}.json"))
+}
+
+pub fn save_market_hours_cache(rules_path: &Path, hours: &Value) -> std::io::Result<()> {
+    let path = market_hours_cache_path(rules_path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let payload = DiskHoursCache {
+        fetched_at: Utc::now(),
+        hours: hours.clone(),
+    };
+    let content = serde_json::to_string_pretty(&payload)?;
+    fs::write(path, content)
+}
+
+pub fn load_market_hours_cache(rules_path: &Path) -> Option<Value> {
+    let path = market_hours_cache_path(rules_path);
+    let content = fs::read_to_string(path).ok()?;
+    let cache: DiskHoursCache = serde_json::from_str(&content).ok()?;
+    if Utc::now().signed_duration_since(cache.fetched_at).to_std().ok()? > DISK_CACHE_MAX_AGE {
+        return None;
+    }
+    Some(cache.hours)
+}
+
+pub fn resolve_market_status(
+    rules_path: &Path,
+    state: &AgentState,
+    live: Option<&MarketSnapshot>,
+) -> ResolvedMarketStatus {
+    let now = Utc::now();
+    if let Some(snapshot) = live {
+        if let Some(hours) = snapshot.hours.as_ref() {
+            return resolve_eqo_market_open(
+                Some(hours),
+                state,
+                now,
+                snapshot.hours_source(),
+            );
         }
     }
-    let value = fetch_option_market_open_blocking();
-    *guard = Some((Instant::now(), value));
-    value
+    if let Some(hours) = load_market_hours_cache(rules_path) {
+        return resolve_eqo_market_open(
+            Some(&hours),
+            state,
+            now,
+            Some(MarketStatusSource::HoursCache),
+        );
+    }
+    resolve_eqo_market_open(None, state, now, None)
 }
 
-fn fetch_option_market_open_blocking() -> Option<bool> {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .ok()?;
-    rt.block_on(async {
-        let config = ClientConfig::from_env().ok()?;
-        let market = MarketDataApi::new(SchwabClient::new(config));
-        let hours = market.markets().hours("option", None).await.ok()?;
-        option_market_open_from_hours(&hours, Utc::now())
-    })
-}
-
-pub fn market_label(open: Option<bool>, session: Option<&str>) -> (&'static str, bool) {
-    match open {
-        Some(true) => ("OPEN (regular)", true),
-        Some(false) => {
-            if matches!(session, Some("overnight")) {
-                ("CLOSED (overnight)", false)
-            } else {
-                ("CLOSED", false)
-            }
+pub async fn refresh_market_snapshot(
+    runtime: &RuntimeConfig,
+    snapshot: &Arc<Mutex<MarketSnapshot>>,
+) {
+    let Ok(market) = runtime.build_market_api() else {
+        return;
+    };
+    if let Ok(hours) = fetch_option_hours(&market).await {
+        if let Ok(mut guard) = snapshot.lock() {
+            *guard = MarketSnapshot {
+                hours: Some(hours),
+            };
         }
-        None => ("unknown", false),
+    }
+}
+
+pub async fn fetch_option_hours(market: &MarketDataApi) -> anyhow::Result<Value> {
+    market.markets().hours("option", None).await.map_err(Into::into)
+}
+
+pub fn market_label(status: ResolvedMarketStatus, session: Option<&str>) -> (String, bool) {
+    (status.label(session), status.open)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn label_never_unknown() {
+        let status = ResolvedMarketStatus {
+            open: false,
+            source: MarketStatusSource::Schedule,
+        };
+        let (label, open) = market_label(status, Some("overnight"));
+        assert!(!label.contains("unknown"));
+        assert!(!open);
+    }
+
+    #[test]
+    fn disk_cache_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let rules = dir.path().join("options-test.yaml");
+        let hours = json!({ "option": { "EQO": { "isOpen": false } } });
+        save_market_hours_cache(&rules, &hours).unwrap();
+        let loaded = load_market_hours_cache(&rules).unwrap();
+        assert_eq!(loaded, hours);
     }
 }

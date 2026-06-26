@@ -84,7 +84,7 @@ pub async fn run(runtime: &RuntimeConfig, command: AgentCommands) -> Result<()> 
                 ));
                 return Ok(());
             }
-            run_agent_loop(runtime, &file, once).await?;
+            run_agent_loop(runtime, &file, once, None).await?;
         }
         AgentCommands::Stop { file } => {
             stop_daemon(&file)?;
