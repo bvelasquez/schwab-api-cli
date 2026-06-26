@@ -1,10 +1,12 @@
+use std::sync::Arc;
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use chrono::{Local, NaiveDate, Utc};
 use schwab_api::TraderApi;
 use schwab_market_data::endpoints::chains::ChainQuery;
 use schwab_market_data::MarketDataApi;
 use serde_json::{json, Value};
-use std::sync::Arc;
 
 use crate::config::RuntimeConfig;
 use crate::notify::TelegramNotifier;
@@ -29,6 +31,9 @@ use super::market_context::{market_context_summary_for_llm, vertical_entry_marke
 use super::paths::{default_state_path, load_agent_state};
 use super::schedule::{self, AgentSession};
 use super::state::{save_state, AgentState, TrackedPosition};
+use crate::ui::agent_health::{is_fatal_auth_error, SharedAgentHealth};
+
+const TICK_ERROR_BACKOFF_SECS: u64 = 60;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TickResult {
@@ -46,6 +51,7 @@ pub async fn run_agent_loop(
     runtime: &RuntimeConfig,
     rules_path: &std::path::Path,
     once: bool,
+    watch_health: Option<SharedAgentHealth>,
 ) -> Result<()> {
     let rules = RulesConfig::load(rules_path)?;
     let state_path = default_state_path(rules_path);
@@ -64,14 +70,32 @@ pub async fn run_agent_loop(
     let market = runtime.build_market_api()?;
     let telegram = TelegramNotifier::from_env(&rules.notify.telegram).ok().flatten();
     let llm_client = if rules.llm.enabled {
-        Some(OpenRouterClient::from_env()?)
+        match OpenRouterClient::from_env() {
+            Ok(client) => Some(client),
+            Err(e) => {
+                let msg = format!(
+                    "LLM disabled for this run: {e:#} (set OPENROUTER_API_KEY or llm.enabled: false)"
+                );
+                let _ = super::paths::append_agent_log(rules_path, &msg);
+                if let Some(h) = watch_health.as_ref() {
+                    if let Ok(mut g) = h.lock() {
+                        g.record_error(&msg);
+                    }
+                }
+                None
+            }
+        }
     } else {
         None
     };
 
+    let mut consecutive_errors = 0u32;
+    let mut last_logged_error: Option<String> = None;
+
     loop {
-        let result = tick_once(
+        match tick_once(
             runtime,
+            rules_path,
             &rules,
             &trader,
             &market,
@@ -79,48 +103,103 @@ pub async fn run_agent_loop(
             llm_client.as_ref(),
             telegram.as_ref(),
         )
-        .await?;
-        state.last_tick = Some(Utc::now());
-        save_state(&state_path, &state)?;
+        .await
+        {
+            Ok(result) => {
+                consecutive_errors = 0;
+                state.last_tick = Some(Utc::now());
+                save_state(&state_path, &state)?;
 
-        let tick_payload = json!({
-            "agent_id": rules.agent_id,
-            "session": result.session,
-            "at_open": result.at_open,
-            "next_sleep_seconds": result.next_sleep_seconds,
-            "signals": result.signals,
-            "actions": result.actions,
-            "skipped": result.skipped,
-            "monitored_positions": result.monitored_positions,
-            "llm_review": result.llm_review,
-            "dry_run": runtime.dry_run,
-        });
+                if let Some(h) = watch_health.as_ref() {
+                    if let Ok(mut g) = h.lock() {
+                        g.record_tick();
+                    }
+                }
 
-        if runtime.suppress_tick_output {
-            let summary = format!(
-                "{} session={} signals={} actions={} skipped={}",
-                Utc::now().format("%Y-%m-%d %H:%M:%S"),
-                result.session,
-                result.signals.len(),
-                result.actions.len(),
-                result.skipped.len()
-            );
-            let _ = super::paths::append_agent_log(rules_path, &summary);
-        } else {
-            runtime.emit(crate::output::ResponseEnvelope::ok(
-                if once { "agent run once" } else { "agent tick" },
-                tick_payload,
-            ));
+                let tick_payload = json!({
+                    "agent_id": rules.agent_id,
+                    "session": result.session,
+                    "at_open": result.at_open,
+                    "next_sleep_seconds": result.next_sleep_seconds,
+                    "signals": result.signals,
+                    "actions": result.actions,
+                    "skipped": result.skipped,
+                    "monitored_positions": result.monitored_positions,
+                    "llm_review": result.llm_review,
+                    "dry_run": runtime.dry_run,
+                });
+
+                if runtime.suppress_tick_output {
+                    let summary = format!(
+                        "{} session={} signals={} actions={} skipped={}",
+                        Utc::now().format("%Y-%m-%d %H:%M:%S"),
+                        result.session,
+                        result.signals.len(),
+                        result.actions.len(),
+                        result.skipped.len()
+                    );
+                    let _ = super::paths::append_agent_log(rules_path, &summary);
+                } else {
+                    runtime.emit(crate::output::ResponseEnvelope::ok(
+                        if once { "agent run once" } else { "agent tick" },
+                        tick_payload,
+                    ));
+                }
+
+                notify_tick(telegram.as_ref(), &rules, &result, runtime.dry_run).await;
+
+                if once {
+                    break;
+                }
+
+                tokio::time::sleep(std::time::Duration::from_secs(result.next_sleep_seconds))
+                    .await;
+            }
+            Err(e) => {
+                consecutive_errors += 1;
+                let err_str = format!("{e:#}");
+
+                if is_fatal_auth_error(&err_str) {
+                    let msg = "agent stopped: Schwab login required (refresh token invalid). Run: schwab auth login";
+                    if last_logged_error.as_deref() != Some(msg) {
+                        let _ = super::paths::append_agent_log(rules_path, msg);
+                    }
+                    if let Some(h) = watch_health.as_ref() {
+                        if let Ok(mut g) = h.lock() {
+                            g.record_error(msg);
+                        }
+                    }
+                    if once {
+                        return Err(e);
+                    }
+                    break;
+                }
+
+                let msg = format!("tick error (#{consecutive_errors}): {err_str}");
+                if last_logged_error.as_deref() != Some(msg.as_str()) {
+                    let _ = super::paths::append_agent_log(rules_path, &msg);
+                    last_logged_error = Some(msg.clone());
+                }
+                if let Some(h) = watch_health.as_ref() {
+                    if let Ok(mut g) = h.lock() {
+                        g.record_error(&msg);
+                    }
+                }
+                if once {
+                    return Err(e);
+                }
+                let backoff = TICK_ERROR_BACKOFF_SECS
+                    .saturating_mul(consecutive_errors.min(5) as u64)
+                    .max(30);
+                tokio::time::sleep(Duration::from_secs(backoff)).await;
+            }
         }
+    }
 
-        notify_tick(telegram.as_ref(), &rules, &result, runtime.dry_run).await;
-
-        if once {
-            break;
+    if let Some(h) = watch_health.as_ref() {
+        if let Ok(mut g) = h.lock() {
+            g.loop_running = false;
         }
-
-        tokio::time::sleep(std::time::Duration::from_secs(result.next_sleep_seconds))
-            .await;
     }
 
     Ok(())
@@ -128,6 +207,7 @@ pub async fn run_agent_loop(
 
 pub async fn tick_once(
     runtime: &RuntimeConfig,
+    rules_path: &std::path::Path,
     rules: &RulesConfig,
     trader: &Arc<TraderApi>,
     market: &Arc<MarketDataApi>,
@@ -152,7 +232,11 @@ pub async fn tick_once(
 
     reconcile_open_positions(trader, state, rules).await?;
 
-    let market_open = market_is_open(market).await?;
+    let (market_open, hours) = fetch_option_market_status(market).await?;
+    state.last_market_open = Some(market_open);
+    if let Some(ref h) = hours {
+        let _ = crate::ui::market_status::save_market_hours_cache(rules_path, h);
+    }
     let transition = schedule::resolve_session(
         market_open,
         &rules.schedule,
@@ -600,10 +684,13 @@ async fn notify_overnight_alert(
         .await;
 }
 
-async fn market_is_open(market: &MarketDataApi) -> Result<bool> {
+async fn fetch_option_market_status(
+    market: &MarketDataApi,
+) -> Result<(bool, Option<Value>)> {
     let hours = market.markets().hours("option", None).await?;
-    Ok(crate::market_hours::option_market_open_from_hours(&hours, chrono::Utc::now())
-        .unwrap_or(false))
+    let open = crate::market_hours::option_market_open_from_hours(&hours, chrono::Utc::now())
+        .unwrap_or(false);
+    Ok((open, Some(hours)))
 }
 
 fn resolve_llm_phase(

@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -8,7 +9,9 @@ use crate::agent::{
     daemon_status, default_state_path, load_agent_state, load_state, state_summary, DaemonStatus,
 };
 use crate::agent::state::AgentState;
+use crate::market_hours::ResolvedMarketStatus;
 use crate::rules::RulesConfig;
+use crate::ui::market_status::{self, MarketSnapshot};
 
 const LOG_TAIL_LINES: usize = 30;
 
@@ -20,12 +23,18 @@ pub struct DashboardContext {
     pub state_path: PathBuf,
     pub daemon: DaemonStatus,
     pub log_tail: Vec<String>,
-    /// Schwab option market hours (cached ~2 min); `None` if API unavailable.
-    pub market_option_open: Option<bool>,
+    pub market_status: ResolvedMarketStatus,
 }
 
 impl DashboardContext {
     pub fn load(rules_path: &Path) -> Result<Self> {
+        Self::load_with_snapshot(rules_path, None)
+    }
+
+    pub fn load_with_snapshot(
+        rules_path: &Path,
+        live_market: Option<&MarketSnapshot>,
+    ) -> Result<Self> {
         let rules = RulesConfig::load(rules_path)?;
         let state_path = default_state_path(rules_path);
         let state = if state_path.exists() {
@@ -35,7 +44,7 @@ impl DashboardContext {
         };
         let daemon = daemon_status(rules_path);
         let log_tail = tail_lines(&daemon.log_file, LOG_TAIL_LINES);
-        let market_option_open = super::market_status::fetch_option_market_open_cached();
+        let market_status = market_status::resolve_market_status(rules_path, &state, live_market);
 
         Ok(Self {
             rules_path: rules_path.to_path_buf(),
@@ -44,8 +53,16 @@ impl DashboardContext {
             state_path,
             daemon,
             log_tail,
-            market_option_open,
+            market_status,
         })
+    }
+
+    pub fn load_with_shared_snapshot(
+        rules_path: &Path,
+        live_market: &Arc<Mutex<MarketSnapshot>>,
+    ) -> Result<Self> {
+        let snapshot = live_market.lock().ok().map(|g| g.clone());
+        Self::load_with_snapshot(rules_path, snapshot.as_ref())
     }
 
     pub fn to_json(&self) -> Value {
@@ -62,7 +79,10 @@ impl DashboardContext {
             "state": state_summary(&self.state),
             "open_positions_detail": self.state.open_positions.values().collect::<Vec<_>>(),
             "log_tail": self.log_tail,
-            "market_option_open": self.market_option_open,
+            "market_status": {
+                "open": self.market_status.open,
+                "source": format!("{:?}", self.market_status.source),
+            },
         })
     }
 
@@ -78,6 +98,42 @@ impl DashboardContext {
         let secs = self.rules.llm.review_every_ticks.max(1)
             * self.rules.schedule.tick_interval_seconds.max(1);
         secs / 60
+    }
+
+    /// Session the agent should be in right now (from market hours, not stale state file).
+    pub fn effective_session(&self) -> &'static str {
+        if self.market_status.open {
+            "regular"
+        } else if self.rules.schedule.overnight.enabled {
+            "overnight"
+        } else {
+            "idle"
+        }
+    }
+
+    pub fn expected_tick_interval_secs(&self) -> u64 {
+        if self.market_status.open {
+            self.rules.schedule.tick_interval_seconds.max(5)
+        } else if self.rules.schedule.overnight.enabled {
+            self.rules.schedule.overnight.tick_interval_seconds.max(300)
+        } else {
+            self.rules.schedule.tick_interval_seconds.max(5)
+        }
+    }
+
+    pub fn last_tick_age_secs(&self) -> Option<i64> {
+        self.state
+            .last_tick
+            .map(|at| (chrono::Utc::now() - at).num_seconds())
+    }
+
+    pub fn tick_is_stale(&self) -> bool {
+        let interval = self.expected_tick_interval_secs() as i64;
+        let threshold = interval * 2 + 60;
+        match self.last_tick_age_secs() {
+            Some(age) => age > threshold,
+            None => true,
+        }
     }
 }
 

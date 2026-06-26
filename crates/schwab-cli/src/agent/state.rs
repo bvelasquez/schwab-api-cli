@@ -34,6 +34,9 @@ pub struct AgentState {
     pub last_overnight_digest_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub open_playbook: Option<Value>,
+    /// Last EQO regular-session open flag from agent tick (Schwab hours).
+    #[serde(default)]
+    pub last_market_open: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,6 +116,7 @@ pub fn state_summary(state: &AgentState) -> Value {
         "regular_tick_count": state.regular_tick_count,
         "last_overnight_digest_at": state.last_overnight_digest_at,
         "open_playbook": state.open_playbook,
+        "last_market_open": state.last_market_open,
         "pending_orders": state.pending_order_ids.len(),
         "recent_actions": state.last_actions.iter().rev().take(10).collect::<Vec<_>>(),
     })
