@@ -124,10 +124,7 @@ pub fn resolve_eqo_market_open(
     }
 
     if let Some(open) = state.last_market_open {
-        if state
-            .last_tick
-            .is_some_and(|at| (now - at).num_hours() < 6)
-        {
+        if state.last_tick.is_some_and(|at| (now - at).num_hours() < 6) {
             return ResolvedMarketStatus {
                 open,
                 source: MarketStatusSource::Agent,
@@ -174,7 +171,10 @@ mod tests {
         let after_close = DateTime::parse_from_rfc3339("2026-06-25T17:48:00-04:00")
             .unwrap()
             .with_timezone(&Utc);
-        assert_eq!(option_market_open_from_hours(&hours, after_close), Some(false));
+        assert_eq!(
+            option_market_open_from_hours(&hours, after_close),
+            Some(false)
+        );
     }
 
     #[test]

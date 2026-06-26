@@ -1,12 +1,12 @@
 use anyhow::{bail, Result};
-use schwab_api::models::order::{
-    ComplexOrderStrategyType, OrderInstruction, OrderTypeRequest,
-};
+use schwab_api::models::order::{ComplexOrderStrategyType, OrderInstruction, OrderTypeRequest};
 use serde_json::Value;
 
-use crate::order_builder::{build_complex_option_order, parse_duration, parse_session, OrderLegSpec};
 use crate::options::symbology::build_option_symbol;
 use crate::options::types::IronCondorParams;
+use crate::order_builder::{
+    build_complex_option_order, parse_duration, parse_session, OrderLegSpec,
+};
 
 pub fn build_iron_condor_order(params: &IronCondorParams) -> Result<Value> {
     if params.contracts <= 0.0 {
@@ -40,7 +40,12 @@ pub fn build_iron_condor_order(params: &IronCondorParams) -> Result<Value> {
         },
         OrderLegSpec {
             instruction: OrderInstruction::SellToOpen,
-            symbol: build_option_symbol(&params.underlying, &params.expiry, 'C', params.call_short)?,
+            symbol: build_option_symbol(
+                &params.underlying,
+                &params.expiry,
+                'C',
+                params.call_short,
+            )?,
             asset_type: "OPTION",
             quantity: params.contracts,
         },

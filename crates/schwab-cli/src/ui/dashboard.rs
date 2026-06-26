@@ -1,11 +1,11 @@
 use chrono::{DateTime, Utc};
 use console::Style;
 
+use super::context::DashboardContext;
 use super::{
     ago_secs, bar, clock_dot, format_duration_secs, panel, panel_fit, rule, status_dot,
     terminal_width, two_column,
 };
-use super::context::DashboardContext;
 
 pub fn render_dashboard(ctx: &DashboardContext) -> String {
     let width = terminal_width().min(120);
@@ -102,11 +102,7 @@ fn render_agent_panel(ctx: &DashboardContext, inner: usize) -> String {
 
     if let Some(at) = ctx.state.last_tick {
         let secs = (Utc::now() - at).num_seconds();
-        let session = ctx
-            .state
-            .last_session
-            .as_deref()
-            .unwrap_or("?");
+        let session = ctx.state.last_session.as_deref().unwrap_or("?");
         lines.push(format!(
             "  {}  {:<12} last tick {}  {}",
             clock_dot(),
@@ -123,13 +119,20 @@ fn render_agent_panel(ctx: &DashboardContext, inner: usize) -> String {
         ));
     }
 
-    let open = ctx.state.open_positions.len();
-    let pending = ctx.state.pending_order_ids.len();
+    let spreads = ctx.state.open_positions.len();
+    let contracts = ctx.state.total_contracts();
+    let pending = ctx.state.pending_count();
     let trades = ctx.state.trades_today;
     let max_trades = ctx.rules.risk.max_trades_per_day;
+    let pos_label = if contracts > spreads as u32 {
+        format!("{spreads} spread · {contracts} ct")
+    } else if spreads > 0 {
+        format!("{spreads} spread")
+    } else {
+        "flat".into()
+    };
     lines.push(format!(
-        "           {} open  ·  {} pending  ·  {}/{} trades today",
-        open, pending, trades, max_trades
+        "           {pos_label}  ·  {pending} pending  ·  {trades}/{max_trades} trades today",
     ));
 
     if ctx.rules.llm.enabled {
@@ -178,10 +181,7 @@ fn render_rules_panel(ctx: &DashboardContext, inner: usize) -> String {
     }
     if rules.strategies.iron_condor.enabled {
         let ic = &rules.entry_rules.iron_condor;
-        strategies.push(format!(
-            "iron condor  {}–{} DTE",
-            ic.dte_min, ic.dte_max
-        ));
+        strategies.push(format!("iron condor  {}–{} DTE", ic.dte_min, ic.dte_max));
     }
     if strategies.is_empty() {
         lines.push(format!("  strategies {}", dim.apply_to("(none enabled)")));
@@ -234,14 +234,20 @@ fn render_positions_panel(ctx: &DashboardContext, max_width: usize) -> String {
     let hold = Style::new().green();
     let mut lines = Vec::new();
     for pos in ctx.state.open_positions.values() {
+        let contracts = if pos.contracts > 1 {
+            format!(" ×{}", pos.contracts)
+        } else {
+            String::new()
+        };
         let credit = pos
             .entry_credit
             .map(|c| format!("  cr ${c:.2}"))
             .unwrap_or_default();
         let opened = ago_from_dt(pos.opened_at);
         lines.push(format!(
-            "  {}  {}  exp {}  max loss ${:.0}{}  — {}  {}",
+            "  {}{}  {}  exp {}  max loss ${:.0}{}  — {}  {}",
             pos.underlying,
+            contracts,
             pos.strategy,
             pos.expiry,
             pos.max_loss_usd,
@@ -250,11 +256,17 @@ fn render_positions_panel(ctx: &DashboardContext, max_width: usize) -> String {
             Style::new().dim().apply_to(opened)
         ));
     }
-    panel_fit(
-        &format!("Positions ({})", ctx.state.open_positions.len()),
-        &lines,
-        max_width,
-    )
+    let contracts = ctx.state.total_contracts();
+    let title = if contracts > ctx.state.open_positions.len() as u32 {
+        format!(
+            "Positions ({} spread · {} ct)",
+            ctx.state.open_positions.len(),
+            contracts
+        )
+    } else {
+        format!("Positions ({})", ctx.state.open_positions.len())
+    };
+    panel_fit(&title, &lines, max_width)
 }
 
 fn render_activity_panel(ctx: &DashboardContext, max_width: usize) -> String {
@@ -382,8 +394,8 @@ mod tests {
 
     #[test]
     fn dashboard_renders_for_project_rules() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../rules/options-pilot-8709.yaml");
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../rules/options-pilot-8709.yaml");
         if !path.exists() {
             return;
         }

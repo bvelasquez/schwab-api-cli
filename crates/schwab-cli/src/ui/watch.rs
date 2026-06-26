@@ -113,10 +113,7 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
     let mut last_refresh = Instant::now();
     let mut status_msg = match agent_mode {
         WatchAgentMode::Embedded => "agent running in-process".to_string(),
-        WatchAgentMode::External => format!(
-            "attached to pid {}",
-            ctx.daemon.pid.unwrap_or(0)
-        ),
+        WatchAgentMode::External => format!("attached to pid {}", ctx.daemon.pid.unwrap_or(0)),
         WatchAgentMode::MonitorOnly => "monitor only".to_string(),
     };
     let mut state = WatchState {
@@ -151,12 +148,8 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
                         KeyCode::Char('3') => tab = WatchTab::Log,
                         KeyCode::Char('4') => tab = WatchTab::Positions,
                         KeyCode::Char('5') => tab = WatchTab::Llm,
-                        KeyCode::Char('j') | KeyCode::Down => {
-                            scroll_active_tab(tab, &mut state, 1)
-                        }
-                        KeyCode::Char('k') | KeyCode::Up => {
-                            scroll_active_tab(tab, &mut state, -1)
-                        }
+                        KeyCode::Char('j') | KeyCode::Down => scroll_active_tab(tab, &mut state, 1),
+                        KeyCode::Char('k') | KeyCode::Up => scroll_active_tab(tab, &mut state, -1),
                         KeyCode::Char('r') => {
                             match DashboardContext::load_with_shared_snapshot(
                                 rules_path,
@@ -178,8 +171,7 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
                 }
             }
         } else if last_refresh.elapsed() >= REFRESH_INTERVAL {
-            if let Ok(c) =
-                DashboardContext::load_with_shared_snapshot(rules_path, market_snapshot)
+            if let Ok(c) = DashboardContext::load_with_shared_snapshot(rules_path, market_snapshot)
             {
                 ctx = c;
             }
@@ -207,6 +199,7 @@ fn scroll_active_tab(tab: WatchTab, state: &mut WatchState, delta: i16) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_ui(
     f: &mut ratatui::Frame,
     area: Rect,
@@ -283,8 +276,7 @@ fn render_overview(
     agent_mode: WatchAgentMode,
     agent_health: Option<&SharedAgentHealth>,
 ) {
-    let show_hint =
-        matches!(agent_mode, WatchAgentMode::MonitorOnly) && !ctx.daemon.running;
+    let show_hint = matches!(agent_mode, WatchAgentMode::MonitorOnly) && !ctx.daemon.running;
     let main_constraints = if show_hint {
         vec![
             Constraint::Length(9),
@@ -359,12 +351,9 @@ fn render_rules_tab(
         .split(area);
 
     f.render_widget(
-        Paragraph::new(lines)
-            .scroll((scroll, 0))
-            .block(
-                panel_block("Rules Config")
-                    .title_bottom(format!(" {} ", ctx.rules_path.display())),
-            ),
+        Paragraph::new(lines).scroll((scroll, 0)).block(
+            panel_block("Rules Config").title_bottom(format!(" {} ", ctx.rules_path.display())),
+        ),
         vertical[0],
     );
 
@@ -420,7 +409,13 @@ fn render_log_tab(
 }
 
 fn render_positions_tab(f: &mut ratatui::Frame, area: Rect, ctx: &DashboardContext) {
-    let title = format!("Positions ({})", ctx.state.open_positions.len());
+    let spreads = ctx.state.open_positions.len();
+    let contracts = ctx.state.total_contracts();
+    let title = if contracts > spreads as u32 {
+        format!("Positions ({spreads} spread · {contracts} ct)")
+    } else {
+        format!("Positions ({spreads})")
+    };
     let list = List::new(position_items(ctx)).block(panel_block(&title));
     f.render_widget(list, area);
 }
@@ -453,10 +448,7 @@ fn render_llm_tab(
     f.render_widget(
         Paragraph::new(lines)
             .scroll((scroll, 0))
-            .block(
-                panel_block("LLM Reviews")
-                    .title_bottom(model),
-            ),
+            .block(panel_block("LLM Reviews").title_bottom(model)),
         vertical[0],
     );
 

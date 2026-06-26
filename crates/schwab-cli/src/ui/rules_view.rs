@@ -1,7 +1,7 @@
 use console::Style;
 
-use super::{bar, kv_line, panel_fit, terminal_width};
 use super::context::DashboardContext;
+use super::{bar, kv_line, panel_fit, terminal_width};
 
 pub fn render_rules_detail(ctx: &DashboardContext) -> String {
     let max_w = terminal_width().min(88);
@@ -39,7 +39,11 @@ pub fn render_rules_detail(ctx: &DashboardContext) -> String {
         format!(
             "every {} · web digest {}",
             super::format_duration_secs(sched.overnight.tick_interval_seconds),
-            if sched.overnight.web_digest { "on" } else { "off" }
+            if sched.overnight.web_digest {
+                "on"
+            } else {
+                "off"
+            }
         )
     } else {
         "disabled".into()
@@ -75,10 +79,7 @@ pub fn render_rules_detail(ctx: &DashboardContext) -> String {
         ));
         entry_lines.push(format!(
             "    delta {:.2}–{:.2}  ·  max {} pos  ·  {} contracts",
-            v.short_delta_min,
-            v.short_delta_max,
-            v.max_open_positions,
-            v.max_contracts_per_trade
+            v.short_delta_min, v.short_delta_max, v.max_open_positions, v.max_contracts_per_trade
         ));
     }
     if rules.strategies.iron_condor.enabled {
@@ -115,7 +116,11 @@ pub fn render_rules_detail(ctx: &DashboardContext) -> String {
             risk.max_portfolio_risk_usd,
             bar(risk_ratio, 8)
         ),
-        kv_line("per trade max", &format!("${:.0}", risk.max_risk_per_trade_usd), 16),
+        kv_line(
+            "per trade max",
+            &format!("${:.0}", risk.max_risk_per_trade_usd),
+            16,
+        ),
         kv_line("trades / day", &risk.max_trades_per_day.to_string(), 16),
         kv_line(
             "allowed",
@@ -139,7 +144,11 @@ pub fn render_rules_detail(ctx: &DashboardContext) -> String {
             kv_line("web", &llm.web_model, 16),
             kv_line(
                 "monitor every",
-                &format!("{} ticks (~{}m)", llm.review_every_ticks, ctx.monitor_interval_minutes()),
+                &format!(
+                    "{} ticks (~{}m)",
+                    llm.review_every_ticks,
+                    ctx.monitor_interval_minutes()
+                ),
                 16,
             ),
             kv_line(
@@ -164,7 +173,11 @@ pub fn render_rules_detail(ctx: &DashboardContext) -> String {
         kv_line("order type", &exec.order_type, 16),
         kv_line("require preview", &exec.require_preview.to_string(), 16),
         kv_line("wait for fill", &exec.wait_for_fill.to_string(), 16),
-        kv_line("fill timeout", &format!("{}s", exec.fill_timeout_seconds), 16),
+        kv_line(
+            "fill timeout",
+            &format!("{}s", exec.fill_timeout_seconds),
+            16,
+        ),
     ];
     out.push_str(&panel_fit("Execution", &exec_lines, max_w));
     out.push('\n');
@@ -178,8 +191,8 @@ mod tests {
 
     #[test]
     fn rules_detail_renders_sections() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../rules/options-pilot-8709.yaml");
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../rules/options-pilot-8709.yaml");
         if !path.exists() {
             return;
         }
@@ -192,8 +205,8 @@ mod tests {
 
     #[test]
     fn rules_panel_borders_align() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../rules/options-pilot-8709.yaml");
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../rules/options-pilot-8709.yaml");
         if !path.exists() {
             return;
         }

@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod auth_callback;
+pub mod auth_reminder;
 pub mod capabilities;
 pub mod cli;
 pub mod commands;
@@ -13,10 +14,10 @@ pub mod market_info;
 pub mod mode;
 pub mod notify;
 pub mod options;
-pub mod output;
 pub mod order_builder;
 pub mod order_schema;
 pub mod order_status;
+pub mod output;
 pub mod plan;
 pub mod portfolio;
 pub mod rules;

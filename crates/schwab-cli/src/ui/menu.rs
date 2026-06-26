@@ -61,18 +61,12 @@ fn menu_choices() -> Vec<String> {
     ]
 }
 
-pub async fn show_dashboard(
-    runtime: &RuntimeConfig,
-    file: Option<PathBuf>,
-) -> Result<()> {
+pub async fn show_dashboard(runtime: &RuntimeConfig, file: Option<PathBuf>) -> Result<()> {
     let rules_path = resolve_rules_file(file, runtime.is_interactive())?;
     let ctx = DashboardContext::load(&rules_path)?;
 
     if runtime.output == crate::output::OutputFormat::Json {
-        runtime.emit(ResponseEnvelope::ok(
-            "dashboard",
-            ctx.to_json(),
-        ));
+        runtime.emit(ResponseEnvelope::ok("dashboard", ctx.to_json()));
         return Ok(());
     }
 
@@ -86,10 +80,7 @@ pub async fn show_rules(runtime: &RuntimeConfig, file: Option<PathBuf>) -> Resul
     let ctx = DashboardContext::load(&rules_path)?;
 
     if runtime.output == crate::output::OutputFormat::Json {
-        runtime.emit(ResponseEnvelope::ok(
-            "rules show",
-            ctx.to_json(),
-        ));
+        runtime.emit(ResponseEnvelope::ok("rules show", ctx.to_json()));
         return Ok(());
     }
 
@@ -132,10 +123,7 @@ async fn validate_rules(runtime: &RuntimeConfig, file: Option<PathBuf>) -> Resul
     Ok(())
 }
 
-async fn run_agent_background(
-    runtime: &RuntimeConfig,
-    file: Option<PathBuf>,
-) -> Result<()> {
+async fn run_agent_background(runtime: &RuntimeConfig, file: Option<PathBuf>) -> Result<()> {
     let rules_path = resolve_rules_file(file, true)?;
     if !runtime.trust || !runtime.yes {
         anyhow::bail!(

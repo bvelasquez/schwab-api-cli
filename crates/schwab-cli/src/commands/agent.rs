@@ -54,7 +54,11 @@ pub async fn run(runtime: &RuntimeConfig, command: AgentCommands) -> Result<()> 
                 emit_legacy_status(runtime)?;
             }
         }
-        AgentCommands::Run { file, once, background } => {
+        AgentCommands::Run {
+            file,
+            once,
+            background,
+        } => {
             if background {
                 if once {
                     anyhow::bail!("--background cannot be combined with --once");

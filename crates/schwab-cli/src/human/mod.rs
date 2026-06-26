@@ -3,7 +3,10 @@ use inquire::Select;
 
 use crate::config::RuntimeConfig;
 
-pub async fn pick_account_hash(_runtime: &RuntimeConfig, api: &schwab_api::TraderApi) -> Result<String> {
+pub async fn pick_account_hash(
+    _runtime: &RuntimeConfig,
+    api: &schwab_api::TraderApi,
+) -> Result<String> {
     let numbers = api
         .accounts()
         .account_numbers()
@@ -16,7 +19,13 @@ pub async fn pick_account_hash(_runtime: &RuntimeConfig, api: &schwab_api::Trade
 
     let labels: Vec<String> = numbers
         .iter()
-        .map(|n| format!("{}  (hash: {}…)", n.account_number, &n.hash_value[..n.hash_value.len().min(8)]))
+        .map(|n| {
+            format!(
+                "{}  (hash: {}…)",
+                n.account_number,
+                &n.hash_value[..n.hash_value.len().min(8)]
+            )
+        })
         .collect();
 
     let choice = Select::new("Select account", labels.clone()).prompt()?;

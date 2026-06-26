@@ -99,10 +99,7 @@ fn print_pretty(envelope: &ResponseEnvelope) {
     let err = Style::new().red().bold();
     let dim = Style::new().dim();
 
-    let is_agent_tick = matches!(
-        envelope.command.as_str(),
-        "agent tick" | "agent run once"
-    );
+    let is_agent_tick = matches!(envelope.command.as_str(), "agent tick" | "agent run once");
 
     if !is_agent_tick {
         println!("{}", title.apply_to(format!("schwab {}", envelope.command)));
@@ -119,10 +116,7 @@ fn print_pretty(envelope: &ResponseEnvelope) {
     if envelope.data != Value::Null {
         if let Some(body) = format_agent_pretty_body(&envelope.command, &envelope.data) {
             if is_agent_tick {
-                println!(
-                    "{}",
-                    dim.apply_to(format!("── {} ──", envelope.timestamp))
-                );
+                println!("{}", dim.apply_to(format!("── {} ──", envelope.timestamp)));
             } else {
                 println!();
             }
@@ -195,8 +189,7 @@ mod tests {
 
     #[test]
     fn envelope_err_and_inputs() {
-        let e = ResponseEnvelope::ok("x", Value::Null)
-            .with_inputs(serde_json::json!({"a": 1}));
+        let e = ResponseEnvelope::ok("x", Value::Null).with_inputs(serde_json::json!({"a": 1}));
         assert!(e.success);
         let e = ResponseEnvelope::err("x", "nope");
         assert!(!e.success);

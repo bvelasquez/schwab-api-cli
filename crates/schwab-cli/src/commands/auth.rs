@@ -5,6 +5,7 @@ use serde_json::json;
 use std::time::Duration;
 
 use crate::auth_callback::capture_redirect_code;
+use crate::auth_reminder::assess_refresh_token;
 use crate::cli::AuthCommands;
 use crate::config::RuntimeConfig;
 use crate::output::ResponseEnvelope;
@@ -40,7 +41,9 @@ async fn login(runtime: &RuntimeConfig, code: Option<String>) -> Result<()> {
 
         println!(
             "{}",
-            Style::new().cyan().apply_to("Starting local OAuth callback listener…")
+            Style::new()
+                .cyan()
+                .apply_to("Starting local OAuth callback listener…")
         );
         if use_https {
             println!(
@@ -126,13 +129,22 @@ async fn status(runtime: &RuntimeConfig) -> Result<()> {
     let tokens = oauth.status().await?;
 
     let data = match tokens {
-        Some(t) => json!({
-            "authenticated": true,
-            "expires_at": t.expires_at,
-            "expires_in_seconds": t.expires_in_seconds(),
-            "expired": t.is_expired(),
-            "token_path": oauth.store().path(),
-        }),
+        Some(t) => {
+            let reminder = assess_refresh_token(&t);
+            json!({
+                "authenticated": true,
+                "expires_at": t.expires_at,
+                "expires_in_seconds": t.expires_in_seconds(),
+                "expired": t.is_expired(),
+                "obtained_at": t.obtained_at,
+                "refresh_expires_in_seconds": t.refresh_expires_in_seconds(),
+                "auth_reminder": {
+                    "level": reminder.level.as_str(),
+                    "message": reminder.message,
+                },
+                "token_path": oauth.store().path(),
+            })
+        }
         None => json!({
             "authenticated": false,
             "token_path": oauth.store().path(),
@@ -141,7 +153,11 @@ async fn status(runtime: &RuntimeConfig) -> Result<()> {
     };
 
     let mut envelope = ResponseEnvelope::ok("auth status", data);
-    if !envelope.data["authenticated"].as_bool().unwrap_or(false) {
+    let auth_needs_login = !envelope.data["authenticated"].as_bool().unwrap_or(false)
+        || envelope.data["auth_reminder"]["level"]
+            .as_str()
+            .is_some_and(|l| l == "urgent" || l == "expired");
+    if auth_needs_login {
         envelope.next_actions = vec!["schwab auth login".into()];
     }
     runtime.emit(envelope);
@@ -177,7 +193,10 @@ async fn logout(runtime: &RuntimeConfig) -> Result<()> {
     use crate::safety::require_mutation_approval;
     require_mutation_approval(runtime, "auth logout", "Delete stored OAuth tokens.")?;
     if runtime.dry_run {
-        runtime.emit(ResponseEnvelope::ok("auth logout", json!({ "dry_run": true })));
+        runtime.emit(ResponseEnvelope::ok(
+            "auth logout",
+            json!({ "dry_run": true }),
+        ));
         return Ok(());
     }
 
@@ -195,10 +214,7 @@ fn extract_auth_code(raw: &str) -> String {
     let normalized: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
     let code = if let Some(idx) = normalized.find("code=") {
         let rest = &normalized[idx + 5..];
-        rest.split('&')
-            .next()
-            .unwrap_or(rest)
-            .trim_end_matches('/')
+        rest.split('&').next().unwrap_or(rest).trim_end_matches('/')
     } else {
         normalized.as_str()
     };

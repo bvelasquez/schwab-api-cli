@@ -20,8 +20,10 @@ impl ClientConfig {
     pub fn from_env() -> anyhow::Result<Self> {
         let app_key = env_first(&["SCHWAB_APP_KEY", "SCHWAB_CLIENT_ID"])
             .ok_or_else(|| anyhow::anyhow!("SCHWAB_APP_KEY (or SCHWAB_CLIENT_ID) is required"))?;
-        let app_secret = env_first(&["SCHWAB_APP_SECRET", "SCHWAB_CLIENT_SECRET"])
-            .ok_or_else(|| anyhow::anyhow!("SCHWAB_APP_SECRET (or SCHWAB_CLIENT_SECRET) is required"))?;
+        let app_secret =
+            env_first(&["SCHWAB_APP_SECRET", "SCHWAB_CLIENT_SECRET"]).ok_or_else(|| {
+                anyhow::anyhow!("SCHWAB_APP_SECRET (or SCHWAB_CLIENT_SECRET) is required")
+            })?;
         let redirect_uri = std::env::var("SCHWAB_REDIRECT_URI")
             .unwrap_or_else(|_| "https://127.0.0.1:8182".to_string());
         let token_dir = std::env::var("SCHWAB_TOKEN_DIR")

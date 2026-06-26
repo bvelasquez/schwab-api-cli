@@ -171,10 +171,10 @@ impl OpenRouterClient {
         let mut last_err = None;
         for mode in modes {
             match self
-                .review_with_format(&model, &system, &user, config.max_tokens, mode)
+                .review_with_format(model, &system, &user, config.max_tokens, mode)
                 .await
             {
-                Ok(review) => return Ok(parse_llm_review(phase, &model, use_web, review)),
+                Ok(review) => return parse_llm_review(phase, model, use_web, review),
                 Err(err) if use_web || !is_retryable_format_error(&err) => return Err(err),
                 Err(err) => last_err = Some(err),
             }
@@ -220,7 +220,10 @@ impl OpenRouterClient {
             .context("OpenRouter request failed")?;
 
         let status = resp.status();
-        let payload: Value = resp.json().await.context("OpenRouter response parse failed")?;
+        let payload: Value = resp
+            .json()
+            .await
+            .context("OpenRouter response parse failed")?;
         if !status.is_success() {
             let fallback = payload.to_string();
             let message = payload
@@ -310,7 +313,11 @@ fn parse_llm_json_content(content: &str) -> Result<Value> {
 
 fn format_llm_parse_error(content: &str) -> String {
     let preview: String = content.chars().take(240).collect();
-    let suffix = if content.chars().count() > 240 { "…" } else { "" };
+    let suffix = if content.chars().count() > 240 {
+        "…"
+    } else {
+        ""
+    };
     format!("LLM returned non-JSON content: {preview}{suffix}")
 }
 
@@ -337,7 +344,25 @@ pub fn build_user_message(config: &LlmConfig, phase: LlmPhase, context: &Value) 
     }
 }
 
-fn parse_llm_review(phase: LlmPhase, model: &str, used_web: bool, parsed: Value) -> LlmReview {
+fn parse_llm_review(
+    phase: LlmPhase,
+    model: &str,
+    used_web: bool,
+    parsed: Value,
+) -> Result<LlmReview> {
+    let market_commentary = required_string(&parsed, "market_commentary")?;
+    let entry_recommendation = parsed
+        .pointer("/new_entries/recommendation")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| matches!(s.as_str(), "proceed" | "defer" | "skip"))
+        .context("LLM review missing valid new_entries.recommendation")?;
+    let entry_reasoning = parsed
+        .pointer("/new_entries/reasoning")
+        .and_then(|v| v.as_str())
+        .context("LLM review missing new_entries.reasoning")?
+        .to_string();
+
     let position_reviews = parsed
         .get("positions")
         .and_then(|v| v.as_array())
@@ -367,15 +392,11 @@ fn parse_llm_review(phase: LlmPhase, model: &str, used_web: bool, parsed: Value)
         })
         .unwrap_or_default();
 
-    LlmReview {
+    Ok(LlmReview {
         phase: phase_label(phase).to_string(),
         model: model.to_string(),
         used_web,
-        market_commentary: parsed
-            .get("market_commentary")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
+        market_commentary,
         web_insights: parsed
             .get("web_insights")
             .and_then(|v| v.as_array())
@@ -385,16 +406,8 @@ fn parse_llm_review(phase: LlmPhase, model: &str, used_web: bool, parsed: Value)
                     .collect()
             })
             .unwrap_or_default(),
-        entry_recommendation: parsed
-            .pointer("/new_entries/recommendation")
-            .and_then(|v| v.as_str())
-            .unwrap_or("proceed")
-            .to_string(),
-        entry_reasoning: parsed
-            .pointer("/new_entries/reasoning")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
+        entry_recommendation,
+        entry_reasoning,
         risk_alerts: parsed
             .get("risk_alerts")
             .and_then(|v| v.as_array())
@@ -406,7 +419,15 @@ fn parse_llm_review(phase: LlmPhase, model: &str, used_web: bool, parsed: Value)
             .unwrap_or_default(),
         position_reviews,
         raw: parsed,
-    }
+    })
+}
+
+fn required_string(parsed: &Value, key: &str) -> Result<String> {
+    parsed
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .with_context(|| format!("LLM review missing {key}"))
 }
 
 fn phase_label(phase: LlmPhase) -> &'static str {
@@ -503,7 +524,7 @@ mod tests {
             "new_entries": { "recommendation": "proceed", "reasoning": "ok" },
             "risk_alerts": []
         });
-        let review = parse_llm_review(LlmPhase::Selection, "test", true, raw);
+        let review = parse_llm_review(LlmPhase::Selection, "test", true, raw).unwrap();
         assert_eq!(review.phase, "selection");
         assert_eq!(review.entry_recommendation, "proceed");
         assert_eq!(review.position_reviews.len(), 1);
@@ -548,7 +569,9 @@ mod tests {
 ```"#;
         let parsed = parse_llm_json_content(raw).unwrap();
         assert_eq!(
-            parsed.pointer("/new_entries/recommendation").and_then(|v| v.as_str()),
+            parsed
+                .pointer("/new_entries/recommendation")
+                .and_then(|v| v.as_str()),
             Some("proceed")
         );
     }
@@ -562,5 +585,24 @@ mod tests {
             .expect("required array");
         assert!(required.iter().any(|v| v.as_str() == Some("positions")));
         assert!(required.iter().any(|v| v.as_str() == Some("new_entries")));
+    }
+
+    #[test]
+    fn missing_entry_recommendation_is_rejected() {
+        let raw = json!({
+            "market_commentary": "",
+            "web_insights": [],
+            "positions": [],
+            "new_entries": { "reasoning": "" },
+            "risk_alerts": []
+        });
+        let err = parse_llm_review(LlmPhase::Selection, "test", true, raw).unwrap_err();
+        assert!(err.to_string().contains("new_entries.recommendation"));
+    }
+
+    #[test]
+    fn empty_json_is_not_a_proceed_review() {
+        let err = parse_llm_review(LlmPhase::Selection, "test", true, json!({})).unwrap_err();
+        assert!(err.to_string().contains("market_commentary"));
     }
 }

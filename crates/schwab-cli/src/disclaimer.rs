@@ -71,10 +71,7 @@ pub fn mark_accepted() -> Result<PathBuf> {
         fs::create_dir_all(parent)
             .with_context(|| format!("create config dir {}", parent.display()))?;
     }
-    let body = format!(
-        "accepted_at={}\nversion=1\n",
-        Utc::now().to_rfc3339()
-    );
+    let body = format!("accepted_at={}\nversion=1\n", Utc::now().to_rfc3339());
     fs::write(&path, body).with_context(|| format!("write {}", path.display()))?;
     // Showing acceptance implies the banner was seen.
     let _ = mark_shown();

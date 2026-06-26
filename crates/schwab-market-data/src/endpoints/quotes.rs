@@ -2,7 +2,7 @@ use schwab_api::client::SchwabClient;
 use schwab_api::Result;
 use serde_json::Value;
 
-use super::{get, opt_query, merge_queries_str, opt_query_bool};
+use super::{get, merge_queries_str, opt_query, opt_query_bool};
 
 pub struct QuotesApi<'a> {
     client: &'a SchwabClient,

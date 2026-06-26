@@ -281,7 +281,7 @@ pub struct LlmConfig {
 }
 
 /// Configurable LLM instructions per agent strategy. Empty fields use built-in defaults.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LlmPromptsConfig {
     /// System instructions for entry/selection phase (role, risk posture, what to optimize).
@@ -298,20 +298,6 @@ pub struct LlmPromptsConfig {
     pub overnight: String,
     /// Extra context for overnight digest user message.
     pub overnight_context: String,
-}
-
-impl Default for LlmPromptsConfig {
-    fn default() -> Self {
-        Self {
-            selection: String::new(),
-            selection_web: String::new(),
-            selection_context: String::new(),
-            monitor: String::new(),
-            monitor_context: String::new(),
-            overnight: String::new(),
-            overnight_context: String::new(),
-        }
-    }
 }
 
 pub fn default_selection_prompt() -> &'static str {
@@ -455,18 +441,10 @@ impl LlmConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct NotifyConfig {
     pub telegram: TelegramNotifyConfig,
-}
-
-impl Default for NotifyConfig {
-    fn default() -> Self {
-        Self {
-            telegram: TelegramNotifyConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -523,6 +501,15 @@ impl RulesConfig {
         }
         if self.watchlist.is_empty() {
             anyhow::bail!("watchlist must not be empty");
+        }
+        if !self.schedule.market_hours_only {
+            anyhow::bail!("options agent requires schedule.market_hours_only=true");
+        }
+        if !self.execution.order_type.eq_ignore_ascii_case("limit") {
+            anyhow::bail!("options agent requires execution.order_type=limit");
+        }
+        if !self.execution.require_preview {
+            anyhow::bail!("options agent requires execution.require_preview=true");
         }
         Ok(())
     }
@@ -645,9 +632,13 @@ mod tests {
 
     #[test]
     fn custom_selection_prompt_overrides_default() {
-        let mut prompts = LlmPromptsConfig::default();
-        prompts.selection = "Aggressive premium seller.".into();
-        assert!(prompts.effective_selection_instructions(false).contains("Aggressive"));
+        let prompts = LlmPromptsConfig {
+            selection: "Aggressive premium seller.".into(),
+            ..Default::default()
+        };
+        assert!(prompts
+            .effective_selection_instructions(false)
+            .contains("Aggressive"));
     }
 
     #[test]

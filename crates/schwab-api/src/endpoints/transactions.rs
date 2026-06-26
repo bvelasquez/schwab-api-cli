@@ -21,9 +21,8 @@ impl<'a> TransactionsApi<'a> {
         types: Option<&str>,
         symbol: Option<&str>,
     ) -> Result<Vec<Transaction>> {
-        let (start, end) =
-            resolve_time_range(start_date, end_date, default_transaction_window)
-                .map_err(ApiError::Other)?;
+        let (start, end) = resolve_time_range(start_date, end_date, default_transaction_window)
+            .map_err(ApiError::Other)?;
         let types = types.unwrap_or("TRADE");
         let path = format!("/accounts/{account_number}/transactions");
         let query = super::merge_queries(vec![
