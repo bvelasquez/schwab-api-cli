@@ -270,9 +270,7 @@ fn build_research_hints(
         .get("assetMainType")
         .and_then(|v| v.as_str())
         .unwrap_or("UNKNOWN");
-    let asset_sub = identity
-        .get("assetSubType")
-        .and_then(|v| v.as_str());
+    let asset_sub = identity.get("assetSubType").and_then(|v| v.as_str());
 
     let asset_class = classify_asset(asset_main, asset_sub);
     let div_yield = fundamentals
@@ -286,7 +284,8 @@ fn build_research_hints(
     ];
 
     let data_gaps = vec![
-        "Schwab API does not provide business narrative, management, or SEC filing summaries".to_string(),
+        "Schwab API does not provide business narrative, management, or SEC filing summaries"
+            .to_string(),
         "Schwab API does not provide ETF/mutual fund full holdings or expense ratio".to_string(),
         "Schwab API does not provide analyst ratings or price targets".to_string(),
     ];
@@ -308,7 +307,8 @@ fn build_research_hints(
                 "Comparable ETFs/funds for substitution in rebalance plans".to_string(),
             ]);
             if div_yield.is_some() {
-                focus_areas.push("Verify distribution sustainability vs underlying yield".to_string());
+                focus_areas
+                    .push("Verify distribution sustainability vs underlying yield".to_string());
             }
         }
         "equity" => {
@@ -325,7 +325,9 @@ fn build_research_hints(
             ]);
         }
         _ => {
-            recommended_queries.push(format!("{symbol} {asset_main} instrument structure and risks"));
+            recommended_queries.push(format!(
+                "{symbol} {asset_main} instrument structure and risks"
+            ));
             focus_areas.push("Confirm instrument type and settlement before trading".to_string());
         }
     }

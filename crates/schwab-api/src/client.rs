@@ -43,7 +43,11 @@ impl SchwabClient {
         &self.config
     }
 
-    pub async fn get_json<T: DeserializeOwned>(&self, path: &str, query: &[(&str, &str)]) -> Result<T> {
+    pub async fn get_json<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+    ) -> Result<T> {
         self.request(
             &self.config.trader_base_url,
             Method::GET,

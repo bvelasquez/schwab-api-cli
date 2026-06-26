@@ -13,7 +13,10 @@ pub use client::SchwabClient;
 pub use config::ClientConfig;
 pub use endpoints::TraderApi;
 pub use error::{ApiError, Result};
-pub use query::{default_order_window, default_orders_all_window, default_transaction_window, iso8601_ms, resolve_time_range};
+pub use query::{
+    default_order_window, default_orders_all_window, default_transaction_window, iso8601_ms,
+    resolve_time_range,
+};
 
 pub const TRADER_BASE_URL: &str = "https://api.schwabapi.com/trader/v1";
 pub const MARKET_DATA_BASE_URL: &str = "https://api.schwabapi.com/marketdata/v1";

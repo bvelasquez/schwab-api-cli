@@ -40,9 +40,10 @@ pub async fn run(runtime: &RuntimeConfig, command: PlanCommands) -> Result<()> {
                 } else {
                     vec!["Fix failing steps or adjust safety.json before running".into()]
                 })
-                .with_next_actions(vec![
-                    format!("schwab plan run {} --dry-run --json", file.display()),
-                ]);
+                .with_next_actions(vec![format!(
+                    "schwab plan run {} --dry-run --json",
+                    file.display()
+                )]);
             runtime.emit(envelope);
         }
         PlanCommands::Show { file } => {
@@ -176,11 +177,13 @@ pub async fn run(runtime: &RuntimeConfig, command: PlanCommands) -> Result<()> {
                         }));
                         if plan.execution.stop_on_error {
                             runtime.emit(
-                                ResponseEnvelope::err("plan run", e.to_string()).with_inputs(json!({
-                                    "file": file.display().to_string(),
-                                    "plan_id": plan.plan_id,
-                                    "completed_steps": results,
-                                })),
+                                ResponseEnvelope::err("plan run", e.to_string()).with_inputs(
+                                    json!({
+                                        "file": file.display().to_string(),
+                                        "plan_id": plan.plan_id,
+                                        "completed_steps": results,
+                                    }),
+                                ),
                             );
                             return Ok(());
                         }

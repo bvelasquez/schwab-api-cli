@@ -80,7 +80,11 @@ pub fn should_run_overnight_digest(
     }
 }
 
-pub fn should_run_monitor_review(regular_tick_count: u64, last_llm_tick: Option<u64>, every: u64) -> bool {
+pub fn should_run_monitor_review(
+    regular_tick_count: u64,
+    last_llm_tick: Option<u64>,
+    every: u64,
+) -> bool {
     let every = every.max(1);
     match last_llm_tick {
         None => true,
@@ -149,6 +153,7 @@ mod tests {
                 opened_at: Utc::now(),
                 entry_credit: Some(0.25),
                 max_loss_usd: 175.0,
+                contracts: 1,
             },
         );
         assert!(should_run_overnight_digest(&state, &cfg, Utc::now()));

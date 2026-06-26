@@ -413,9 +413,7 @@ pub enum PlanCommands {
         file: PathBuf,
     },
     /// Show parsed plan contents
-    Show {
-        file: PathBuf,
-    },
+    Show { file: PathBuf },
     /// Execute plan steps (requires --trust --yes in agent mode, or --dry-run)
     Run {
         file: PathBuf,
@@ -494,9 +492,7 @@ pub enum MarketCommands {
         projection: String,
     },
     /// GET /instruments/{cusip}
-    InstrumentByCusip {
-        cusip: String,
-    },
+    InstrumentByCusip { cusip: String },
     /// GET /markets — hours for multiple markets (comma-separated)
     Hours {
         /// equity, option, bond, future, forex (comma-separated)
@@ -582,9 +578,7 @@ pub enum AgentCommands {
     /// JSON Schema for rules.yaml
     Schema,
     /// Validate rules.yaml structure
-    Validate {
-        file: PathBuf,
-    },
+    Validate { file: PathBuf },
     /// Show persisted agent state
     Status {
         #[arg(long)]
@@ -601,17 +595,13 @@ pub enum AgentCommands {
         background: bool,
     },
     /// Stop a background agent started with `agent run --background`
-    Stop {
-        file: PathBuf,
-    },
+    Stop { file: PathBuf },
 }
 
 #[derive(Debug, Subcommand)]
 pub enum RulesCommands {
     /// Full rules breakdown (entry, exit, risk, LLM)
-    Show {
-        file: Option<PathBuf>,
-    },
+    Show { file: Option<PathBuf> },
     /// List discoverable rules/*.yaml files
     List,
 }

@@ -5,13 +5,12 @@ use crate::cli::{PortfolioCommands, SafetyCommands, TradeCommands};
 use crate::config::RuntimeConfig;
 use crate::human;
 use crate::order_builder::{
-    build_equity_order, parse_duration, parse_session, parse_trade_order_type,
-    TradeSide,
+    build_equity_order, parse_duration, parse_session, parse_trade_order_type, TradeSide,
 };
 use crate::output::ResponseEnvelope;
 use crate::portfolio::{
-    account_buying_power, account_equity, ensure_sufficient_buying_power,
-    estimate_equity_buy_cost, summarize_accounts, summary_to_json,
+    account_buying_power, account_equity, ensure_sufficient_buying_power, estimate_equity_buy_cost,
+    summarize_accounts, summary_to_json,
 };
 use crate::safety::{execute_trading_order, require_trading_approval};
 use crate::safety_config::{config_path, SafetyConfig};
@@ -124,7 +123,11 @@ struct TradeRequest<'a> {
     session_raw: Option<&'a str>,
 }
 
-async fn run_side(runtime: &RuntimeConfig, api: &schwab_api::TraderApi, req: TradeRequest<'_>) -> Result<()> {
+async fn run_side(
+    runtime: &RuntimeConfig,
+    api: &schwab_api::TraderApi,
+    req: TradeRequest<'_>,
+) -> Result<()> {
     let TradeRequest {
         side,
         account_number,
@@ -135,7 +138,11 @@ async fn run_side(runtime: &RuntimeConfig, api: &schwab_api::TraderApi, req: Tra
         duration_raw,
         session_raw,
     } = req;
-    let side_label = if side == TradeSide::Buy { "buy" } else { "sell" };
+    let side_label = if side == TradeSide::Buy {
+        "buy"
+    } else {
+        "sell"
+    };
     require_trading_approval(
         runtime,
         &format!("trade {side_label}"),
@@ -167,12 +174,8 @@ async fn run_side(runtime: &RuntimeConfig, api: &schwab_api::TraderApi, req: Tra
         } else {
             None
         };
-        let estimated_cost = estimate_equity_buy_cost(
-            quantity,
-            order_type_raw,
-            limit_price,
-            market_ask,
-        )?;
+        let estimated_cost =
+            estimate_equity_buy_cost(quantity, order_type_raw, limit_price, market_ask)?;
         ensure_sufficient_buying_power(&buying_power, estimated_cost)?;
         buying_power_check = Some(json!({
             "cash_available_for_trading": buying_power.cash_available_for_trading,
@@ -205,9 +208,7 @@ async fn run_side(runtime: &RuntimeConfig, api: &schwab_api::TraderApi, req: Tra
     }
 
     let result = execute_trading_order(runtime, api, account_number, &order).await?;
-    runtime.emit(
-        ResponseEnvelope::ok(format!("trade {side_label}"), result).with_inputs(inputs),
-    );
+    runtime.emit(ResponseEnvelope::ok(format!("trade {side_label}"), result).with_inputs(inputs));
     Ok(())
 }
 
@@ -264,7 +265,9 @@ pub async fn run_safety(runtime: &RuntimeConfig, command: SafetyCommands) -> Res
                         "config": cfg,
                     }),
                 )
-                .with_next_actions(vec!["Edit safety.json limits before enabling --trust".into()]),
+                .with_next_actions(vec![
+                    "Edit safety.json limits before enabling --trust".into(),
+                ]),
             );
         }
         SafetyCommands::Path => {

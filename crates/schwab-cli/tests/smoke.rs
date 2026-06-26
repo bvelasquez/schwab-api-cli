@@ -21,5 +21,7 @@ fn capabilities_has_trader_commands() {
     assert!(cmds.iter().any(|c| c.path == "watch"));
     assert!(cmds.iter().any(|c| c.path == "rules show"));
     assert!(cmds.iter().any(|c| c.path == "disclaimer show"));
-    assert!(cmds.iter().any(|c| c.path == "disclaimer accept" && c.mutation));
+    assert!(cmds
+        .iter()
+        .any(|c| c.path == "disclaimer accept" && c.mutation));
 }

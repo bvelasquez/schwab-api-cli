@@ -98,10 +98,7 @@ pub fn is_terminal_status(status: &str) -> bool {
 }
 
 pub fn is_failure_status(status: &str) -> bool {
-    matches!(
-        status,
-        "CANCELED" | "CANCELLED" | "REJECTED" | "EXPIRED"
-    )
+    matches!(status, "CANCELED" | "CANCELLED" | "REJECTED" | "EXPIRED")
 }
 
 pub fn condition_met(
@@ -130,10 +127,7 @@ pub fn condition_met(
     }
 }
 
-pub fn condition_satisfied_or_failed(
-    status: &str,
-    condition: WaitCondition,
-) -> Option<Result<()>> {
+pub fn condition_satisfied_or_failed(status: &str, condition: WaitCondition) -> Option<Result<()>> {
     match condition {
         WaitCondition::Accepted => Some(Ok(())),
         WaitCondition::Terminal if is_terminal_status(status) => {
@@ -278,12 +272,30 @@ mod tests {
 
     #[test]
     fn filled_condition() {
-        assert!(condition_met("FILLED", WaitCondition::Filled, None, Some(10.0), false));
-        assert!(!condition_met("WORKING", WaitCondition::Filled, None, Some(10.0), false));
+        assert!(condition_met(
+            "FILLED",
+            WaitCondition::Filled,
+            None,
+            Some(10.0),
+            false
+        ));
+        assert!(!condition_met(
+            "WORKING",
+            WaitCondition::Filled,
+            None,
+            Some(10.0),
+            false
+        ));
     }
 
     #[test]
     fn terminal_condition() {
-        assert!(condition_met("CANCELED", WaitCondition::Terminal, None, None, false));
+        assert!(condition_met(
+            "CANCELED",
+            WaitCondition::Terminal,
+            None,
+            None,
+            false
+        ));
     }
 }

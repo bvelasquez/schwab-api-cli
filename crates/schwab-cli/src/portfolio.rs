@@ -68,13 +68,12 @@ pub fn summarize_accounts(accounts: &[Account]) -> PortfolioSummary {
                 .as_ref()
                 .and_then(|i| i.symbol.clone())
                 .unwrap_or_else(|| "?".into());
-            let description = pos
-                .instrument
-                .as_ref()
-                .and_then(|i| i.description.clone());
+            let description = pos.instrument.as_ref().and_then(|i| i.description.clone());
             let quantity = pos.long_quantity.unwrap_or(0.0) - pos.short_quantity.unwrap_or(0.0);
             let market_value = pos.market_value.unwrap_or(0.0);
-            let pct_of_account = equity.filter(|e| *e > 0.0).map(|e| (market_value / e) * 100.0);
+            let pct_of_account = equity
+                .filter(|e| *e > 0.0)
+                .map(|e| (market_value / e) * 100.0);
 
             pos_summaries.push(PositionSummary {
                 symbol: symbol.clone(),
@@ -150,7 +149,10 @@ pub struct BuyingPower {
     pub liquidation_value: Option<f64>,
 }
 
-pub async fn account_equity(api: &schwab_api::TraderApi, account_hash: &str) -> Result<Option<f64>> {
+pub async fn account_equity(
+    api: &schwab_api::TraderApi,
+    account_hash: &str,
+) -> Result<Option<f64>> {
     let buying_power = account_buying_power(api, account_hash).await?;
     Ok(buying_power.liquidation_value)
 }
@@ -171,10 +173,7 @@ pub async fn account_buying_power(
     ))
 }
 
-pub fn extract_buying_power(
-    current: Option<&Value>,
-    projected: Option<&Value>,
-) -> BuyingPower {
+pub fn extract_buying_power(current: Option<&Value>, projected: Option<&Value>) -> BuyingPower {
     // Cash accounts expose cashAvailableForTrading; margin accounts use buyingPower /
     // availableFunds instead. Try each in order so both account types work correctly.
     let cash_available_for_trading = extract_balance_field(current, "cashAvailableForTrading")
@@ -189,8 +188,8 @@ pub fn extract_buying_power(
     let cash_balance = extract_balance_field(current, "cashBalance")
         .or_else(|| extract_balance_field(current, "totalCash"))
         .unwrap_or(0.0);
-    let liquidation_value = extract_balance_field(current, "liquidationValue")
-        .or_else(|| extract_equity(current));
+    let liquidation_value =
+        extract_balance_field(current, "liquidationValue").or_else(|| extract_equity(current));
 
     let effective_available = option_buying_power
         .unwrap_or(cash_available_for_trading)
@@ -217,9 +216,8 @@ pub fn estimate_equity_buy_cost(
             Ok(quantity * price)
         }
         "MARKET" => {
-            let ask = market_ask.context(
-                "market ask price required to estimate buy cost for MARKET orders",
-            )?;
+            let ask = market_ask
+                .context("market ask price required to estimate buy cost for MARKET orders")?;
             Ok(quantity * ask)
         }
         other => bail!("Cannot estimate buy cost for order type `{other}`"),
@@ -227,14 +225,15 @@ pub fn estimate_equity_buy_cost(
 }
 
 pub fn order_requires_buying_power(parsed: &ParsedOrder) -> bool {
-    if parsed.legs.iter().any(|leg| leg.asset_type == "EQUITY" && leg.instruction == "BUY") {
+    if parsed
+        .legs
+        .iter()
+        .any(|leg| leg.asset_type == "EQUITY" && leg.instruction == "BUY")
+    {
         return true;
     }
     if parsed.legs.iter().any(|leg| leg.asset_type == "OPTION") {
-        return matches!(
-            parsed.order_type.as_str(),
-            "NET_DEBIT" | "LIMIT" | "MARKET"
-        );
+        return matches!(parsed.order_type.as_str(), "NET_DEBIT" | "LIMIT" | "MARKET");
     }
     false
 }

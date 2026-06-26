@@ -8,8 +8,7 @@ use crate::human;
 use crate::options::{
     build_close_order_for_group, build_order_for_strategy, ensure_option_buying_power,
     estimate_order_margin, find_position_group, group_option_legs, list_option_positions,
-    options_schema, params_from_value, validate_account_for_strategy,
-    StrategyKind,
+    options_schema, params_from_value, validate_account_for_strategy, StrategyKind,
 };
 use crate::output::ResponseEnvelope;
 use crate::portfolio::account_equity;
@@ -41,10 +40,12 @@ pub async fn run(runtime: &RuntimeConfig, command: OptionsCommands) -> Result<()
                     ..Default::default()
                 })
                 .await?;
-            runtime.emit(ResponseEnvelope::ok("options chain", json!(data)).with_inputs(json!({
-                "symbol": symbol,
-                "contract_type": ct,
-            })));
+            runtime.emit(
+                ResponseEnvelope::ok("options chain", json!(data)).with_inputs(json!({
+                    "symbol": symbol,
+                    "contract_type": ct,
+                })),
+            );
         }
         OptionsCommands::Positions { account_number } => {
             let hash = account_number.as_deref();
@@ -96,7 +97,10 @@ pub async fn run(runtime: &RuntimeConfig, command: OptionsCommands) -> Result<()
             let raw = human::parse_order_input(&params)?;
             let normalized = params_from_value(kind, &raw)?;
             let order = build_order_for_strategy(kind, &normalized)?;
-            let equity = account_equity(&trader, &account_number).await.ok().flatten();
+            let equity = account_equity(&trader, &account_number)
+                .await
+                .ok()
+                .flatten();
             runtime.safety.validate_order(&order, None, equity)?;
             let margin = estimate_order_margin(&order, kind, &normalized)?;
             ensure_option_buying_power(&trader, &account_number, margin).await?;

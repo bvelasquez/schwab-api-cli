@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 use crate::options::days_to_expiry;
 
 /// Live chain fields attached to entry signals and LLM context.
+#[allow(clippy::too_many_arguments)]
 pub fn vertical_entry_market_context(
     chain: &Value,
     underlying: &str,
@@ -71,6 +72,7 @@ pub fn vertical_entry_market_context(
 }
 
 /// Live chain context for an **open** vertical spread (monitor / LLM phase).
+#[allow(clippy::too_many_arguments)]
 pub fn vertical_open_position_context(
     chain: &Value,
     underlying: &str,
@@ -125,15 +127,10 @@ pub fn vertical_open_position_context(
     });
 
     let approx_short_itm_prob_pct =
-        approx_short_otm_prob_pct.map(|otm| (100.0 - otm).max(0.0).min(100.0));
+        approx_short_otm_prob_pct.map(|otm| (100.0 - otm).clamp(0.0, 100.0));
 
     let watch_elevated_delta = short_delta.is_some_and(|d| d.abs() >= 0.30);
-    let watch_near_strike = underlying_price > f64::EPSILON
-        && if is_put_spread {
-            short_otm_pct < 2.0
-        } else {
-            short_otm_pct < 2.0
-        };
+    let watch_near_strike = underlying_price > f64::EPSILON && short_otm_pct < 2.0;
 
     json!({
         "data_source": "schwab_option_chain",
@@ -176,12 +173,7 @@ fn strike_field(strike_map: &Value, strike: f64, field: &str) -> Option<f64> {
     let obj = strike_map.as_object()?;
     for key in strike_key_candidates(strike) {
         if let Some(contracts) = obj.get(&key) {
-            if let Some(v) = contracts
-                .as_array()?
-                .first()?
-                .get(field)?
-                .as_f64()
-            {
+            if let Some(v) = contracts.as_array()?.first()?.get(field)?.as_f64() {
                 return Some(v);
             }
         }
