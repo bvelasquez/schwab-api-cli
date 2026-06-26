@@ -185,17 +185,20 @@ pub fn validate_order_shape(order: &Value) -> Result<()> {
     }
 
     if has_legs {
-        let order_type = order.get("orderType").and_then(|v| v.as_str()).unwrap_or("");
+        let order_type = order
+            .get("orderType")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         match order_type {
             "LIMIT" | "STOP_LIMIT" | "NET_DEBIT" | "NET_CREDIT" | "LIMIT_ON_CLOSE" => {
                 if order.get("price").is_none() {
                     bail!("orderType {order_type} requires top-level price");
                 }
             }
-            "STOP" | "TRAILING_STOP" => {
-                if order.get("stopPrice").is_none() && order.get("stopPriceOffset").is_none() {
-                    bail!("orderType {order_type} requires stopPrice or stopPriceOffset");
-                }
+            "STOP" | "TRAILING_STOP"
+                if order.get("stopPrice").is_none() && order.get("stopPriceOffset").is_none() =>
+            {
+                bail!("orderType {order_type} requires stopPrice or stopPriceOffset");
             }
             _ => {}
         }
@@ -229,7 +232,9 @@ fn validate_legs(legs_value: &Value) -> Result<()> {
         instrument
             .get("assetType")
             .and_then(|v| v.as_str())
-            .with_context(|| format!("orderLegCollection[{idx}].instrument.assetType is required"))?;
+            .with_context(|| {
+                format!("orderLegCollection[{idx}].instrument.assetType is required")
+            })?;
     }
 
     Ok(())

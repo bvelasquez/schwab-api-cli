@@ -6,7 +6,10 @@ pub fn format_tick_data(data: &Value) -> String {
     let mut out = String::new();
 
     let agent_id = str_field(data, "agent_id").unwrap_or("agent");
-    let dry_run = data.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false);
+    let dry_run = data
+        .get("dry_run")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let header = Style::new().cyan().bold();
     let _label = Style::new().dim();
@@ -25,7 +28,11 @@ pub fn format_tick_data(data: &Value) -> String {
         };
         out.push_str(&format!("  {}", session_style.apply_to(session)));
     }
-    if data.get("at_open").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if data
+        .get("at_open")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         out.push_str(&format!("  {}", accent.apply_to("[at open]")));
     }
     out.push('\n');
@@ -72,7 +79,10 @@ fn format_monitored_positions(monitored: Option<&Vec<Value>>) -> String {
     );
 
     for pos in arr {
-        out.push_str(&format!("  • {}\n", format_monitored_position(pos, &hold, &exit)));
+        out.push_str(&format!(
+            "  • {}\n",
+            format_monitored_position(pos, &hold, &exit)
+        ));
     }
     out
 }
@@ -84,9 +94,7 @@ fn format_monitored_position(pos: &Value, hold: &Style, exit: &Style) -> String 
     let status = str_field(pos, "status").unwrap_or("holding");
 
     let credit = pos.get("entry_credit").and_then(|v| v.as_f64());
-    let credit_s = credit
-        .map(|c| format!("  cr ${c:.2}"))
-        .unwrap_or_default();
+    let credit_s = credit.map(|c| format!("  cr ${c:.2}")).unwrap_or_default();
 
     let profit = pos.get("profit_pct").and_then(|v| v.as_f64());
     let profit_s = profit
@@ -173,11 +181,7 @@ pub fn format_status_data(data: &Value) -> String {
                         out.push_str(&format!("  {} {}\n", label.apply_to(fmt), summary));
                     }
                 } else {
-                    out.push_str(&format!(
-                        "  {} {}\n",
-                        label.apply_to(fmt),
-                        json_scalar(v)
-                    ));
+                    out.push_str(&format!("  {} {}\n", label.apply_to(fmt), json_scalar(v)));
                 }
             }
         }
@@ -278,9 +282,7 @@ fn format_signal(signal: &Value) -> String {
             let reason = str_field(signal, "reason").unwrap_or("exit");
             let pos = str_field(signal, "position_id").unwrap_or("");
             let mark = signal.get("mark").and_then(|v| v.as_f64());
-            let mark_s = mark
-                .map(|m| format!("  mark ${m:.2}"))
-                .unwrap_or_default();
+            let mark_s = mark.map(|m| format!("  mark ${m:.2}")).unwrap_or_default();
             format!("EXIT  {underlying}  {reason}  {pos}{mark_s}")
         }
         _ => compact_json(signal),
@@ -294,27 +296,37 @@ fn format_entry_signal(signal: &Value) -> String {
         .and_then(|p| str_field(p, "underlying"))
         .or_else(|| str_field(signal, "underlying"))
         .unwrap_or("?");
-    let expiry = params
-        .and_then(|p| str_field(p, "expiry"))
-        .unwrap_or("");
+    let expiry = params.and_then(|p| str_field(p, "expiry")).unwrap_or("");
 
     let strikes = match strategy {
         "vertical" => {
             let spread_type = params
                 .and_then(|p| str_field(p, "type"))
                 .unwrap_or("spread");
-            let short = params.and_then(|p| p.get("short_strike")).and_then(|v| v.as_f64());
-            let long = params.and_then(|p| p.get("long_strike")).and_then(|v| v.as_f64());
+            let short = params
+                .and_then(|p| p.get("short_strike"))
+                .and_then(|v| v.as_f64());
+            let long = params
+                .and_then(|p| p.get("long_strike"))
+                .and_then(|v| v.as_f64());
             match (short, long) {
                 (Some(s), Some(l)) => format!("{spread_type}  ${s:.0}/${l:.0}"),
                 _ => spread_type.to_string(),
             }
         }
         "iron_condor" => {
-            let ps = params.and_then(|p| p.get("put_short")).and_then(|v| v.as_f64());
-            let pl = params.and_then(|p| p.get("put_long")).and_then(|v| v.as_f64());
-            let cs = params.and_then(|p| p.get("call_short")).and_then(|v| v.as_f64());
-            let cl = params.and_then(|p| p.get("call_long")).and_then(|v| v.as_f64());
+            let ps = params
+                .and_then(|p| p.get("put_short"))
+                .and_then(|v| v.as_f64());
+            let pl = params
+                .and_then(|p| p.get("put_long"))
+                .and_then(|v| v.as_f64());
+            let cs = params
+                .and_then(|p| p.get("call_short"))
+                .and_then(|v| v.as_f64());
+            let cl = params
+                .and_then(|p| p.get("call_long"))
+                .and_then(|v| v.as_f64());
             match (ps, pl, cs, cl) {
                 (Some(ps), Some(pl), Some(cs), Some(cl)) => {
                     format!("iron condor  puts ${ps:.0}/${pl:.0}  calls ${cs:.0}/${cl:.0}")
@@ -329,16 +341,12 @@ fn format_entry_signal(signal: &Value) -> String {
         .get("estimated_credit")
         .or_else(|| params.and_then(|p| p.get("limit_credit")))
         .and_then(|v| v.as_f64());
-    let credit_s = credit
-        .map(|c| format!("  ~${c:.2} cr"))
-        .unwrap_or_default();
+    let credit_s = credit.map(|c| format!("  ~${c:.2} cr")).unwrap_or_default();
 
     let ctx = signal.get("market_context");
     let ctx_s = ctx.map(format_market_context_suffix).unwrap_or_default();
 
-    format!(
-        "ENTRY  {underlying}  {strikes}  exp {expiry}{credit_s}{ctx_s}"
-    )
+    format!("ENTRY  {underlying}  {strikes}  exp {expiry}{credit_s}{ctx_s}")
 }
 
 fn format_market_context_suffix(ctx: &Value) -> String {
@@ -364,7 +372,7 @@ fn format_market_context_suffix(ctx: &Value) -> String {
 
 fn format_action(action: &Value) -> String {
     if let Some(fill) = str_field(action, "fill_status") {
-        return format_order_action(action, &fill);
+        return format_order_action(action, fill);
     }
     if action.get("exit").is_some() {
         let underlying = action
@@ -403,9 +411,7 @@ fn format_order_action(action: &Value, fill_status: &str) -> String {
 
     let status = match fill_status {
         "FILLED" => Style::new().green().apply_to("FILLED").to_string(),
-        "REJECTED" | "CANCELED" | "EXPIRED" => {
-            Style::new().red().apply_to(fill_status).to_string()
-        }
+        "REJECTED" | "CANCELED" | "EXPIRED" => Style::new().red().apply_to(fill_status).to_string(),
         _ => Style::new().yellow().apply_to(fill_status).to_string(),
     };
 
@@ -427,7 +433,10 @@ fn format_llm_review(llm: &Value) -> String {
         other => other,
     };
     let model = str_field(llm, "model").unwrap_or("model");
-    let web = llm.get("used_web").and_then(|v| v.as_bool()).unwrap_or(false);
+    let web = llm
+        .get("used_web")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let web_tag = if web { " + web" } else { "" };
 
     let mut out = format!(
@@ -435,7 +444,10 @@ fn format_llm_review(llm: &Value) -> String {
         header.apply_to(format!("LLM {phase_label} ({model}{web_tag})"))
     );
 
-    if let Some(rec) = llm.pointer("/new_entries/recommendation").and_then(|v| v.as_str()) {
+    if let Some(rec) = llm
+        .pointer("/new_entries/recommendation")
+        .and_then(|v| v.as_str())
+    {
         let rec_style = match rec {
             "proceed" => Style::new().green(),
             "defer" | "skip" | "hold" => Style::new().yellow(),
@@ -459,10 +471,7 @@ fn format_llm_review(llm: &Value) -> String {
 
     if let Some(commentary) = llm.get("market_commentary").and_then(|v| v.as_str()) {
         if !commentary.is_empty() {
-            out.push_str(&format!(
-                "  {}\n",
-                label.apply_to("market:")
-            ));
+            out.push_str(&format!("  {}\n", label.apply_to("market:")));
             out.push_str(&format!("  {}\n", wrap_text(commentary, 76, "  ")));
         }
     }
@@ -482,7 +491,10 @@ fn format_llm_review(llm: &Value) -> String {
         if !positions.is_empty() {
             out.push_str(&format!("  {}\n", label.apply_to("positions:")));
             for pos in positions {
-                let id = pos.get("position_id").and_then(|v| v.as_str()).unwrap_or("?");
+                let id = pos
+                    .get("position_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
                 let rec = pos
                     .get("recommendation")
                     .and_then(|v| v.as_str())

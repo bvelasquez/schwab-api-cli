@@ -5,10 +5,11 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use serde_json::{json, Value};
 
+use crate::agent::state::AgentState;
 use crate::agent::{
     daemon_status, default_state_path, load_agent_state, load_state, state_summary, DaemonStatus,
 };
-use crate::agent::state::AgentState;
+use crate::auth_reminder::{load_auth_reminder, AuthReminder};
 use crate::market_hours::ResolvedMarketStatus;
 use crate::rules::RulesConfig;
 use crate::ui::market_status::{self, MarketSnapshot};
@@ -24,6 +25,7 @@ pub struct DashboardContext {
     pub daemon: DaemonStatus,
     pub log_tail: Vec<String>,
     pub market_status: ResolvedMarketStatus,
+    pub auth_reminder: Option<AuthReminder>,
 }
 
 impl DashboardContext {
@@ -45,6 +47,7 @@ impl DashboardContext {
         let daemon = daemon_status(rules_path);
         let log_tail = tail_lines(&daemon.log_file, LOG_TAIL_LINES);
         let market_status = market_status::resolve_market_status(rules_path, &state, live_market);
+        let auth_reminder = load_auth_reminder();
 
         Ok(Self {
             rules_path: rules_path.to_path_buf(),
@@ -54,6 +57,7 @@ impl DashboardContext {
             daemon,
             log_tail,
             market_status,
+            auth_reminder,
         })
     }
 
@@ -83,15 +87,19 @@ impl DashboardContext {
                 "open": self.market_status.open,
                 "source": format!("{:?}", self.market_status.source),
             },
+            "auth_reminder": self.auth_reminder.as_ref().map(|r| json!({
+                "level": r.level.as_str(),
+                "message": r.message,
+                "obtained_at": r.obtained_at,
+                "access_expires_in_seconds": r.access_expires_in_seconds,
+                "refresh_expires_in_seconds": r.refresh_expires_in_seconds,
+                "detail": r.detail_line(),
+            })),
         })
     }
 
     pub fn portfolio_risk_usd(&self) -> f64 {
-        self.state
-            .open_positions
-            .values()
-            .map(|p| p.max_loss_usd)
-            .sum()
+        self.state.reserved_risk_usd()
     }
 
     pub fn monitor_interval_minutes(&self) -> u64 {

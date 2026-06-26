@@ -273,12 +273,7 @@ pub fn parse_complex_order_strategy_type(raw: &str) -> Result<ComplexOrderStrate
 }
 
 pub fn parse_duration(raw: Option<&str>) -> Result<OrderDuration> {
-    match raw
-        .unwrap_or("day")
-        .trim()
-        .to_ascii_uppercase()
-        .as_str()
-    {
+    match raw.unwrap_or("day").trim().to_ascii_uppercase().as_str() {
         "DAY" => Ok(OrderDuration::Day),
         "GTC" | "GOOD_TILL_CANCEL" => Ok(OrderDuration::GoodTillCancel),
         "FOK" | "FILL_OR_KILL" => Ok(OrderDuration::FillOrKill),
@@ -287,12 +282,7 @@ pub fn parse_duration(raw: Option<&str>) -> Result<OrderDuration> {
 }
 
 pub fn parse_session(raw: Option<&str>) -> Result<OrderSession> {
-    match raw
-        .unwrap_or("normal")
-        .trim()
-        .to_ascii_uppercase()
-        .as_str()
-    {
+    match raw.unwrap_or("normal").trim().to_ascii_uppercase().as_str() {
         "NORMAL" => Ok(OrderSession::Normal),
         "AM" => Ok(OrderSession::Am),
         "PM" => Ok(OrderSession::Pm),
@@ -320,7 +310,10 @@ mod tests {
         assert_eq!(order["orderType"], "MARKET");
         assert_eq!(order["complexOrderStrategyType"], "NONE");
         assert_eq!(order["orderLegCollection"][0]["instruction"], "BUY");
-        assert_eq!(order["orderLegCollection"][0]["instrument"]["symbol"], "AAPL");
+        assert_eq!(
+            order["orderLegCollection"][0]["instrument"]["symbol"],
+            "AAPL"
+        );
     }
 
     #[test]

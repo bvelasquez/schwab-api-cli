@@ -1,5 +1,6 @@
 mod agent;
 mod auth_callback;
+mod auth_reminder;
 mod capabilities;
 mod cli;
 mod commands;
@@ -13,12 +14,12 @@ mod market_info;
 mod mode;
 mod notify;
 mod options;
-mod output;
 mod order_builder;
 mod order_schema;
 mod order_status;
-mod portfolio;
+mod output;
 mod plan;
+mod portfolio;
 mod rules;
 mod safety;
 mod safety_config;
@@ -70,11 +71,17 @@ async fn run() -> Result<()> {
         Some(Commands::Auth { command }) => commands::auth::run(&runtime, command).await,
         Some(Commands::Accounts { command }) => commands::accounts::run(&runtime, command).await,
         Some(Commands::Orders { command }) => commands::orders::run(&runtime, command).await,
-        Some(Commands::Transactions { command }) => commands::transactions::run(&runtime, command).await,
+        Some(Commands::Transactions { command }) => {
+            commands::transactions::run(&runtime, command).await
+        }
         Some(Commands::User { command }) => commands::user::run(&runtime, command).await,
-        Some(Commands::Portfolio { command }) => commands::trading::run_portfolio(&runtime, command).await,
+        Some(Commands::Portfolio { command }) => {
+            commands::trading::run_portfolio(&runtime, command).await
+        }
         Some(Commands::Trade { command }) => commands::trading::run_trade(&runtime, command).await,
-        Some(Commands::Safety { command }) => commands::trading::run_safety(&runtime, command).await,
+        Some(Commands::Safety { command }) => {
+            commands::trading::run_safety(&runtime, command).await
+        }
         Some(Commands::Plan { command }) => commands::plan::run(&runtime, command).await,
         Some(Commands::Market { command }) => commands::market::run(&runtime, command).await,
         Some(Commands::Options { command }) => commands::options::run(&runtime, command).await,
@@ -126,18 +133,21 @@ fn should_skip_first_run_banner(command: &Option<Commands>) -> bool {
 }
 
 fn print_top_level_help(runtime: &RuntimeConfig) {
-    let envelope = ResponseEnvelope::ok("help", serde_json::json!({
-        "message": "Schwab Trader API CLI — agent-first. Run subcommand --help for details.",
-        "discovery": [
-            "schwab --help --json",
-            "schwab capabilities --json",
-            "schwab env schema --json",
-            "schwab instructions --json",
-            "schwab dashboard",
-            "schwab watch"
-        ],
-        "mode": runtime.mode.as_str(),
-    }))
+    let envelope = ResponseEnvelope::ok(
+        "help",
+        serde_json::json!({
+            "message": "Schwab Trader API CLI — agent-first. Run subcommand --help for details.",
+            "discovery": [
+                "schwab --help --json",
+                "schwab capabilities --json",
+                "schwab env schema --json",
+                "schwab instructions --json",
+                "schwab dashboard",
+                "schwab watch"
+            ],
+            "mode": runtime.mode.as_str(),
+        }),
+    )
     .with_next_actions(vec![
         "schwab auth login".into(),
         "schwab accounts numbers --json".into(),

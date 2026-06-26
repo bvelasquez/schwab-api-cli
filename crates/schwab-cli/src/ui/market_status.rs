@@ -10,9 +10,7 @@ use serde_json::Value;
 use crate::agent::paths::rules_runtime_stem;
 use crate::agent::state::AgentState;
 use crate::config::RuntimeConfig;
-use crate::market_hours::{
-    resolve_eqo_market_open, MarketStatusSource, ResolvedMarketStatus,
-};
+use crate::market_hours::{resolve_eqo_market_open, MarketStatusSource, ResolvedMarketStatus};
 use schwab_market_data::MarketDataApi;
 
 const DISK_CACHE_MAX_AGE: Duration = Duration::from_secs(86_400);
@@ -25,9 +23,7 @@ pub struct MarketSnapshot {
 
 impl MarketSnapshot {
     pub fn hours_source(&self) -> Option<MarketStatusSource> {
-        self.hours
-            .as_ref()
-            .map(|_| MarketStatusSource::SchwabApi)
+        self.hours.as_ref().map(|_| MarketStatusSource::SchwabApi)
     }
 }
 
@@ -60,7 +56,12 @@ pub fn load_market_hours_cache(rules_path: &Path) -> Option<Value> {
     let path = market_hours_cache_path(rules_path);
     let content = fs::read_to_string(path).ok()?;
     let cache: DiskHoursCache = serde_json::from_str(&content).ok()?;
-    if Utc::now().signed_duration_since(cache.fetched_at).to_std().ok()? > DISK_CACHE_MAX_AGE {
+    if Utc::now()
+        .signed_duration_since(cache.fetched_at)
+        .to_std()
+        .ok()?
+        > DISK_CACHE_MAX_AGE
+    {
         return None;
     }
     Some(cache.hours)
@@ -74,12 +75,7 @@ pub fn resolve_market_status(
     let now = Utc::now();
     if let Some(snapshot) = live {
         if let Some(hours) = snapshot.hours.as_ref() {
-            return resolve_eqo_market_open(
-                Some(hours),
-                state,
-                now,
-                snapshot.hours_source(),
-            );
+            return resolve_eqo_market_open(Some(hours), state, now, snapshot.hours_source());
         }
     }
     if let Some(hours) = load_market_hours_cache(rules_path) {
@@ -102,15 +98,17 @@ pub async fn refresh_market_snapshot(
     };
     if let Ok(hours) = fetch_option_hours(&market).await {
         if let Ok(mut guard) = snapshot.lock() {
-            *guard = MarketSnapshot {
-                hours: Some(hours),
-            };
+            *guard = MarketSnapshot { hours: Some(hours) };
         }
     }
 }
 
 pub async fn fetch_option_hours(market: &MarketDataApi) -> anyhow::Result<Value> {
-    market.markets().hours("option", None).await.map_err(Into::into)
+    market
+        .markets()
+        .hours("option", None)
+        .await
+        .map_err(Into::into)
 }
 
 pub fn market_label(status: ResolvedMarketStatus, session: Option<&str>) -> (String, bool) {

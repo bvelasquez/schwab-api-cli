@@ -1,6 +1,9 @@
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
+/// Schwab refresh tokens are valid for approximately seven days.
+pub const REFRESH_TOKEN_LIFETIME_SECS: i64 = 7 * 24 * 3600;
+
 /// OAuth token bundle persisted on disk.
 #[derive(Debug, Clone, serde::Serialize, Deserialize)]
 pub struct Tokens {
@@ -9,6 +12,13 @@ pub struct Tokens {
     pub token_type: String,
     pub expires_at: DateTime<Utc>,
     pub scope: Option<String>,
+    /// When this token bundle was issued (login or last refresh).
+    #[serde(default = "default_obtained_at")]
+    pub obtained_at: DateTime<Utc>,
+}
+
+fn default_obtained_at() -> DateTime<Utc> {
+    Utc::now()
 }
 
 impl Tokens {
@@ -18,6 +28,14 @@ impl Tokens {
 
     pub fn expires_in_seconds(&self) -> i64 {
         (self.expires_at - Utc::now()).num_seconds().max(0)
+    }
+
+    pub fn refresh_age_seconds(&self) -> i64 {
+        (Utc::now() - self.obtained_at).num_seconds().max(0)
+    }
+
+    pub fn refresh_expires_in_seconds(&self) -> i64 {
+        (REFRESH_TOKEN_LIFETIME_SECS - self.refresh_age_seconds()).max(0)
     }
 }
 
@@ -120,8 +138,8 @@ impl OAuthClient {
     }
 
     pub fn authorize_url(&self) -> String {
-        let mut url = url::Url::parse(&self.config.oauth_authorize_url)
-            .expect("valid oauth authorize url");
+        let mut url =
+            url::Url::parse(&self.config.oauth_authorize_url).expect("valid oauth authorize url");
         {
             let mut pairs = url.query_pairs_mut();
             pairs.append_pair("client_id", &self.config.app_key);
@@ -210,6 +228,7 @@ impl OAuthClient {
             token_type: parsed.token_type,
             expires_at: Utc::now() + chrono::Duration::seconds(parsed.expires_in),
             scope: parsed.scope,
+            obtained_at: Utc::now(),
         })
     }
 }
@@ -244,5 +263,18 @@ mod tests {
         let body = r#"{"error":"invalid_grant","error_description":"code expired"}"#;
         let msg = format_oauth_error(400, body);
         assert!(msg.contains("code expired"));
+    }
+
+    #[test]
+    fn refresh_expiry_counts_down_from_obtained_at() {
+        let tokens = Tokens {
+            access_token: "a".into(),
+            refresh_token: "r".into(),
+            token_type: "Bearer".into(),
+            expires_at: Utc::now() + chrono::Duration::hours(1),
+            scope: None,
+            obtained_at: Utc::now() - chrono::Duration::days(6),
+        };
+        assert!(tokens.refresh_expires_in_seconds() < 2 * 86400);
     }
 }

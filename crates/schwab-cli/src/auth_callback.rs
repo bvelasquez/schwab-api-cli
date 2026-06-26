@@ -3,7 +3,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use rcgen::{CertificateParams, DnType, ExtendedKeyUsagePurpose, KeyPair, KeyUsagePurpose, SanType};
+use rcgen::{
+    CertificateParams, DnType, ExtendedKeyUsagePurpose, KeyPair, KeyUsagePurpose, SanType,
+};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::ServerConfig;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -16,7 +18,10 @@ use url::Url;
 ///
 /// Browsers often fail the first TLS handshake before the user accepts the self-signed
 /// certificate, so we keep accepting connections until timeout.
-pub async fn capture_redirect_code(redirect_uri: String, timeout: Duration) -> Result<Option<String>> {
+pub async fn capture_redirect_code(
+    redirect_uri: String,
+    timeout: Duration,
+) -> Result<Option<String>> {
     let (use_tls, port) = parse_local_redirect(&redirect_uri)?;
     let listener = TcpListener::bind(("127.0.0.1", port))
         .await

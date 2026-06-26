@@ -26,7 +26,10 @@ impl<'a> OrdersApi<'a> {
                 .map_err(ApiError::Other)?;
         let path = format!("/accounts/{account_number}/orders");
         let query = super::merge_queries(vec![
-            vec![("fromEnteredTime", from.as_str()), ("toEnteredTime", to.as_str())],
+            vec![
+                ("fromEnteredTime", from.as_str()),
+                ("toEnteredTime", to.as_str()),
+            ],
             super::opt_query("status", status),
             super::opt_query("maxResults", max_results),
         ]);
@@ -41,11 +44,17 @@ impl<'a> OrdersApi<'a> {
         status: Option<&str>,
         max_results: Option<&str>,
     ) -> Result<Vec<Order>> {
-        let (from, to) =
-            resolve_time_range(from_entered_time, to_entered_time, default_orders_all_window)
-                .map_err(ApiError::Other)?;
+        let (from, to) = resolve_time_range(
+            from_entered_time,
+            to_entered_time,
+            default_orders_all_window,
+        )
+        .map_err(ApiError::Other)?;
         let query = super::merge_queries(vec![
-            vec![("fromEnteredTime", from.as_str()), ("toEnteredTime", to.as_str())],
+            vec![
+                ("fromEnteredTime", from.as_str()),
+                ("toEnteredTime", to.as_str()),
+            ],
             super::opt_query("status", status),
             super::opt_query("maxResults", max_results),
         ]);
@@ -59,19 +68,31 @@ impl<'a> OrdersApi<'a> {
     }
 
     /// POST /accounts/{accountNumber}/orders — 201 empty body + Location header.
-    pub async fn place(&self, account_number: &str, order: &OrderRequest) -> Result<crate::client::MutationResponse> {
+    pub async fn place(
+        &self,
+        account_number: &str,
+        order: &OrderRequest,
+    ) -> Result<crate::client::MutationResponse> {
         let path = format!("/accounts/{account_number}/orders");
         self.client.post_mutate(&path, order).await
     }
 
     /// POST /accounts/{accountNumber}/previewOrder
-    pub async fn preview(&self, account_number: &str, order: &OrderRequest) -> Result<PreviewOrder> {
+    pub async fn preview(
+        &self,
+        account_number: &str,
+        order: &OrderRequest,
+    ) -> Result<PreviewOrder> {
         let path = format!("/accounts/{account_number}/previewOrder");
         self.client.post_json(&path, order).await
     }
 
     /// DELETE /accounts/{accountNumber}/orders/{orderId}
-    pub async fn cancel(&self, account_number: &str, order_id: &str) -> Result<crate::client::MutationResponse> {
+    pub async fn cancel(
+        &self,
+        account_number: &str,
+        order_id: &str,
+    ) -> Result<crate::client::MutationResponse> {
         let path = format!("/accounts/{account_number}/orders/{order_id}");
         self.client.delete_mutate(&path).await
     }

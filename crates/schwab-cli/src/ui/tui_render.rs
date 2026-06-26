@@ -10,6 +10,25 @@ use super::context::DashboardContext;
 use super::market_status::market_label;
 use super::watch::WatchAgentMode;
 use super::{ago_secs, format_duration_secs};
+use crate::auth_reminder::AuthReminderLevel;
+
+fn format_position_summary(state: &crate::agent::state::AgentState) -> String {
+    let spreads = state.open_positions.len();
+    if spreads == 0 {
+        return "flat".into();
+    }
+    let contracts = state.total_contracts();
+    if contracts > spreads as u32 {
+        format!(
+            "{} spread{} · {} ct",
+            spreads,
+            if spreads == 1 { "" } else { "s" },
+            contracts
+        )
+    } else {
+        format!("{} spread{}", spreads, if spreads == 1 { "" } else { "s" })
+    }
+}
 
 fn truncate_err(msg: &str, max: usize) -> String {
     if msg.len() <= max {
@@ -100,7 +119,9 @@ pub fn header_line(
 
     let (mkt_label, mkt_open) = market_label(ctx.market_status, Some(session));
     let mkt_style = if mkt_open {
-        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::Red)
     };
@@ -118,8 +139,8 @@ pub fn header_line(
         Span::raw(" · "),
         Span::styled(session.to_string(), session_style),
         Span::raw(format!(
-            " · {} open · tick {}s",
-            ctx.state.open_positions.len(),
+            " · {} · tick {}s",
+            format_position_summary(&ctx.state),
             ctx.expected_tick_interval_secs()
         )),
     ])
@@ -162,6 +183,26 @@ pub fn agent_status_lines(
         12,
     ));
 
+    if let Some(reminder) = ctx.auth_reminder.as_ref() {
+        if reminder.level != AuthReminderLevel::None {
+            let style = match reminder.level {
+                AuthReminderLevel::Soon => Style::default().fg(Color::Yellow),
+                AuthReminderLevel::Urgent | AuthReminderLevel::Expired => {
+                    Style::default().fg(Color::Red)
+                }
+                AuthReminderLevel::None => Style::default(),
+            };
+            lines.push(Line::from(vec![
+                Span::styled("  Schwab auth ", Style::default().fg(Color::DarkGray)),
+                Span::styled(reminder.message.clone(), style),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("               ", Style::default().fg(Color::DarkGray)),
+                Span::styled(reminder.detail_line(), Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+    }
+
     if let Some(age) = ctx.last_tick_age_secs() {
         let tick_label = ago_secs(age);
         let style = if ctx.tick_is_stale() {
@@ -179,15 +220,18 @@ pub fn agent_status_lines(
 
     lines.push(kv_line(
         "next tick",
-        format!("~{}", format_duration_secs(ctx.expected_tick_interval_secs())),
+        format!(
+            "~{}",
+            format_duration_secs(ctx.expected_tick_interval_secs())
+        ),
         12,
     ));
     lines.push(kv_line(
         "positions",
         format!(
-            "{} open · {} pending",
-            ctx.state.open_positions.len(),
-            ctx.state.pending_order_ids.len()
+            "{} · {} pending",
+            format_position_summary(&ctx.state),
+            ctx.state.pending_count()
         ),
         12,
     ));
@@ -195,8 +239,7 @@ pub fn agent_status_lines(
         "trades today",
         format!(
             "{}/{}",
-            ctx.state.trades_today,
-            ctx.rules.risk.max_trades_per_day
+            ctx.state.trades_today, ctx.rules.risk.max_trades_per_day
         ),
         12,
     ));
@@ -343,6 +386,11 @@ pub fn position_items(ctx: &DashboardContext) -> Vec<ListItem<'static>> {
         .open_positions
         .values()
         .map(|p| {
+            let contracts = if p.contracts > 1 {
+                format!(" ×{}", p.contracts)
+            } else {
+                String::new()
+            };
             let credit = p
                 .entry_credit
                 .map(|c| format!(" · cr ${c:.2}"))
@@ -350,7 +398,7 @@ pub fn position_items(ctx: &DashboardContext) -> Vec<ListItem<'static>> {
             let opened = ago_secs((Utc::now() - p.opened_at).num_seconds());
             ListItem::new(Line::from(vec![
                 Span::styled(
-                    format!("{} ", p.underlying),
+                    format!("{}{} ", p.underlying, contracts),
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
@@ -422,9 +470,7 @@ pub fn llm_history_lines(ctx: &DashboardContext) -> Vec<Line<'static>> {
     let mut out = Vec::new();
     for (i, act) in reviews.iter().enumerate() {
         if i > 0 {
-            out.push(Line::from(
-                "────────────────────────────────────────",
-            ));
+            out.push(Line::from("────────────────────────────────────────"));
         }
         let stamp = act.at.format("%Y-%m-%d %H:%M").to_string();
         out.extend(format_llm_review_lines(&act.detail, Some(&stamp)));
@@ -432,7 +478,7 @@ pub fn llm_history_lines(ctx: &DashboardContext) -> Vec<Line<'static>> {
     out
 }
 
-fn latest_llm_review<'a>(ctx: &'a DashboardContext) -> Option<&'a serde_json::Value> {
+fn latest_llm_review(ctx: &DashboardContext) -> Option<&serde_json::Value> {
     ctx.state
         .last_actions
         .iter()
@@ -537,10 +583,7 @@ fn format_llm_review_lines(
                 .get("recommendation")
                 .and_then(|v| v.as_str())
                 .unwrap_or("hold");
-            let urgency = pos
-                .get("urgency")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let urgency = pos.get("urgency").and_then(|v| v.as_str()).unwrap_or("");
             let urg = if urgency.is_empty() {
                 String::new()
             } else {
@@ -626,8 +669,16 @@ pub fn rules_detail_lines(ctx: &DashboardContext) -> Vec<Line<'static>> {
 
     push_section(&mut out, "Exit");
     let ex = &rules.exit_rules;
-    out.push(kv_line("profit target", format!("{}%", ex.profit_target_pct), 14));
-    out.push(kv_line("stop loss", format!("{}% credit", ex.stop_loss_pct), 14));
+    out.push(kv_line(
+        "profit target",
+        format!("{}%", ex.profit_target_pct),
+        14,
+    ));
+    out.push(kv_line(
+        "stop loss",
+        format!("{}% credit", ex.stop_loss_pct),
+        14,
+    ));
     out.push(kv_line("close DTE", format!("≤{}", ex.dte_close), 14));
 
     push_section(&mut out, "Risk");
@@ -661,12 +712,24 @@ pub fn rules_detail_lines(ctx: &DashboardContext) -> Vec<Line<'static>> {
     push_section(&mut out, "LLM");
     let llm = &rules.llm;
     if llm.enabled {
-        out.push(kv_line("selection", llm.effective_selection_model().to_string(), 14));
-        out.push(kv_line("monitor", llm.effective_monitor_model().to_string(), 14));
+        out.push(kv_line(
+            "selection",
+            llm.effective_selection_model().to_string(),
+            14,
+        ));
+        out.push(kv_line(
+            "monitor",
+            llm.effective_monitor_model().to_string(),
+            14,
+        ));
         out.push(kv_line("web", llm.web_model.clone(), 14));
         out.push(kv_line(
             "monitor every",
-            format!("{} ticks (~{}m)", llm.review_every_ticks, ctx.monitor_interval_minutes()),
+            format!(
+                "{} ticks (~{}m)",
+                llm.review_every_ticks,
+                ctx.monitor_interval_minutes()
+            ),
             14,
         ));
         out.push(kv_line(
@@ -688,7 +751,11 @@ pub fn rules_detail_lines(ctx: &DashboardContext) -> Vec<Line<'static>> {
     out.push(kv_line("order type", e.order_type.clone(), 14));
     out.push(kv_line("preview", e.require_preview.to_string(), 14));
     out.push(kv_line("wait fill", e.wait_for_fill.to_string(), 14));
-    out.push(kv_line("timeout", format!("{}s", e.fill_timeout_seconds), 14));
+    out.push(kv_line(
+        "timeout",
+        format!("{}s", e.fill_timeout_seconds),
+        14,
+    ));
 
     out
 }

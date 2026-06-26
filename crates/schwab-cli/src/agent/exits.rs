@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::options::{
-    days_to_expiry, group_option_legs, list_option_positions, OptionPositionGroup,
-    OptionPositionLeg,
+    days_to_expiry, group_option_legs, list_option_positions, position_group_id,
+    spread_contract_count, OptionPositionGroup, OptionPositionLeg,
 };
 use crate::rules::{ExitRules, RulesConfig};
 
@@ -29,9 +29,8 @@ pub struct ExitEvaluation {
     pub mark: SpreadMark,
 }
 
-/// Stable position key matching `OptionPositionGroup::id` (`underlying|expiry`).
-pub fn position_key(underlying: &str, expiry: &str) -> String {
-    format!("{underlying}|{expiry}")
+pub fn stable_position_key(account_hash: &str, group: &OptionPositionGroup) -> String {
+    position_group_id(account_hash, group)
 }
 
 pub fn find_tracked_position<'a>(
@@ -39,10 +38,11 @@ pub fn find_tracked_position<'a>(
     account_hash: &str,
     group: &OptionPositionGroup,
 ) -> Option<&'a TrackedPosition> {
-    let key = group.id.clone();
+    let stable_key = stable_position_key(account_hash, group);
     state
         .open_positions
-        .get(&key)
+        .get(&stable_key)
+        .or_else(|| state.open_positions.get(&group.id))
         .or_else(|| {
             state.open_positions.values().find(|p| {
                 p.account_hash == account_hash
@@ -111,9 +111,9 @@ pub async fn evaluate_position_monitor(
 
     let (exit, mark_opt, market_context, chain_error) = match chain_result {
         Ok(chain_snap) => {
-            let profit_pct = entry_credit.filter(|c| *c > f64::EPSILON).map(|entry| {
-                ((entry - chain_snap.debit_to_close) / entry) * 100.0
-            });
+            let profit_pct = entry_credit
+                .filter(|c| *c > f64::EPSILON)
+                .map(|entry| ((entry - chain_snap.debit_to_close) / entry) * 100.0);
             let mark = SpreadMark {
                 entry_credit: entry_credit.unwrap_or(0.0),
                 debit_to_close: chain_snap.debit_to_close,
@@ -221,10 +221,7 @@ async fn fetch_vertical_chain_snapshot(
         .as_ref()
         .map(|p| p.strike)
         .context("long leg missing strike")?;
-    let is_put = short_leg
-        .parsed
-        .as_ref()
-        .is_some_and(|p| p.put_call == 'P');
+    let is_put = short_leg.parsed.as_ref().is_some_and(|p| p.put_call == 'P');
 
     let contract_type = if is_put { "PUT" } else { "CALL" };
     let map_key = if is_put {
@@ -255,6 +252,7 @@ async fn fetch_vertical_chain_snapshot(
     Err(last_err.unwrap_or_else(|| anyhow::anyhow!("chain fetch failed")))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn fetch_vertical_chain_at_strikes(
     market: &MarketDataApi,
     group: &OptionPositionGroup,
@@ -280,8 +278,8 @@ async fn fetch_vertical_chain_at_strikes(
         })
         .await?;
 
-    let strike_map = find_expiry_strikes(&chain, map_key, &group.expiry)
-        .context("expiry not found in chain")?;
+    let strike_map =
+        find_expiry_strikes(&chain, map_key, &group.expiry).context("expiry not found in chain")?;
 
     let short_ask = strike_quote_field(&strike_map, short_strike, "ask")?;
     let long_bid = strike_quote_field(&strike_map, long_strike, "bid")?;
@@ -323,14 +321,23 @@ pub fn monitor_snapshot_json(
         None => "holding".into(),
     };
 
+    let contracts = tracked
+        .map(|p| p.contracts.max(1))
+        .unwrap_or_else(|| spread_contract_count(group));
+
     let mut snapshot = json!({
-        "position_id": group.id,
+        "position_id": tracked
+            .map(|t| t.position_id.as_str())
+            .unwrap_or(group.id.as_str()),
+        "legacy_position_id": group.id,
         "underlying": group.underlying,
         "expiry": group.expiry,
         "strategy": tracked
             .map(|t| t.strategy.as_str())
             .unwrap_or_else(|| group.strategy_hint.as_str()),
+        "contracts": contracts,
         "entry_credit": entry_credit,
+        "max_loss_usd": tracked.map(|p| p.max_loss_usd),
         "net_market_value": group.net_market_value,
         "status": status,
     });
@@ -475,11 +482,17 @@ fn strike_key_candidates(strike: f64) -> Vec<String> {
     ]
 }
 
-pub fn exit_signal_json(group: &OptionPositionGroup, eval: &ExitEvaluation) -> Value {
+pub fn exit_signal_json_for_account(
+    account_hash: &str,
+    group: &OptionPositionGroup,
+    eval: &ExitEvaluation,
+) -> Value {
+    let position_id = stable_position_key(account_hash, group);
     json!({
         "type": "exit",
         "reason": eval.reason,
-        "position_id": group.id,
+        "position_id": position_id,
+        "legacy_position_id": group.id,
         "underlying": group.underlying,
         "expiry": group.expiry,
         "mark": eval.mark,
@@ -496,30 +509,108 @@ pub async fn reconcile_open_positions(
         let legs = list_option_positions(trader, Some(&account.hash)).await?;
         let groups = group_option_legs(&legs);
         for group in groups {
-            live_keys.insert(group.id.clone());
-            if state.open_positions.contains_key(&group.id) {
-                continue;
-            }
+            let stable_id = stable_position_key(&account.hash, &group);
+            live_keys.insert(stable_id.clone());
+            let live_contracts = spread_contract_count(&group);
             let entry_credit = infer_entry_credit_from_legs(&group.legs);
-            state.open_positions.insert(
-                group.id.clone(),
-                TrackedPosition {
-                    position_id: group.id.clone(),
-                    account_hash: account.hash.clone(),
-                    underlying: group.underlying.clone(),
-                    expiry: group.expiry.clone(),
-                    strategy: group.strategy_hint.clone(),
-                    opened_at: chrono::Utc::now(),
-                    entry_credit,
-                    max_loss_usd: 0.0,
-                },
-            );
+            let inferred_max_loss = infer_max_loss_from_group(&group);
+
+            if let Some(mut tracked) =
+                take_existing_tracked_position(state, &stable_id, &account.hash, &group)
+            {
+                tracked.position_id = stable_id.clone();
+                tracked.account_hash = account.hash.clone();
+                let prev_contracts = tracked.contracts.max(1);
+                if let Some(max_loss) = inferred_max_loss {
+                    tracked.max_loss_usd = max_loss;
+                } else if live_contracts != prev_contracts && tracked.max_loss_usd > 0.0 {
+                    let per_contract = tracked.max_loss_usd / prev_contracts as f64;
+                    tracked.max_loss_usd = per_contract * live_contracts as f64;
+                }
+                tracked.contracts = live_contracts;
+                if entry_credit.is_some() {
+                    tracked.entry_credit = entry_credit;
+                }
+                state.open_positions.insert(stable_id, tracked);
+            } else {
+                state.open_positions.insert(
+                    stable_id.clone(),
+                    TrackedPosition {
+                        position_id: stable_id,
+                        account_hash: account.hash.clone(),
+                        underlying: group.underlying.clone(),
+                        expiry: group.expiry.clone(),
+                        strategy: group.strategy_hint.clone(),
+                        opened_at: chrono::Utc::now(),
+                        entry_credit,
+                        max_loss_usd: inferred_max_loss.unwrap_or(0.0),
+                        contracts: live_contracts,
+                    },
+                );
+            }
         }
     }
-    state
-        .open_positions
-        .retain(|id, _| live_keys.contains(id));
+    state.open_positions.retain(|id, _| live_keys.contains(id));
     Ok(())
+}
+
+fn take_existing_tracked_position(
+    state: &mut AgentState,
+    stable_id: &str,
+    account_hash: &str,
+    group: &OptionPositionGroup,
+) -> Option<TrackedPosition> {
+    if let Some(tracked) = state.open_positions.remove(stable_id) {
+        return Some(tracked);
+    }
+    if let Some(tracked) = state.open_positions.remove(&group.id) {
+        return Some(tracked);
+    }
+    let key = state.open_positions.iter().find_map(|(key, tracked)| {
+        (tracked.account_hash == account_hash
+            && tracked.underlying == group.underlying
+            && tracked.expiry == group.expiry
+            && tracked.strategy == group.strategy_hint)
+            .then(|| key.clone())
+    })?;
+    state.open_positions.remove(&key)
+}
+
+pub fn infer_max_loss_from_group(group: &OptionPositionGroup) -> Option<f64> {
+    let contracts = spread_contract_count(group) as f64;
+    let entry_credit = infer_entry_credit_from_legs(&group.legs).unwrap_or(0.0);
+    match group.strategy_hint.as_str() {
+        "vertical" => {
+            let (short, long) = vertical_legs(group).ok()?;
+            let short_strike = short.parsed.as_ref()?.strike;
+            let long_strike = long.parsed.as_ref()?.strike;
+            let width = (short_strike - long_strike).abs();
+            Some((width - entry_credit).max(0.0) * 100.0 * contracts)
+        }
+        "iron_condor" => {
+            let put_width = wing_width(group, 'P')?;
+            let call_width = wing_width(group, 'C')?;
+            Some((put_width.max(call_width) - entry_credit).max(0.0) * 100.0 * contracts)
+        }
+        _ => None,
+    }
+}
+
+fn wing_width(group: &OptionPositionGroup, put_call: char) -> Option<f64> {
+    let mut short = None;
+    let mut long = None;
+    for leg in &group.legs {
+        let parsed = leg.parsed.as_ref()?;
+        if parsed.put_call != put_call {
+            continue;
+        }
+        if leg.quantity < 0.0 {
+            short = Some(parsed.strike);
+        } else if leg.quantity > 0.0 {
+            long = Some(parsed.strike);
+        }
+    }
+    Some((short? - long?).abs())
 }
 
 pub fn exit_rules_summary(rules: &ExitRules) -> Value {
@@ -564,7 +655,10 @@ mod tests {
             source: "test".into(),
         };
         let exit = evaluate_exit_from_mark(&rules, Some(0.25), &mark);
-        assert_eq!(exit.as_ref().map(|e| e.reason.as_str()), Some("profit_target"));
+        assert_eq!(
+            exit.as_ref().map(|e| e.reason.as_str()),
+            Some("profit_target")
+        );
     }
 
     #[test]
@@ -604,6 +698,39 @@ mod tests {
         ];
         let credit = infer_entry_credit_from_legs(&legs).unwrap();
         assert!((credit - 0.24).abs() < 0.001);
+    }
+
+    #[test]
+    fn infers_vertical_max_loss_from_live_group() {
+        let group = OptionPositionGroup {
+            id: "IWM|2026-07-31".into(),
+            underlying: "IWM".into(),
+            expiry: "2026-07-31".into(),
+            strategy_hint: "vertical".into(),
+            legs: vec![
+                OptionPositionLeg {
+                    symbol: "IWM   260731P00282000".into(),
+                    underlying: "IWM".into(),
+                    quantity: -2.0,
+                    market_value: -64.0,
+                    average_price: Some(0.29),
+                    parsed: crate::options::symbology::parse_option_symbol("IWM   260731P00282000")
+                        .ok(),
+                },
+                OptionPositionLeg {
+                    symbol: "IWM   260731P00280000".into(),
+                    underlying: "IWM".into(),
+                    quantity: 2.0,
+                    market_value: 10.0,
+                    average_price: Some(0.05),
+                    parsed: crate::options::symbology::parse_option_symbol("IWM   260731P00280000")
+                        .ok(),
+                },
+            ],
+            net_market_value: -54.0,
+        };
+        let max_loss = infer_max_loss_from_group(&group).unwrap();
+        assert!((max_loss - 352.0).abs() < 0.01);
     }
 
     #[test]

@@ -61,7 +61,8 @@ impl Default for SafetyConfig {
                 "Always run `schwab portfolio summary --json` before rebalancing.".into(),
                 "Preview every order before placement unless dry-run.".into(),
                 "Respect safety.json limits; the CLI will reject orders that exceed them.".into(),
-                "Never enable --trust unless the user explicitly requests autonomous trading.".into(),
+                "Never enable --trust unless the user explicitly requests autonomous trading."
+                    .into(),
             ],
             limits: SafetyLimits::default(),
             require_preview_before_place: true,
@@ -117,8 +118,7 @@ impl SafetyConfig {
         }
         let cfg = Self::default();
         let pretty = serde_json::to_string_pretty(&cfg)?;
-        fs::write(&path, pretty)
-            .with_context(|| format!("Failed to write {}", path.display()))?;
+        fs::write(&path, pretty).with_context(|| format!("Failed to write {}", path.display()))?;
         Ok(path)
     }
 
@@ -270,7 +270,11 @@ fn is_complex_order(parsed: &ParsedOrder) -> bool {
 
 fn underlying_symbol(symbol: &str, asset_type: &str) -> String {
     if asset_type == "OPTION" {
-        symbol.split_whitespace().next().unwrap_or(symbol).to_string()
+        symbol
+            .split_whitespace()
+            .next()
+            .unwrap_or(symbol)
+            .to_string()
     } else {
         symbol.to_string()
     }
@@ -444,9 +448,7 @@ fn validate_parsed_order(
         }
 
         if !limits.allowed_symbols.is_empty() && !limits.allowed_symbols.contains(&check_symbol) {
-            anyhow::bail!(
-                "Symbol `{check_symbol}` is not in the allowed_symbols whitelist"
-            );
+            anyhow::bail!("Symbol `{check_symbol}` is not in the allowed_symbols whitelist");
         }
 
         if leg.quantity > limits.max_shares_per_order {
@@ -578,10 +580,7 @@ mod tests {
     fn blocks_multi_leg_without_complex_flag() {
         let mut cfg = SafetyConfig::default();
         cfg.limits.allow_option_orders = true;
-        cfg.limits.allowed_instructions = vec![
-            "BUY_TO_OPEN".into(),
-            "SELL_TO_OPEN".into(),
-        ];
+        cfg.limits.allowed_instructions = vec!["BUY_TO_OPEN".into(), "SELL_TO_OPEN".into()];
         cfg.limits.allowed_order_types = vec!["NET_DEBIT".into()];
         let order = json!({
             "orderType": "NET_DEBIT",
@@ -608,10 +607,7 @@ mod tests {
         let mut cfg = SafetyConfig::default();
         cfg.limits.allow_option_orders = true;
         cfg.limits.allow_complex_orders = true;
-        cfg.limits.allowed_instructions = vec![
-            "BUY_TO_OPEN".into(),
-            "SELL_TO_OPEN".into(),
-        ];
+        cfg.limits.allowed_instructions = vec!["BUY_TO_OPEN".into(), "SELL_TO_OPEN".into()];
         cfg.limits.allowed_order_types = vec!["NET_DEBIT".into()];
         let order = json!({
             "orderType": "NET_DEBIT",

@@ -50,10 +50,7 @@ pub fn discover_rules_files() -> Vec<PathBuf> {
 }
 
 /// Resolve rules file from explicit path, `SCHWAB_RULES`, discovery, or interactive pick.
-pub fn resolve_rules_file(
-    explicit: Option<PathBuf>,
-    interactive: bool,
-) -> Result<PathBuf> {
+pub fn resolve_rules_file(explicit: Option<PathBuf>, interactive: bool) -> Result<PathBuf> {
     if let Some(path) = explicit {
         return Ok(path);
     }
@@ -73,10 +70,7 @@ pub fn resolve_rules_file(
         ),
         1 => Ok(candidates.into_iter().next().unwrap()),
         _ if interactive => {
-            let labels: Vec<String> = candidates
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect();
+            let labels: Vec<String> = candidates.iter().map(|p| p.display().to_string()).collect();
             let choice = Select::new("Select rules file", labels.clone())
                 .with_help_message("Multiple rules/*.yaml found")
                 .prompt()
@@ -120,7 +114,9 @@ mod tests {
     fn discover_finds_project_rules() {
         let files = discover_rules_files();
         assert!(
-            files.iter().any(|p| p.to_string_lossy().contains("options-pilot")),
+            files
+                .iter()
+                .any(|p| p.to_string_lossy().contains("options-pilot")),
             "expected project rules files, got {:?}",
             files
         );

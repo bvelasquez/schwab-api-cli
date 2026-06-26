@@ -4,7 +4,9 @@ use serde_json::json;
 use crate::cli::OrdersCommands;
 use crate::config::RuntimeConfig;
 use crate::human;
-use crate::order_schema::{order_examples, order_request_schema, order_schema_meta, validate_order_shape};
+use crate::order_schema::{
+    order_examples, order_request_schema, order_schema_meta, validate_order_shape,
+};
 use crate::output::ResponseEnvelope;
 use crate::safety::{execute_trading_order, require_trading_approval};
 
@@ -38,9 +40,7 @@ pub async fn run(runtime: &RuntimeConfig, command: OrdersCommands) -> Result<()>
                 None
             };
 
-            runtime
-                .safety
-                .validate_order(&order_json, None, equity)?;
+            runtime.safety.validate_order(&order_json, None, equity)?;
 
             runtime.emit(
                 ResponseEnvelope::ok("orders validate", json!({
@@ -108,7 +108,9 @@ pub async fn run(runtime: &RuntimeConfig, command: OrdersCommands) -> Result<()>
             interval_seconds,
             proceed_on_partial_fill,
         } => {
-            use crate::order_status::{wait_for_order, wait_result_json, WaitCondition, WaitOptions};
+            use crate::order_status::{
+                wait_for_order, wait_result_json, WaitCondition, WaitOptions,
+            };
             use std::time::Duration;
 
             let condition = WaitCondition::parse(&until)?;
@@ -149,11 +151,7 @@ pub async fn run(runtime: &RuntimeConfig, command: OrdersCommands) -> Result<()>
             mut account_number,
             order,
         } => {
-            require_trading_approval(
-                runtime,
-                "orders place",
-                "Place a live brokerage order.",
-            )?;
+            require_trading_approval(runtime, "orders place", "Place a live brokerage order.")?;
 
             let order_json = if runtime.is_interactive() && order.is_empty() {
                 human::read_order_json("Order JSON (file path or inline)")?
@@ -168,9 +166,7 @@ pub async fn run(runtime: &RuntimeConfig, command: OrdersCommands) -> Result<()>
                     .await
                     .ok()
                     .flatten();
-                runtime
-                    .safety
-                    .validate_order(&order_json, None, equity)?;
+                runtime.safety.validate_order(&order_json, None, equity)?;
                 runtime.emit(ResponseEnvelope::ok(
                     "orders place",
                     json!({ "dry_run": true, "order": order_json }),
@@ -209,9 +205,7 @@ pub async fn run(runtime: &RuntimeConfig, command: OrdersCommands) -> Result<()>
                 .await
                 .ok()
                 .flatten();
-            runtime
-                .safety
-                .validate_order(&order_json, None, equity)?;
+            runtime.safety.validate_order(&order_json, None, equity)?;
 
             let data = api.orders().preview(&account_number, &order_json).await?;
             runtime.emit(
@@ -253,9 +247,7 @@ pub async fn run(runtime: &RuntimeConfig, command: OrdersCommands) -> Result<()>
                     .await
                     .ok()
                     .flatten();
-                runtime
-                    .safety
-                    .validate_order(&order_json, None, equity)?;
+                runtime.safety.validate_order(&order_json, None, equity)?;
                 runtime.emit(ResponseEnvelope::ok(
                     "orders replace",
                     json!({ "dry_run": true, "order": order_json }),

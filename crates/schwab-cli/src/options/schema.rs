@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
-use crate::order_schema::{order_examples, order_schema_meta};
 use crate::options::types::StrategyKind;
+use crate::order_schema::{order_examples, order_schema_meta};
 
 pub fn options_schema() -> Value {
     json!({

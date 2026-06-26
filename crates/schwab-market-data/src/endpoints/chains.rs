@@ -36,10 +36,7 @@ impl<'a> ChainsApi<'a> {
             vec![("symbol".into(), query.symbol.to_uppercase())],
             opt_query("contractType", query.contract_type),
             opt_query_u32("strikeCount", query.strike_count),
-            super::opt_query_bool(
-                "includeUnderlyingQuote",
-                query.include_underlying_quote,
-            ),
+            super::opt_query_bool("includeUnderlyingQuote", query.include_underlying_quote),
             opt_query("strategy", query.strategy),
             opt_query("interval", query.interval),
             opt_query("strike", query.strike),

@@ -1,6 +1,6 @@
 pub mod daemon;
-pub mod format;
 pub mod exits;
+pub mod format;
 pub mod llm;
 pub mod market_context;
 pub mod paths;

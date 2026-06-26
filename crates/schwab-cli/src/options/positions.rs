@@ -25,6 +25,50 @@ pub struct OptionPositionGroup {
     pub net_market_value: f64,
 }
 
+pub fn legacy_position_id(underlying: &str, expiry: &str) -> String {
+    format!("{underlying}|{expiry}")
+}
+
+pub fn position_group_id(account_hash: &str, group: &OptionPositionGroup) -> String {
+    format!(
+        "{}|{}|{}|{}|{}",
+        account_hash,
+        group.underlying,
+        group.expiry,
+        group.strategy_hint,
+        group_leg_signature(group)
+    )
+}
+
+pub fn candidate_position_id(
+    account_hash: &str,
+    underlying: &str,
+    expiry: &str,
+    strategy: &str,
+    legs: Vec<(char, f64, &str)>,
+) -> String {
+    let mut parts: Vec<String> = legs
+        .into_iter()
+        .map(|(put_call, strike, side)| {
+            format!(
+                "{}{}{}",
+                put_call.to_ascii_uppercase(),
+                format_strike(strike),
+                side.to_ascii_uppercase()
+            )
+        })
+        .collect();
+    parts.sort();
+    format!(
+        "{}|{}|{}|{}|{}",
+        account_hash,
+        underlying.to_uppercase(),
+        expiry,
+        strategy,
+        parts.join("_")
+    )
+}
+
 pub async fn list_option_positions(
     api: &TraderApi,
     account_hash: Option<&str>,
@@ -88,6 +132,17 @@ pub async fn list_option_positions(
     Ok(legs)
 }
 
+/// Number of spreads in a grouped position (max abs leg quantity).
+pub fn spread_contract_count(group: &OptionPositionGroup) -> u32 {
+    group
+        .legs
+        .iter()
+        .map(|l| l.quantity.abs())
+        .fold(0.0_f64, f64::max)
+        .round()
+        .max(1.0) as u32
+}
+
 pub fn group_option_legs(legs: &[OptionPositionLeg]) -> Vec<OptionPositionGroup> {
     use std::collections::HashMap;
 
@@ -98,7 +153,7 @@ pub fn group_option_legs(legs: &[OptionPositionLeg]) -> Vec<OptionPositionGroup>
             .as_ref()
             .map(|p| p.expiry.to_string())
             .unwrap_or_else(|| "unknown".into());
-        let key = format!("{}|{}", leg.underlying, expiry);
+        let key = legacy_position_id(&leg.underlying, &expiry);
         by_key.entry(key).or_default().push(leg);
     }
 
@@ -123,11 +178,7 @@ pub fn group_option_legs(legs: &[OptionPositionLeg]) -> Vec<OptionPositionGroup>
 }
 
 fn looks_like_option_symbol(symbol: &str) -> bool {
-    symbol.len() >= 15
-        && symbol
-            .chars()
-            .nth(12)
-            .is_some_and(|c| c == 'C' || c == 'P')
+    symbol.len() >= 15 && symbol.chars().nth(12).is_some_and(|c| c == 'C' || c == 'P')
 }
 
 fn infer_strategy_hint(legs: &[&OptionPositionLeg]) -> String {
@@ -147,11 +198,21 @@ pub fn find_position_group<'a>(
 }
 
 pub fn build_close_order_for_group(group: &OptionPositionGroup) -> Result<Value> {
+    let price = close_limit_from_market_value(group);
+    build_close_order_for_group_with_limit(group, price)
+}
+
+pub fn build_close_order_for_group_with_limit(
+    group: &OptionPositionGroup,
+    limit_price: Option<f64>,
+) -> Result<Value> {
     use schwab_api::models::order::{
         ComplexOrderStrategyType, OrderDuration, OrderInstruction, OrderSession, OrderTypeRequest,
     };
 
-    use crate::order_builder::{build_complex_option_order, build_single_option_order, OrderLegSpec};
+    use crate::order_builder::{
+        build_complex_option_order, build_single_option_order, OrderLegSpec,
+    };
 
     if group.legs.is_empty() {
         anyhow::bail!("position group has no legs");
@@ -210,9 +271,127 @@ pub fn build_close_order_for_group(group: &OptionPositionGroup) -> Result<Value>
         complex,
         order_type,
         leg_specs,
-        None,
+        limit_price,
         OrderDuration::Day,
         OrderSession::Normal,
         None,
     )
+}
+
+fn close_limit_from_market_value(group: &OptionPositionGroup) -> Option<f64> {
+    if group.legs.len() < 2 {
+        return None;
+    }
+    let contracts = spread_contract_count(group) as f64;
+    if contracts <= 0.0 {
+        return None;
+    }
+    let per_share = (group.net_market_value.abs() / contracts / 100.0).max(0.01);
+    Some(per_share)
+}
+
+pub fn group_leg_signature(group: &OptionPositionGroup) -> String {
+    let mut parts: Vec<String> = group
+        .legs
+        .iter()
+        .map(|leg| {
+            let side = if leg.quantity < 0.0 { "S" } else { "L" };
+            if let Some(parsed) = leg.parsed.as_ref() {
+                format!(
+                    "{}{}{}",
+                    parsed.put_call.to_ascii_uppercase(),
+                    format_strike(parsed.strike),
+                    side
+                )
+            } else {
+                format!(
+                    "{}{}",
+                    leg.symbol.trim().to_uppercase().replace(' ', ""),
+                    side
+                )
+            }
+        })
+        .collect();
+    parts.sort();
+    parts.join("_")
+}
+
+fn format_strike(strike: f64) -> String {
+    if (strike.fract()).abs() < f64::EPSILON {
+        format!("{strike:.0}")
+    } else {
+        format!("{strike:.2}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spread_contract_count_uses_max_leg_quantity() {
+        let group = OptionPositionGroup {
+            id: "IWM|2026-07-31".into(),
+            underlying: "IWM".into(),
+            expiry: "2026-07-31".into(),
+            strategy_hint: "vertical".into(),
+            legs: vec![
+                OptionPositionLeg {
+                    symbol: "IWM   260731P00282000".into(),
+                    underlying: "IWM".into(),
+                    quantity: -2.0,
+                    market_value: -632.0,
+                    average_price: Some(3.16),
+                    parsed: None,
+                },
+                OptionPositionLeg {
+                    symbol: "IWM   260731P00280000".into(),
+                    underlying: "IWM".into(),
+                    quantity: 2.0,
+                    market_value: 565.0,
+                    average_price: Some(2.825),
+                    parsed: None,
+                },
+            ],
+            net_market_value: -67.0,
+        };
+        assert_eq!(spread_contract_count(&group), 2);
+    }
+
+    #[test]
+    fn candidate_and_live_position_ids_match_vertical_signature() {
+        let group = OptionPositionGroup {
+            id: "IWM|2026-07-31".into(),
+            underlying: "IWM".into(),
+            expiry: "2026-07-31".into(),
+            strategy_hint: "vertical".into(),
+            legs: vec![
+                OptionPositionLeg {
+                    symbol: "IWM   260731P00282000".into(),
+                    underlying: "IWM".into(),
+                    quantity: -1.0,
+                    market_value: -32.0,
+                    average_price: Some(0.25),
+                    parsed: parse_option_symbol("IWM   260731P00282000").ok(),
+                },
+                OptionPositionLeg {
+                    symbol: "IWM   260731P00280000".into(),
+                    underlying: "IWM".into(),
+                    quantity: 1.0,
+                    market_value: 10.0,
+                    average_price: Some(0.05),
+                    parsed: parse_option_symbol("IWM   260731P00280000").ok(),
+                },
+            ],
+            net_market_value: -22.0,
+        };
+        let candidate = candidate_position_id(
+            "acct",
+            "IWM",
+            "2026-07-31",
+            "vertical",
+            vec![('P', 282.0, "S"), ('P', 280.0, "L")],
+        );
+        assert_eq!(position_group_id("acct", &group), candidate);
+    }
 }

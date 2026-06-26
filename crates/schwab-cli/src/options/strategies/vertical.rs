@@ -1,12 +1,12 @@
 use anyhow::{bail, Context, Result};
-use schwab_api::models::order::{
-    ComplexOrderStrategyType, OrderInstruction, OrderTypeRequest,
-};
+use schwab_api::models::order::{ComplexOrderStrategyType, OrderInstruction, OrderTypeRequest};
 use serde_json::Value;
 
-use crate::order_builder::{build_complex_option_order, parse_duration, parse_session, OrderLegSpec};
 use crate::options::symbology::build_option_symbol;
 use crate::options::types::VerticalParams;
+use crate::order_builder::{
+    build_complex_option_order, parse_duration, parse_session, OrderLegSpec,
+};
 
 pub fn build_vertical_order(params: &VerticalParams) -> Result<Value> {
     if params.contracts <= 0.0 {

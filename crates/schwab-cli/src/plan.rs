@@ -191,7 +191,10 @@ impl TradePlan {
             !self.account_hash.trim().is_empty(),
             "account_hash is required"
         );
-        anyhow::ensure!(!self.steps.is_empty(), "plan must include at least one step");
+        anyhow::ensure!(
+            !self.steps.is_empty(),
+            "plan must include at least one step"
+        );
 
         let mut ids = std::collections::HashSet::new();
         for step in &self.steps {
@@ -201,10 +204,17 @@ impl TradePlan {
                 "duplicate step id `{}`",
                 step.id
             );
-            anyhow::ensure!(step.quantity > 0.0, "step `{}` quantity must be positive", step.id);
+            anyhow::ensure!(
+                step.quantity > 0.0,
+                "step `{}` quantity must be positive",
+                step.id
+            );
             let ot = parse_trade_order_type(&step.order_type)?;
             if ot == TradeOrderType::Limit && step.limit_price.is_none() {
-                anyhow::bail!("step `{}` is limit order but limit_price is missing", step.id);
+                anyhow::bail!(
+                    "step `{}` is limit order but limit_price is missing",
+                    step.id
+                );
             }
         }
         Ok(())

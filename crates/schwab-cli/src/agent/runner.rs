@@ -8,32 +8,39 @@ use schwab_market_data::endpoints::chains::ChainQuery;
 use schwab_market_data::MarketDataApi;
 use serde_json::{json, Value};
 
+use crate::auth_reminder::{
+    assess_refresh_token, maybe_notify_auth_reminder, notify_auth_required,
+};
 use crate::config::RuntimeConfig;
 use crate::notify::TelegramNotifier;
+use crate::options::positions::build_close_order_for_group_with_limit;
 use crate::options::{
-    build_order_for_strategy, ensure_option_buying_power, group_option_legs,
-    list_option_positions, parse_expiry, days_to_expiry, IronCondorParams, StrategyKind,
+    build_order_for_strategy, candidate_position_id, days_to_expiry, ensure_option_buying_power,
+    group_option_legs, list_option_positions, parse_expiry, IronCondorParams, StrategyKind,
     VerticalParams,
 };
-use crate::options::positions::build_close_order_for_group;
 use crate::order_status::{
-    is_failure_status, wait_for_order, wait_result_json, WaitCondition, WaitOptions,
+    is_failure_status, is_terminal_status, order_status, wait_for_order, wait_result_json,
+    WaitCondition, WaitOptions,
 };
 use crate::rules::{LlmPhase, RulesConfig};
 use crate::safety::{execute_trading_order, require_trading_approval};
 
 use super::exits::{
-    evaluate_position_monitor, exit_signal_json, find_tracked_position, position_key,
-    reconcile_open_positions,
+    evaluate_position_monitor, exit_signal_json_for_account, find_tracked_position,
+    reconcile_open_positions, stable_position_key,
 };
 use super::llm::OpenRouterClient;
 use super::market_context::{market_context_summary_for_llm, vertical_entry_market_context};
 use super::paths::{default_state_path, load_agent_state};
 use super::schedule::{self, AgentSession};
-use super::state::{save_state, AgentState, TrackedPosition};
+use super::state::{save_state, AgentState, PendingOrder, PendingOrderAction, TrackedPosition};
 use crate::ui::agent_health::{is_fatal_auth_error, SharedAgentHealth};
 
 const TICK_ERROR_BACKOFF_SECS: u64 = 60;
+const MIN_CREDIT_TO_WIDTH_PCT: f64 = 12.5;
+const MAX_ENTRY_QUOTE_WIDTH_RATIO: f64 = 1.0;
+const EXIT_LIMIT_SLIPPAGE: f64 = 0.05;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TickResult {
@@ -58,6 +65,12 @@ pub async fn run_agent_loop(
     let mut state = load_agent_state(rules_path, &rules.agent_id);
     state.agent_id = rules.agent_id.clone();
 
+    if rules.execution.require_preview && !runtime.safety.require_preview_before_place {
+        anyhow::bail!(
+            "rules require preview before order placement, but safety.json has require_preview_before_place=false"
+        );
+    }
+
     if !runtime.dry_run {
         crate::safety::require_trading_approval(
             runtime,
@@ -68,7 +81,9 @@ pub async fn run_agent_loop(
 
     let trader = runtime.build_api()?;
     let market = runtime.build_market_api()?;
-    let telegram = TelegramNotifier::from_env(&rules.notify.telegram).ok().flatten();
+    let telegram = TelegramNotifier::from_env(&rules.notify.telegram)
+        .ok()
+        .flatten();
     let llm_client = if rules.llm.enabled {
         match OpenRouterClient::from_env() {
             Ok(client) => Some(client),
@@ -152,8 +167,7 @@ pub async fn run_agent_loop(
                     break;
                 }
 
-                tokio::time::sleep(std::time::Duration::from_secs(result.next_sleep_seconds))
-                    .await;
+                tokio::time::sleep(std::time::Duration::from_secs(result.next_sleep_seconds)).await;
             }
             Err(e) => {
                 consecutive_errors += 1;
@@ -169,6 +183,7 @@ pub async fn run_agent_loop(
                             g.record_error(msg);
                         }
                     }
+                    notify_auth_required(telegram.as_ref(), msg).await;
                     if once {
                         return Err(e);
                     }
@@ -205,6 +220,7 @@ pub async fn run_agent_loop(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn tick_once(
     runtime: &RuntimeConfig,
     rules_path: &std::path::Path,
@@ -219,6 +235,8 @@ pub async fn tick_once(
     state.reset_daily_if_needed(today);
     state.tick_count += 1;
 
+    check_auth_reminder(state, telegram).await;
+
     let mut result = TickResult {
         session: "unknown".into(),
         at_open: false,
@@ -231,38 +249,26 @@ pub async fn tick_once(
     };
 
     reconcile_open_positions(trader, state, rules).await?;
+    poll_pending_orders(trader, state, rules, &mut result).await?;
 
     let (market_open, hours) = fetch_option_market_status(market).await?;
     state.last_market_open = Some(market_open);
     if let Some(ref h) = hours {
         let _ = crate::ui::market_status::save_market_hours_cache(rules_path, h);
     }
-    let transition = schedule::resolve_session(
-        market_open,
-        &rules.schedule,
-        state.last_session.as_deref(),
-    );
+    let transition =
+        schedule::resolve_session(market_open, &rules.schedule, state.last_session.as_deref());
     result.session = transition.session.as_str().to_string();
     result.next_sleep_seconds = transition.sleep_seconds;
     state.last_session = Some(result.session.clone());
 
     match transition.session {
         AgentSession::Idle => {
-            result
-                .skipped
-                .push("market closed (option hours)".into());
+            result.skipped.push("market closed (option hours)".into());
             return Ok(result);
         }
         AgentSession::Overnight => {
-            return tick_overnight(
-                runtime,
-                rules,
-                state,
-                llm_client,
-                telegram,
-                &mut result,
-            )
-            .await;
+            return tick_overnight(runtime, rules, state, llm_client, telegram, &mut result).await;
         }
         AgentSession::RegularHours => {
             if transition.just_opened {
@@ -276,7 +282,8 @@ pub async fn tick_once(
         }
     }
 
-    let entries_paused = state.trades_today >= rules.risk.max_trades_per_day;
+    let entries_paused = state.trades_capacity_used() >= rules.risk.max_trades_per_day;
+    let blocked_events_active = !rules.risk.blocked_events.is_empty();
 
     // Exit evaluation and position monitoring (always runs when market is open)
     for account in rules.enabled_accounts() {
@@ -291,19 +298,17 @@ pub async fn tick_once(
             }
 
             if let Some(eval) = monitor.exit {
-                let exit = exit_signal_json(group, &eval);
+                let exit = exit_signal_json_for_account(&account.hash, group, &eval);
                 result.signals.push(exit.clone());
-                if !runtime.dry_run {
-                    if let Ok(action) = execute_exit(
-                        runtime,
-                        trader,
-                        &account.hash,
-                        rules,
-                        group,
-                        &exit,
-                        state,
-                    )
-                    .await
+                let position_id = stable_position_key(&account.hash, group);
+                if state.has_pending_position(&position_id) {
+                    result
+                        .skipped
+                        .push(format!("exit already pending for {position_id}"));
+                } else if !runtime.dry_run {
+                    if let Ok(action) =
+                        execute_exit(runtime, trader, &account.hash, rules, group, &exit, state)
+                            .await
                     {
                         result.actions.push(action);
                         notify_action(telegram, "EXIT", &exit).await;
@@ -317,8 +322,13 @@ pub async fn tick_once(
     let mut pending_entries: Vec<(String, StrategyKind, Value)> = Vec::new();
     if entries_paused {
         result.skipped.push(format!(
-            "new entries paused — max_trades_per_day ({}) reached",
+            "new entries paused — max_trades_per_day ({}) reached or reserved by pending entries",
             rules.risk.max_trades_per_day
+        ));
+    } else if blocked_events_active {
+        result.skipped.push(format!(
+            "new entries paused — blocked_events active: {}",
+            rules.risk.blocked_events.join(", ")
         ));
     } else {
         for account in rules.enabled_accounts() {
@@ -335,15 +345,8 @@ pub async fn tick_once(
                 }
 
                 if rules.strategies.vertical.enabled {
-                    match evaluate_vertical_entry(
-                        market,
-                        rules,
-                        &sym,
-                        today,
-                        state,
-                        &account.hash,
-                    )
-                    .await
+                    match evaluate_vertical_entry(market, rules, &sym, today, state, &account.hash)
+                        .await
                     {
                         Ok(Some(signal)) => {
                             pending_entries.push((
@@ -353,22 +356,13 @@ pub async fn tick_once(
                             ));
                         }
                         Ok(None) => {}
-                        Err(e) => result
-                            .skipped
-                            .push(format!("{sym} vertical: {e:#}")),
+                        Err(e) => result.skipped.push(format!("{sym} vertical: {e:#}")),
                     }
                 }
 
                 if rules.strategies.iron_condor.enabled {
-                    match evaluate_condor_entry(
-                        market,
-                        rules,
-                        &sym,
-                        today,
-                        state,
-                        &account.hash,
-                    )
-                    .await
+                    match evaluate_condor_entry(market, rules, &sym, today, state, &account.hash)
+                        .await
                     {
                         Ok(Some(signal)) => {
                             pending_entries.push((
@@ -378,9 +372,7 @@ pub async fn tick_once(
                             ));
                         }
                         Ok(None) => {}
-                        Err(e) => result
-                            .skipped
-                            .push(format!("{sym} iron_condor: {e:#}")),
+                        Err(e) => result.skipped.push(format!("{sym} iron_condor: {e:#}")),
                     }
                 }
             }
@@ -440,10 +432,9 @@ pub async fn tick_once(
                         && review.should_veto_entries()
                     {
                         llm_veto_entries = true;
-                        result.skipped.push(format!(
-                            "LLM veto entries: {}",
-                            review.entry_reasoning
-                        ));
+                        result
+                            .skipped
+                            .push(format!("LLM veto entries: {}", review.entry_reasoning));
                     }
 
                     if rules.llm.allow_llm_exits {
@@ -456,9 +447,22 @@ pub async fn tick_once(
                         notify_llm(telegram, &review.market_commentary, &review.risk_alerts).await;
                     }
                 }
-                Err(e) => result.skipped.push(format!("LLM review failed: {e:#}")),
+                Err(e) => {
+                    result.skipped.push(format!("LLM review failed: {e:#}"));
+                    if rules.llm.veto_entries && matches!(phase, LlmPhase::Selection) {
+                        llm_veto_entries = true;
+                        result
+                            .skipped
+                            .push("LLM selection failed closed — entries deferred".into());
+                    }
+                }
             }
         }
+    } else if rules.llm.enabled && rules.llm.veto_entries && has_candidates {
+        llm_veto_entries = true;
+        result
+            .skipped
+            .push("LLM selection unavailable — entries deferred".into());
     }
 
     // LLM-requested exits (high urgency only, when enabled)
@@ -467,13 +471,24 @@ pub async fn tick_once(
             let legs = list_option_positions(trader, Some(&account.hash)).await?;
             let groups = group_option_legs(&legs);
             for group in &groups {
-                if !llm_close_ids.iter().any(|id| id == &group.id) {
+                let position_id = stable_position_key(&account.hash, group);
+                if !llm_close_ids
+                    .iter()
+                    .any(|id| id == &position_id || id == &group.id)
+                {
+                    continue;
+                }
+                if state.has_pending_position(&position_id) {
+                    result
+                        .skipped
+                        .push(format!("LLM exit already pending for {position_id}"));
                     continue;
                 }
                 let exit = json!({
                     "type": "exit",
                     "reason": "llm_recommendation",
-                    "position_id": group.id,
+                    "position_id": position_id,
+                    "legacy_position_id": group.id,
                     "underlying": group.underlying,
                     "expiry": group.expiry,
                 });
@@ -491,33 +506,24 @@ pub async fn tick_once(
     // Execute pending entries unless LLM vetoed (dry-run never executes)
     if !llm_veto_entries && !runtime.dry_run {
         for (account_hash, kind, signal) in pending_entries {
-            if let Ok(action) = maybe_execute_entry(
-                runtime,
-                trader,
-                &account_hash,
-                kind,
-                &signal,
-                rules,
-                state,
-            )
-            .await
+            if let Ok(Some(a)) =
+                maybe_execute_entry(runtime, trader, &account_hash, kind, &signal, rules, state)
+                    .await
             {
-                if let Some(a) = action {
-                    result.actions.push(a.clone());
-                    let label = a
-                        .pointer("/fill_status")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("UNKNOWN");
-                    match label {
-                        "FILLED" => notify_action(telegram, "ENTRY FILLED", &a).await,
-                        "WORKING" | "ACCEPTED" | "PENDING_ACTIVATION" | "QUEUED" => {
-                            notify_action(telegram, "ORDER WORKING (limit)", &a).await
-                        }
-                        other if is_failure_status(other) => {
-                            notify_action(telegram, "ORDER REJECTED", &a).await
-                        }
-                        _ => notify_action(telegram, "ORDER", &a).await,
+                result.actions.push(a.clone());
+                let label = a
+                    .pointer("/fill_status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("UNKNOWN");
+                match label {
+                    "FILLED" => notify_action(telegram, "ENTRY FILLED", &a).await,
+                    "WORKING" | "ACCEPTED" | "PENDING_ACTIVATION" | "QUEUED" => {
+                        notify_action(telegram, "ORDER WORKING (limit)", &a).await
                     }
+                    other if is_failure_status(other) => {
+                        notify_action(telegram, "ORDER REJECTED", &a).await
+                    }
+                    _ => notify_action(telegram, "ORDER", &a).await,
                 }
             }
         }
@@ -554,11 +560,8 @@ async fn tick_overnight(
         ));
     }
 
-    let digest_due = schedule::should_run_overnight_digest(
-        state,
-        &rules.schedule.overnight,
-        Utc::now(),
-    );
+    let digest_due =
+        schedule::should_run_overnight_digest(state, &rules.schedule.overnight, Utc::now());
 
     if !digest_due {
         result.skipped.push(format!(
@@ -569,12 +572,16 @@ async fn tick_overnight(
     }
 
     if !rules.llm.enabled {
-        result.skipped.push("overnight digest skipped (llm.enabled false)".into());
+        result
+            .skipped
+            .push("overnight digest skipped (llm.enabled false)".into());
         return Ok(result.clone());
     }
 
     let Some(client) = llm_client else {
-        result.skipped.push("overnight digest skipped (no LLM client)".into());
+        result
+            .skipped
+            .push("overnight digest skipped (no LLM client)".into());
         return Ok(result.clone());
     };
 
@@ -591,12 +598,7 @@ async fn tick_overnight(
     });
 
     match client
-        .review(
-            &rules.llm,
-            LlmPhase::OvernightDigest,
-            &context,
-            true,
-        )
+        .review(&rules.llm, LlmPhase::OvernightDigest, &context, true)
         .await
     {
         Ok(review) => {
@@ -622,7 +624,9 @@ async fn tick_overnight(
                 notify_overnight_alert(telegram, &review).await;
             }
         }
-        Err(e) => result.skipped.push(format!("overnight digest failed: {e:#}")),
+        Err(e) => result
+            .skipped
+            .push(format!("overnight digest failed: {e:#}")),
     }
 
     Ok(result.clone())
@@ -638,12 +642,191 @@ fn overnight_position_snapshots(state: &AgentState) -> Vec<Value> {
                 "underlying": p.underlying,
                 "expiry": p.expiry,
                 "strategy": p.strategy,
+                "contracts": p.contracts.max(1),
                 "entry_credit": p.entry_credit,
                 "max_loss_usd": p.max_loss_usd,
                 "status": "overnight (reconciled, no live marks)",
             })
         })
         .collect()
+}
+
+async fn check_auth_reminder(state: &mut AgentState, telegram: Option<&TelegramNotifier>) {
+    let Ok(config) = schwab_api::ClientConfig::from_env() else {
+        return;
+    };
+    let oauth = schwab_api::OAuthClient::new(config);
+    let Ok(Some(tokens)) = oauth.status().await else {
+        return;
+    };
+    let reminder = assess_refresh_token(&tokens);
+    maybe_notify_auth_reminder(telegram, state, &reminder).await;
+}
+
+async fn poll_pending_orders(
+    trader: &Arc<TraderApi>,
+    state: &mut AgentState,
+    rules: &RulesConfig,
+    result: &mut TickResult,
+) -> Result<()> {
+    let pending = state.pending_orders.clone();
+    for pending_order in pending {
+        let order = match trader
+            .orders()
+            .get(&pending_order.account_hash, &pending_order.order_id)
+            .await
+        {
+            Ok(order) => order,
+            Err(e) => {
+                result.skipped.push(format!(
+                    "pending order {} status unavailable: {e:#}",
+                    pending_order.order_id
+                ));
+                continue;
+            }
+        };
+        let status = order_status(&order).unwrap_or_else(|| "UNKNOWN".into());
+        if let Some(stored) = state
+            .pending_orders
+            .iter_mut()
+            .find(|p| p.order_id == pending_order.order_id)
+        {
+            stored.last_status = Some(status.clone());
+        }
+
+        match pending_order.action {
+            PendingOrderAction::Entry => {
+                if status == "FILLED" {
+                    state.remove_pending_order(&pending_order.order_id);
+                    if let Some(detail) = pending_order.detail.as_ref() {
+                        track_filled_entry_from_pending(state, detail, &pending_order);
+                    }
+                    state.trades_today = state.trades_today.saturating_add(1);
+                    state.record_action(
+                        "entry_filled",
+                        json!({
+                            "order_id": pending_order.order_id,
+                            "position_id": pending_order.position_id,
+                            "status": status,
+                        }),
+                    );
+                } else if is_failure_status(&status) || is_terminal_status(&status) {
+                    state.remove_pending_order(&pending_order.order_id);
+                    state.record_action(
+                        "entry_terminal",
+                        json!({
+                            "order_id": pending_order.order_id,
+                            "position_id": pending_order.position_id,
+                            "status": status,
+                        }),
+                    );
+                } else if pending_is_stale(&pending_order, rules) {
+                    match trader
+                        .orders()
+                        .cancel(&pending_order.account_hash, &pending_order.order_id)
+                        .await
+                    {
+                        Ok(cancel) => {
+                            state.remove_pending_order(&pending_order.order_id);
+                            state.record_action(
+                                "entry_cancelled_stale",
+                                json!({
+                                    "order_id": pending_order.order_id,
+                                    "position_id": pending_order.position_id,
+                                    "status": status,
+                                    "cancel": {
+                                        "status": cancel.status,
+                                        "location": cancel.location,
+                                    },
+                                }),
+                            );
+                        }
+                        Err(e) => result.skipped.push(format!(
+                            "stale entry order {} cancel failed: {e:#}",
+                            pending_order.order_id
+                        )),
+                    }
+                }
+            }
+            PendingOrderAction::Exit => {
+                if status == "FILLED" {
+                    state.remove_pending_order(&pending_order.order_id);
+                    state.open_positions.remove(&pending_order.position_id);
+                    state.record_action(
+                        "exit_filled",
+                        json!({
+                            "order_id": pending_order.order_id,
+                            "position_id": pending_order.position_id,
+                            "status": status,
+                        }),
+                    );
+                } else if is_failure_status(&status) || is_terminal_status(&status) {
+                    state.remove_pending_order(&pending_order.order_id);
+                    state.record_action(
+                        "exit_terminal_position_kept",
+                        json!({
+                            "order_id": pending_order.order_id,
+                            "position_id": pending_order.position_id,
+                            "status": status,
+                        }),
+                    );
+                }
+            }
+        }
+    }
+    state.clear_legacy_pending_ids();
+    Ok(())
+}
+
+fn pending_is_stale(pending: &PendingOrder, rules: &RulesConfig) -> bool {
+    let timeout = rules.execution.fill_timeout_seconds.max(1) as i64;
+    (Utc::now() - pending.submitted_at).num_seconds() >= timeout
+}
+
+fn track_filled_entry_from_pending(state: &mut AgentState, detail: &Value, pending: &PendingOrder) {
+    let Some(signal) = detail.get("signal") else {
+        return;
+    };
+    let Some(params) = signal.get("params") else {
+        return;
+    };
+    let underlying = params
+        .get("underlying")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let expiry = params
+        .get("expiry")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let strategy = signal
+        .get("strategy")
+        .and_then(|v| v.as_str())
+        .unwrap_or("vertical")
+        .to_string();
+    let contracts = params
+        .get("contracts")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(1.0)
+        .round()
+        .max(1.0) as u32;
+    let entry_credit = signal.get("estimated_credit").and_then(|v| v.as_f64());
+
+    state
+        .open_positions
+        .entry(pending.position_id.clone())
+        .or_insert(TrackedPosition {
+            position_id: pending.position_id.clone(),
+            account_hash: pending.account_hash.clone(),
+            underlying,
+            expiry,
+            strategy,
+            opened_at: Utc::now(),
+            entry_credit,
+            max_loss_usd: pending.reserved_risk_usd,
+            contracts,
+        });
 }
 
 async fn notify_at_open(telegram: Option<&TelegramNotifier>, playbook: Option<&Value>) {
@@ -684,9 +867,7 @@ async fn notify_overnight_alert(
         .await;
 }
 
-async fn fetch_option_market_status(
-    market: &MarketDataApi,
-) -> Result<(bool, Option<Value>)> {
+async fn fetch_option_market_status(market: &MarketDataApi) -> Result<(bool, Option<Value>)> {
     let hours = market.markets().hours("option", None).await?;
     let open = crate::market_hours::option_market_open_from_hours(&hours, chrono::Utc::now())
         .unwrap_or(false);
@@ -746,7 +927,10 @@ async fn notify_action(telegram: Option<&TelegramNotifier>, kind: &str, detail: 
     if !tg.wants_actions() {
         return;
     }
-    let msg = format!("{kind}\n```\n{}\n```", serde_json::to_string_pretty(detail).unwrap_or_default());
+    let msg = format!(
+        "{kind}\n```\n{}\n```",
+        serde_json::to_string_pretty(detail).unwrap_or_default()
+    );
     let _ = tg.send(&msg).await;
 }
 
@@ -760,7 +944,9 @@ async fn notify_llm(telegram: Option<&TelegramNotifier>, commentary: &str, alert
     } else {
         format!("\nAlerts: {}", alerts.join("; "))
     };
-    let _ = tg.send(&format!("LLM review\n{commentary}{alerts_text}")).await;
+    let _ = tg
+        .send(&format!("LLM review\n{commentary}{alerts_text}"))
+        .await;
 }
 
 async fn evaluate_vertical_entry(
@@ -773,7 +959,7 @@ async fn evaluate_vertical_entry(
 ) -> Result<Option<Value>> {
     let entry = &rules.entry_rules.vertical;
     let open_count = state.count_open_for_strategy(account_hash, StrategyKind::Vertical);
-    if open_count >= entry.max_open_positions {
+    if open_count + state.pending_entry_count() >= entry.max_open_positions {
         return Ok(None);
     }
 
@@ -788,7 +974,8 @@ async fn evaluate_vertical_entry(
         })
         .await?;
 
-    let (expiry, put_map) = pick_expiry_map(&chain, "putExpDateMap", entry.dte_min, entry.dte_max, today)?;
+    let (expiry, put_map) =
+        pick_expiry_map(&chain, "putExpDateMap", entry.dte_min, entry.dte_max, today)?;
     let underlying_price = chain
         .pointer("/underlying/last")
         .or_else(|| chain.pointer("/underlyingPrice"))
@@ -799,17 +986,31 @@ async fn evaluate_vertical_entry(
         return Ok(None);
     }
 
-    let short_strike = pick_strike_by_delta(
-        &put_map,
-        entry.short_delta_min,
-        entry.short_delta_max,
-        true,
-    )
-    .or_else(|| pick_otm_strike(&put_map, underlying_price, 0.10, true).ok())
-    .context("no suitable short strike")?;
+    let short_strike =
+        pick_strike_by_delta(&put_map, entry.short_delta_min, entry.short_delta_max, true)
+            .or_else(|| pick_otm_strike(&put_map, underlying_price, 0.10, true).ok())
+            .context("no suitable short strike")?;
     let long_strike = pick_wing_strike(&put_map, short_strike, entry.max_width, true)?;
     let credit = estimate_spread_credit(&put_map, short_strike, long_strike)?;
     if credit < entry.min_credit {
+        return Ok(None);
+    }
+    let width = (short_strike - long_strike).abs();
+    if !entry_quality_ok(&put_map, short_strike, long_strike, width, credit) {
+        return Ok(None);
+    }
+
+    let candidate_id = candidate_position_id(
+        account_hash,
+        underlying,
+        &expiry.to_string(),
+        StrategyKind::Vertical.as_str(),
+        vec![('P', short_strike, "S"), ('P', long_strike, "L")],
+    );
+    if state.open_positions.contains_key(&candidate_id)
+        || state.has_pending_position(&candidate_id)
+        || has_legacy_duplicate(state, account_hash, underlying, &expiry.to_string())
+    {
         return Ok(None);
     }
 
@@ -834,7 +1035,7 @@ async fn evaluate_vertical_entry(
         &put_map,
         short_strike,
         long_strike,
-        entry.max_width,
+        width,
         credit,
         entry.max_contracts_per_trade as f64,
     );
@@ -843,6 +1044,7 @@ async fn evaluate_vertical_entry(
         "type": "entry",
         "strategy": "vertical",
         "account_hash": account_hash,
+        "position_id": candidate_id,
         "params": params,
         "estimated_credit": credit,
         "market_context": market_context,
@@ -859,7 +1061,7 @@ async fn evaluate_condor_entry(
 ) -> Result<Option<Value>> {
     let entry = &rules.entry_rules.iron_condor;
     let open_count = state.count_open_for_strategy(account_hash, StrategyKind::IronCondor);
-    if open_count >= entry.max_open_positions {
+    if open_count + state.pending_entry_count() >= entry.max_open_positions {
         return Ok(None);
     }
 
@@ -883,8 +1085,15 @@ async fn evaluate_condor_entry(
         return Ok(None);
     }
 
-    let (expiry, put_map) = pick_expiry_map(&chain, "putExpDateMap", entry.dte_min, entry.dte_max, today)?;
-    let (_, call_map) = pick_expiry_map(&chain, "callExpDateMap", entry.dte_min, entry.dte_max, today)?;
+    let (expiry, put_map) =
+        pick_expiry_map(&chain, "putExpDateMap", entry.dte_min, entry.dte_max, today)?;
+    let (_, call_map) = pick_expiry_map(
+        &chain,
+        "callExpDateMap",
+        entry.dte_min,
+        entry.dte_max,
+        today,
+    )?;
 
     let put_short = pick_otm_strike(&put_map, underlying_price, entry.short_delta, true)?;
     let put_long = put_short - entry.wing_width;
@@ -895,6 +1104,24 @@ async fn evaluate_condor_entry(
     let call_credit = estimate_spread_credit(&call_map, call_short, call_long)?;
     let total_credit = put_credit + call_credit;
     if total_credit < entry.min_credit {
+        return Ok(None);
+    }
+    let candidate_id = candidate_position_id(
+        account_hash,
+        underlying,
+        &expiry.to_string(),
+        StrategyKind::IronCondor.as_str(),
+        vec![
+            ('P', put_short, "S"),
+            ('P', put_long, "L"),
+            ('C', call_short, "S"),
+            ('C', call_long, "L"),
+        ],
+    );
+    if state.open_positions.contains_key(&candidate_id)
+        || state.has_pending_position(&candidate_id)
+        || has_legacy_duplicate(state, account_hash, underlying, &expiry.to_string())
+    {
         return Ok(None);
     }
 
@@ -915,6 +1142,7 @@ async fn evaluate_condor_entry(
         "type": "entry",
         "strategy": "iron_condor",
         "account_hash": account_hash,
+        "position_id": candidate_id,
         "params": params,
         "estimated_credit": total_credit,
     })))
@@ -957,12 +1185,7 @@ fn pick_otm_strike(strike_map: &Value, underlying: f64, otm_pct: f64, puts: bool
 }
 
 /// For put credit spreads, long strike is below short by approximately `width`.
-fn pick_wing_strike(
-    strike_map: &Value,
-    short_strike: f64,
-    width: f64,
-    puts: bool,
-) -> Result<f64> {
+fn pick_wing_strike(strike_map: &Value, short_strike: f64, width: f64, puts: bool) -> Result<f64> {
     let target = if puts {
         short_strike - width
     } else {
@@ -973,10 +1196,7 @@ fn pick_wing_strike(
 
 fn pick_nearest_strike(strike_map: &Value, target: f64) -> Result<f64> {
     let obj = strike_map.as_object().context("strike map not object")?;
-    let candidates: Vec<f64> = obj
-        .keys()
-        .filter_map(|k| k.parse::<f64>().ok())
-        .collect();
+    let candidates: Vec<f64> = obj.keys().filter_map(|k| k.parse::<f64>().ok()).collect();
     if candidates.is_empty() {
         anyhow::bail!("no strikes in chain");
     }
@@ -1002,11 +1222,7 @@ fn pick_strike_by_delta(
     let mut best: Option<(f64, f64)> = None;
     for (key, contracts) in obj {
         let strike = key.parse::<f64>().ok()?;
-        let delta = contracts
-            .as_array()?
-            .first()?
-            .get("delta")?
-            .as_f64()?;
+        let delta = contracts.as_array()?.first()?.get("delta")?.as_f64()?;
         let abs_delta = delta.abs();
         if puts && delta > 0.0 {
             continue;
@@ -1047,6 +1263,122 @@ fn strike_key_candidates(strike: f64) -> Vec<String> {
     ]
 }
 
+fn entry_quality_ok(
+    strike_map: &Value,
+    short_strike: f64,
+    long_strike: f64,
+    width: f64,
+    credit: f64,
+) -> bool {
+    if width <= f64::EPSILON || credit <= f64::EPSILON {
+        return false;
+    }
+    let credit_to_width_pct = (credit / width) * 100.0;
+    if credit_to_width_pct < MIN_CREDIT_TO_WIDTH_PCT {
+        return false;
+    }
+    let short_quote_width = quote_width(strike_map, short_strike).unwrap_or(f64::INFINITY);
+    let long_quote_width = quote_width(strike_map, long_strike).unwrap_or(f64::INFINITY);
+    (short_quote_width + long_quote_width) <= credit * MAX_ENTRY_QUOTE_WIDTH_RATIO
+}
+
+fn quote_width(strike_map: &Value, strike: f64) -> Option<f64> {
+    let bid = strike_quote_field(strike_map, strike, "bid").ok()?;
+    let ask = strike_quote_field(strike_map, strike, "ask").ok()?;
+    if bid < 0.0 || ask <= 0.0 || ask < bid {
+        return None;
+    }
+    Some(ask - bid)
+}
+
+fn has_legacy_duplicate(
+    state: &AgentState,
+    account_hash: &str,
+    underlying: &str,
+    expiry: &str,
+) -> bool {
+    state
+        .open_positions
+        .values()
+        .any(|p| p.account_hash == account_hash && p.underlying == underlying && p.expiry == expiry)
+}
+
+fn candidate_id_from_params(account_hash: &str, kind: StrategyKind, params: &Value) -> String {
+    let underlying = params
+        .get("underlying")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let expiry = params.get("expiry").and_then(|v| v.as_str()).unwrap_or("");
+    match kind {
+        StrategyKind::Vertical => {
+            let spread_type = params
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("put_credit");
+            let put_call = if spread_type.starts_with("call") {
+                'C'
+            } else {
+                'P'
+            };
+            let short = params
+                .get("short_strike")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let long = params
+                .get("long_strike")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            candidate_position_id(
+                account_hash,
+                underlying,
+                expiry,
+                kind.as_str(),
+                vec![(put_call, short, "S"), (put_call, long, "L")],
+            )
+        }
+        StrategyKind::IronCondor => candidate_position_id(
+            account_hash,
+            underlying,
+            expiry,
+            kind.as_str(),
+            vec![
+                (
+                    'P',
+                    params
+                        .get("put_short")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0),
+                    "S",
+                ),
+                (
+                    'P',
+                    params
+                        .get("put_long")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0),
+                    "L",
+                ),
+                (
+                    'C',
+                    params
+                        .get("call_short")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0),
+                    "S",
+                ),
+                (
+                    'C',
+                    params
+                        .get("call_long")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0),
+                    "L",
+                ),
+            ],
+        ),
+    }
+}
+
 async fn maybe_execute_entry(
     runtime: &RuntimeConfig,
     trader: &Arc<TraderApi>,
@@ -1060,14 +1392,55 @@ async fn maybe_execute_entry(
         return Ok(None);
     }
 
-    if state.trades_today >= rules.risk.max_trades_per_day {
-        return Ok(None);
+    if state.trades_capacity_used() >= rules.risk.max_trades_per_day {
+        return Ok(Some(json!({
+            "fill_status": "SKIPPED",
+            "reason": "max_trades_per_day reached or reserved by pending entries",
+            "trades_today": state.trades_today,
+            "pending_entries": state.pending_entry_count(),
+            "max_trades_per_day": rules.risk.max_trades_per_day,
+            "signal": signal,
+        })));
     }
 
-    let params = signal.get("params").cloned().context("signal missing params")?;
+    let params = signal
+        .get("params")
+        .cloned()
+        .context("signal missing params")?;
     let margin = crate::options::validate::estimate_order_margin(&json!({}), kind, &params)?;
     if margin > rules.risk.max_risk_per_trade_usd {
-        return Ok(None);
+        return Ok(Some(json!({
+            "fill_status": "SKIPPED",
+            "reason": "max_risk_per_trade_usd exceeded",
+            "required_margin_usd": margin,
+            "max_risk_per_trade_usd": rules.risk.max_risk_per_trade_usd,
+            "signal": signal,
+        })));
+    }
+    let reserved = state.reserved_risk_usd();
+    if reserved + margin > rules.risk.max_portfolio_risk_usd {
+        return Ok(Some(json!({
+            "fill_status": "SKIPPED",
+            "reason": "max_portfolio_risk_usd exceeded",
+            "reserved_risk_usd": reserved,
+            "new_order_margin_usd": margin,
+            "projected_reserved_risk_usd": reserved + margin,
+            "max_portfolio_risk_usd": rules.risk.max_portfolio_risk_usd,
+            "signal": signal,
+        })));
+    }
+    let position_id = signal
+        .get("position_id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| candidate_id_from_params(account_hash, kind, &params));
+    if state.open_positions.contains_key(&position_id) || state.has_pending_position(&position_id) {
+        return Ok(Some(json!({
+            "fill_status": "SKIPPED",
+            "reason": "position already open or pending",
+            "position_id": position_id,
+            "signal": signal,
+        })));
     }
 
     require_trading_approval(
@@ -1129,12 +1502,30 @@ async fn maybe_execute_entry(
     }
 
     if fill_status != "FILLED" && rules.execution.wait_for_fill {
+        if let Some(order_id) = order_id.as_ref() {
+            state.add_pending_order(PendingOrder {
+                order_id: order_id.clone(),
+                account_hash: account_hash.to_string(),
+                action: PendingOrderAction::Entry,
+                position_id: position_id.clone(),
+                reserved_risk_usd: margin,
+                submitted_at: Utc::now(),
+                last_status: Some(fill_status.to_string()),
+                detail: Some(json!({
+                    "signal": signal,
+                    "place": place.clone(),
+                    "wait": wait_result.as_ref().map(wait_result_json),
+                })),
+            });
+        }
         let detail = json!({
             "signal": signal,
             "place": place,
             "wait": wait_result.as_ref().map(wait_result_json),
             "fill_status": fill_status,
-            "note": "Limit order working; position not opened in agent state until filled",
+            "position_id": position_id,
+            "reserved_risk_usd": margin,
+            "note": "Limit order working; risk and trade capacity reserved until terminal status",
         });
         state.record_action("entry_working", detail.clone());
         return Ok(Some(detail));
@@ -1151,26 +1542,46 @@ async fn maybe_execute_entry(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let position_id = position_key(&underlying, &expiry);
-    state.open_positions.insert(
-        position_id.clone(),
-        TrackedPosition {
-            position_id,
-            account_hash: account_hash.to_string(),
-            underlying,
-            expiry,
-            strategy: kind.as_str().to_string(),
-            opened_at: Utc::now(),
-            entry_credit: signal.get("estimated_credit").and_then(|v| v.as_f64()),
-            max_loss_usd: margin,
-        },
-    );
+    let order_contracts = params
+        .get("contracts")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(1.0)
+        .round()
+        .max(1.0) as u32;
+    let new_credit = signal.get("estimated_credit").and_then(|v| v.as_f64());
+
+    if let Some(existing) = state.open_positions.get_mut(&position_id) {
+        let prev_contracts = existing.contracts.max(1);
+        existing.contracts = prev_contracts + order_contracts;
+        existing.max_loss_usd += margin;
+        if let Some(credit) = new_credit {
+            let blended = existing.entry_credit.unwrap_or(credit) * prev_contracts as f64
+                + credit * order_contracts as f64;
+            existing.entry_credit = Some(blended / existing.contracts as f64);
+        }
+    } else {
+        state.open_positions.insert(
+            position_id.clone(),
+            TrackedPosition {
+                position_id: position_id.clone(),
+                account_hash: account_hash.to_string(),
+                underlying,
+                expiry,
+                strategy: kind.as_str().to_string(),
+                opened_at: Utc::now(),
+                entry_credit: new_credit,
+                max_loss_usd: margin,
+                contracts: order_contracts,
+            },
+        );
+    }
     state.record_action("entry", signal.clone());
 
     Ok(Some(json!({
         "entry": place,
         "signal": signal,
         "wait": wait_result.as_ref().map(wait_result_json),
+        "position_id": position_id,
         "fill_status": fill_status,
     })))
 }
@@ -1190,13 +1601,33 @@ async fn execute_exit(
         &format!("Close position {}", group.id),
     )?;
 
-    let order = build_close_order_for_group(group)?;
+    let position_id = stable_position_key(account_hash, group);
+    if state.has_pending_position(&position_id) {
+        return Ok(json!({
+            "fill_status": "SKIPPED",
+            "reason": "exit already pending",
+            "position_id": position_id,
+            "signal": signal,
+        }));
+    }
+
+    let close_limit = close_limit_from_signal(signal)
+        .or_else(|| close_limit_from_group_mark(group))
+        .context("could not derive close limit price for spread exit")?;
+    let order = build_close_order_for_group_with_limit(group, Some(close_limit))?;
     runtime.safety.validate_order(&order, None, None)?;
     let place = execute_trading_order(runtime, trader, account_hash, &order).await?;
 
+    let mut wait_json = None;
+    let mut fill_status = "ACCEPTED".to_string();
+    let order_id = place
+        .get("order_id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+
     if rules.execution.wait_for_fill {
-        if let Some(order_id) = place.get("order_id").and_then(|v| v.as_str()) {
-            let _ = wait_for_order(
+        if let Some(order_id) = order_id.as_ref() {
+            let wait = wait_for_order(
                 trader,
                 account_hash,
                 order_id,
@@ -1209,10 +1640,66 @@ async fn execute_exit(
                 },
             )
             .await;
+            match wait {
+                Ok(wait) => {
+                    fill_status = wait
+                        .final_status
+                        .as_deref()
+                        .unwrap_or("UNKNOWN")
+                        .to_string();
+                    wait_json = Some(wait_result_json(&wait));
+                }
+                Err(e) => {
+                    fill_status = "WAIT_ERROR".into();
+                    wait_json = Some(json!({ "error": e.to_string() }));
+                }
+            }
         }
     }
 
-    state.open_positions.remove(&group.id);
-    state.record_action("exit", signal.clone());
-    Ok(json!({ "exit": place, "signal": signal }))
+    let detail = json!({
+        "exit": place,
+        "signal": signal,
+        "position_id": position_id,
+        "limit_price": close_limit,
+        "wait": wait_json,
+        "fill_status": fill_status.clone(),
+    });
+
+    if fill_status == "FILLED" || !rules.execution.wait_for_fill {
+        state.open_positions.remove(&position_id);
+        state.open_positions.remove(&group.id);
+        state.record_action("exit", signal.clone());
+    } else {
+        if let Some(order_id) = order_id {
+            state.add_pending_order(PendingOrder {
+                order_id,
+                account_hash: account_hash.to_string(),
+                action: PendingOrderAction::Exit,
+                position_id,
+                reserved_risk_usd: 0.0,
+                submitted_at: Utc::now(),
+                last_status: Some(fill_status),
+                detail: Some(detail.clone()),
+            });
+        }
+        state.record_action("exit_working_position_kept", detail.clone());
+    }
+
+    Ok(detail)
+}
+
+fn close_limit_from_signal(signal: &Value) -> Option<f64> {
+    let debit = signal
+        .pointer("/mark/debit_to_close")
+        .and_then(|v| v.as_f64())?;
+    Some((debit + EXIT_LIMIT_SLIPPAGE).max(0.01))
+}
+
+fn close_limit_from_group_mark(group: &crate::options::OptionPositionGroup) -> Option<f64> {
+    let contracts = crate::options::spread_contract_count(group) as f64;
+    if contracts <= 0.0 {
+        return None;
+    }
+    Some((group.net_market_value.abs() / contracts / 100.0 + EXIT_LIMIT_SLIPPAGE).max(0.01))
 }
