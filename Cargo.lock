@@ -1990,6 +1990,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "schwab-trader"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "chrono",
+ "chrono-tz",
+ "clap",
+ "crossterm 0.28.1",
+ "directories",
+ "dotenvy",
+ "predicates",
+ "ratatui",
+ "reqwest",
+ "schwab-api-cli",
+ "schwab-api-cli-core",
+ "schwab-api-cli-market-data",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

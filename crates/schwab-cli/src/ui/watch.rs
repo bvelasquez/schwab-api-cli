@@ -14,8 +14,8 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{
-    Block, BorderType, Borders, List, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
-    Tabs,
+    Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs,
+    Wrap,
 };
 use ratatui::Terminal;
 
@@ -23,8 +23,8 @@ use super::agent_health::SharedAgentHealth;
 use super::context::DashboardContext;
 use super::market_status::MarketSnapshot;
 use super::tui_render::{
-    activity_items, agent_status_lines, daemon_hint, header_line, latest_llm_lines,
-    llm_history_lines, position_items, risk_gauge, rules_detail_lines, rules_summary_lines,
+    activity_lines, agent_status_lines, daemon_hint, header_line, latest_llm_lines,
+    llm_history_lines, position_lines, risk_gauge, rules_detail_lines, rules_summary_lines,
 };
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(3);
@@ -221,7 +221,7 @@ fn draw_ui(
         .split(area);
 
     f.render_widget(
-        Paragraph::new(header_line(ctx, agent_mode, agent_health)),
+        wrap_paragraph(header_line(ctx, agent_mode, agent_health)),
         outer[0],
     );
 
@@ -254,7 +254,11 @@ fn draw_ui(
         ratatui::text::Span::styled("q quit ", Style::default().fg(Color::DarkGray)),
         ratatui::text::Span::styled(status_msg, Style::default().fg(Color::DarkGray)),
     ]);
-    f.render_widget(Paragraph::new(footer), outer[3]);
+    f.render_widget(wrap_paragraph(footer), outer[3]);
+}
+
+fn wrap_paragraph<'a>(content: impl Into<ratatui::text::Text<'a>>) -> Paragraph<'a> {
+    Paragraph::new(content).wrap(Wrap { trim: true })
 }
 
 fn panel_block(title: &str) -> Block<'_> {
@@ -303,7 +307,7 @@ fn render_overview(
         .split(rows[0]);
 
     f.render_widget(
-        Paragraph::new(agent_status_lines(ctx, agent_mode, agent_health))
+        wrap_paragraph(agent_status_lines(ctx, agent_mode, agent_health))
             .block(panel_block("Agent")),
         top[0],
     );
@@ -314,7 +318,7 @@ fn render_overview(
         .split(top[1]);
 
     f.render_widget(
-        Paragraph::new(rules_summary_lines(ctx)).block(panel_block("Rules")),
+        wrap_paragraph(rules_summary_lines(ctx)).block(panel_block("Rules")),
         rules_area[0],
     );
     f.render_widget(
@@ -323,15 +327,17 @@ fn render_overview(
     );
 
     f.render_widget(
-        Paragraph::new(latest_llm_lines(ctx)).block(panel_block("Last LLM")),
+        wrap_paragraph(latest_llm_lines(ctx)).block(panel_block("Last LLM")),
         rows[1],
     );
 
-    let activity = List::new(activity_items(ctx)).block(panel_block("Recent Activity"));
-    f.render_widget(activity, rows[2]);
+    f.render_widget(
+        wrap_paragraph(activity_lines(ctx)).block(panel_block("Recent Activity")),
+        rows[2],
+    );
 
     if show_hint {
-        f.render_widget(Paragraph::new(daemon_hint(ctx)), rows[3]);
+        f.render_widget(wrap_paragraph(daemon_hint(ctx)), rows[3]);
     }
 }
 
@@ -351,9 +357,11 @@ fn render_rules_tab(
         .split(area);
 
     f.render_widget(
-        Paragraph::new(lines).scroll((scroll, 0)).block(
-            panel_block("Rules Config").title_bottom(format!(" {} ", ctx.rules_path.display())),
-        ),
+        wrap_paragraph(lines)
+            .scroll((scroll, 0))
+            .block(
+                panel_block("Rules Config").title_bottom(format!(" {} ", ctx.rules_path.display())),
+            ),
         vertical[0],
     );
 
@@ -390,7 +398,7 @@ fn render_log_tab(
         .split(area);
 
     f.render_widget(
-        Paragraph::new(lines)
+        wrap_paragraph(lines)
             .style(Style::default().fg(Color::DarkGray))
             .scroll((scroll, 0))
             .block(
@@ -416,8 +424,10 @@ fn render_positions_tab(f: &mut ratatui::Frame, area: Rect, ctx: &DashboardConte
     } else {
         format!("Positions ({spreads})")
     };
-    let list = List::new(position_items(ctx)).block(panel_block(&title));
-    f.render_widget(list, area);
+    f.render_widget(
+        wrap_paragraph(position_lines(ctx)).block(panel_block(&title)),
+        area,
+    );
 }
 
 fn render_llm_tab(
@@ -446,7 +456,7 @@ fn render_llm_tab(
     };
 
     f.render_widget(
-        Paragraph::new(lines)
+        wrap_paragraph(lines)
             .scroll((scroll, 0))
             .block(panel_block("LLM Reviews").title_bottom(model)),
         vertical[0],

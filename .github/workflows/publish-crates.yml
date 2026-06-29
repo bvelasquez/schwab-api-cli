@@ -47,3 +47,11 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
         run: bash scripts/publish-crate.sh schwab-api-cli
+
+      - name: Wait for schwab-api-cli index
+        run: bash scripts/wait-for-crate.sh schwab-api-cli
+
+      - name: Publish schwab-trader
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: bash scripts/publish-crate.sh schwab-trader

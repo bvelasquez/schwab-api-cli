@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/schwab-api", "crates/schwab-market-data", "crates/schwab-cli"]
+members = [
+    "crates/schwab-api",
+    "crates/schwab-market-data",
+    "crates/schwab-cli",
+    "crates/schwab-trader",
+]
 
 [workspace.package]
 edition = "2021"

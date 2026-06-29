@@ -1,0 +1,409 @@
+use std::io;
+use std::path::Path;
+use std::time::{Duration, Instant};
+
+use anyhow::Result;
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
+use crossterm::ExecutableCommand;
+use ratatui::backend::CrosstermBackend;
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::Line;
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs, Wrap};
+use ratatui::Terminal;
+
+use crate::ui::context::{header_line, WatchContext};
+use crate::ui::health::SharedAgentHealth;
+use crate::ui::render::{
+    candidate_lines, capital_lines, entry_attempt_lines, journal_lines, llm_lines, log_lines,
+    overview_agent_lines, position_lines, rules_summary,
+};
+
+const REFRESH_INTERVAL: Duration = Duration::from_secs(3);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatchAgentMode {
+    Embedded,
+    MonitorOnly,
+}
+
+#[derive(Debug, Clone)]
+pub struct WatchConfig {
+    pub rules_path: std::path::PathBuf,
+    pub agent_mode: WatchAgentMode,
+    pub dry_run: bool,
+    pub simulate: bool,
+    pub agent_health: Option<SharedAgentHealth>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WatchTab {
+    Overview = 0,
+    Positions = 1,
+    Candidates = 2,
+    Capital = 3,
+    Journal = 4,
+    Llm = 5,
+}
+
+impl WatchTab {
+    fn all() -> [WatchTab; 6] {
+        [
+            WatchTab::Overview,
+            WatchTab::Positions,
+            WatchTab::Candidates,
+            WatchTab::Capital,
+            WatchTab::Journal,
+            WatchTab::Llm,
+        ]
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            WatchTab::Overview => "Overview",
+            WatchTab::Positions => "Positions",
+            WatchTab::Candidates => "Candidates",
+            WatchTab::Capital => "Capital",
+            WatchTab::Journal => "Journal",
+            WatchTab::Llm => "LLM",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            WatchTab::Overview => WatchTab::Positions,
+            WatchTab::Positions => WatchTab::Candidates,
+            WatchTab::Candidates => WatchTab::Capital,
+            WatchTab::Capital => WatchTab::Journal,
+            WatchTab::Journal => WatchTab::Llm,
+            WatchTab::Llm => WatchTab::Overview,
+        }
+    }
+}
+
+struct ScrollState {
+    scroll: u16,
+}
+
+struct WatchUiState {
+    journal_scroll: ScrollState,
+    log_scroll: ScrollState,
+    llm_scroll: ScrollState,
+}
+
+pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    stdout.execute(EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+    terminal.clear()?;
+
+    let mut tab = WatchTab::Overview;
+    let mut ctx = WatchContext::load(&config.rules_path)?;
+    let mut last_refresh = Instant::now();
+    let agent_mode_str = match config.agent_mode {
+        WatchAgentMode::Embedded => "embedded agent",
+        WatchAgentMode::MonitorOnly => "monitor only",
+    };
+    let mut status_msg = agent_mode_str.to_string();
+    let mut scroll = WatchUiState {
+        journal_scroll: ScrollState { scroll: 0 },
+        log_scroll: ScrollState { scroll: 0 },
+        llm_scroll: ScrollState { scroll: 0 },
+    };
+
+    loop {
+        let health = config
+            .agent_health
+            .as_ref()
+            .and_then(|h| h.lock().ok())
+            .map(|g| g.clone())
+            .unwrap_or_default();
+
+        terminal.draw(|f| {
+            draw_ui(
+                f,
+                f.area(),
+                &ctx,
+                tab,
+                &status_msg,
+                &mut scroll,
+                agent_mode_str,
+                config.dry_run,
+                config.simulate,
+                &health,
+            );
+        })?;
+
+        let timeout = REFRESH_INTERVAL.saturating_sub(last_refresh.elapsed());
+        if event::poll(timeout)? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => break,
+                        KeyCode::Tab => tab = tab.next(),
+                        KeyCode::Char('1') => tab = WatchTab::Overview,
+                        KeyCode::Char('2') => tab = WatchTab::Positions,
+                        KeyCode::Char('3') => tab = WatchTab::Candidates,
+                        KeyCode::Char('4') => tab = WatchTab::Capital,
+                        KeyCode::Char('5') => tab = WatchTab::Journal,
+                        KeyCode::Char('6') => tab = WatchTab::Llm,
+                        KeyCode::Char('j') | KeyCode::Down => scroll_tab(tab, &mut scroll, 1),
+                        KeyCode::Char('k') | KeyCode::Up => scroll_tab(tab, &mut scroll, -1),
+                        KeyCode::Char('r') => match WatchContext::load(&config.rules_path) {
+                            Ok(c) => {
+                                ctx = c;
+                                last_refresh = Instant::now();
+                                status_msg = "refreshed".into();
+                            }
+                            Err(e) => status_msg = format!("refresh failed: {e:#}"),
+                        },
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            break
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        } else if last_refresh.elapsed() >= REFRESH_INTERVAL {
+            if let Ok(c) = WatchContext::load(&config.rules_path) {
+                ctx = c;
+            }
+            last_refresh = Instant::now();
+        }
+    }
+
+    disable_raw_mode()?;
+    terminal.backend_mut().execute(LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+    Ok(())
+}
+
+fn scroll_tab(tab: WatchTab, state: &mut WatchUiState, delta: i16) {
+    let scroll = match tab {
+        WatchTab::Journal => &mut state.journal_scroll.scroll,
+        WatchTab::Llm => &mut state.llm_scroll.scroll,
+        WatchTab::Overview => &mut state.log_scroll.scroll,
+        _ => return,
+    };
+    if delta < 0 {
+        *scroll = scroll.saturating_sub(delta.unsigned_abs());
+    } else {
+        *scroll = scroll.saturating_add(delta as u16);
+    }
+}
+
+fn wrap_paragraph<'a>(content: impl Into<ratatui::text::Text<'a>>) -> Paragraph<'a> {
+    Paragraph::new(content).wrap(Wrap { trim: true })
+}
+
+fn panel_block(title: &str) -> Block<'_> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title(format!(" {title} "))
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+}
+
+fn draw_ui(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    ctx: &WatchContext,
+    tab: WatchTab,
+    status_msg: &str,
+    scroll: &mut WatchUiState,
+    agent_mode: &str,
+    dry_run: bool,
+    simulate: bool,
+    health: &crate::ui::health::AgentHealth,
+) {
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(4),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    f.render_widget(wrap_paragraph(header_line(ctx, agent_mode, dry_run, simulate)), outer[0]);
+
+    let titles: Vec<Line> = WatchTab::all()
+        .iter()
+        .map(|t| Line::from(t.title()))
+        .collect();
+    let tabs = Tabs::new(titles)
+        .style(Style::default().fg(Color::DarkGray))
+        .highlight_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+        .select(tab as usize);
+    f.render_widget(tabs, outer[1]);
+
+    match tab {
+        WatchTab::Overview => render_overview(f, outer[2], ctx, agent_mode, dry_run, simulate, health, scroll),
+        WatchTab::Positions => {
+            f.render_widget(
+                wrap_paragraph(position_lines(ctx)).block(panel_block("Open Positions")),
+                outer[2],
+            );
+        }
+        WatchTab::Candidates => {
+            f.render_widget(
+                wrap_paragraph(candidate_lines(ctx)).block(panel_block("Scan / Candidates")),
+                outer[2],
+            );
+        }
+        WatchTab::Capital => {
+            f.render_widget(
+                wrap_paragraph(capital_lines(ctx)).block(panel_block("Capital Ledger")),
+                outer[2],
+            );
+        }
+        WatchTab::Journal => {
+            let bottom = ctx.journal_file().display().to_string();
+            render_scroll(
+                f,
+                outer[2],
+                journal_lines(ctx),
+                scroll.journal_scroll.scroll,
+                "Journal",
+                bottom,
+            );
+        }
+        WatchTab::Llm => {
+            render_scroll(
+                f,
+                outer[2],
+                llm_lines(ctx),
+                scroll.llm_scroll.scroll,
+                "LLM Review",
+                String::new(),
+            );
+        }
+    }
+
+    let footer = Line::from(vec![
+        ratatui::text::Span::styled(" Tab/1-6 ", Style::default().fg(Color::DarkGray)),
+        ratatui::text::Span::styled("j/k scroll ", Style::default().fg(Color::DarkGray)),
+        ratatui::text::Span::styled("r refresh ", Style::default().fg(Color::DarkGray)),
+        ratatui::text::Span::styled("q quit ", Style::default().fg(Color::DarkGray)),
+        ratatui::text::Span::styled(status_msg, Style::default().fg(Color::DarkGray)),
+    ]);
+    f.render_widget(wrap_paragraph(footer), outer[3]);
+}
+
+fn render_overview(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    ctx: &WatchContext,
+    agent_mode: &str,
+    dry_run: bool,
+    simulate: bool,
+    health: &crate::ui::health::AgentHealth,
+    scroll: &mut WatchUiState,
+) {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(8),
+            Constraint::Length(7),
+            Constraint::Length(6),
+            Constraint::Min(3),
+        ])
+        .split(area);
+
+    let top = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(rows[0]);
+
+    let agent_title = if simulate {
+        "Agent (simulation)"
+    } else if dry_run {
+        "Agent (dry-run)"
+    } else {
+        "Agent"
+    };
+    f.render_widget(
+        wrap_paragraph(overview_agent_lines(ctx, health, agent_mode))
+            .block(panel_block(agent_title)),
+        top[0],
+    );
+    f.render_widget(
+        wrap_paragraph(rules_summary(ctx)).block(panel_block("Playbook")),
+        top[1],
+    );
+
+    f.render_widget(
+        wrap_paragraph(capital_lines(ctx)).block(panel_block("Capital")),
+        rows[1],
+    );
+
+    f.render_widget(
+        wrap_paragraph(entry_attempt_lines(ctx)).block(panel_block("Last Entry")),
+        rows[2],
+    );
+
+    render_scroll(
+        f,
+        rows[3],
+        log_lines(ctx),
+        scroll.log_scroll.scroll,
+        "Agent Log",
+        String::new(),
+    );
+}
+
+fn render_scroll(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    lines: Vec<Line<'static>>,
+    scroll_pos: u16,
+    title: &str,
+    bottom: String,
+) {
+    let line_count = lines.len() as u16;
+    let scroll = scroll_pos.min(line_count.saturating_sub(1));
+    let vertical = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(area);
+
+    let mut block = panel_block(title);
+    if !bottom.is_empty() {
+        block = block.title_bottom(format!(" {bottom} "));
+    }
+
+    f.render_widget(
+        wrap_paragraph(lines)
+            .style(Style::default().fg(Color::Gray))
+            .scroll((scroll, 0))
+            .block(block),
+        vertical[0],
+    );
+
+    let mut sb = ScrollbarState::new(line_count as usize).position(scroll as usize);
+    f.render_stateful_widget(
+        Scrollbar::new(ScrollbarOrientation::VerticalRight),
+        vertical[1],
+        &mut sb,
+    );
+}
+
+pub fn short_path(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
