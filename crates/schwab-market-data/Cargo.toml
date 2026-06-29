@@ -1,7 +1,7 @@
 [package]
 name = "schwab-api-cli-market-data"
 description = "Charles Schwab Market Data API client for schwab-api-cli (Production v1)"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -18,7 +18,7 @@ name = "schwab_market_data"
 path = "src/lib.rs"
 
 [dependencies]
-schwab-api-cli-core = { path = "../schwab-api", version = "0.1.0" }
+schwab-api-cli-core = { path = "../schwab-api", version = "0.1.1" }
 serde_json.workspace = true
 urlencoding = "2"
 
