@@ -66,4 +66,26 @@ impl RuntimeConfig {
         let client = SchwabClient::new(config);
         Ok(Arc::new(MarketDataApi::new(client)))
     }
+
+    /// Agent-mode runtime for order execution (used by `schwab-trader`).
+    pub fn for_agent_trading(
+        output: OutputFormat,
+        yes: bool,
+        dry_run: bool,
+        trust: bool,
+        suppress_tick_output: bool,
+        safety: SafetyContext,
+        sink: OutputSink,
+    ) -> Self {
+        Self {
+            mode: CliMode::Agent,
+            output,
+            yes,
+            dry_run,
+            trust,
+            suppress_tick_output,
+            safety,
+            sink,
+        }
+    }
 }

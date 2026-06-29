@@ -183,7 +183,13 @@ fn build_system_prompt(
     } else {
         ""
     };
-    format!("{instructions}{patch_help}{feed_help}\n{RESPONSE_JSON_SCHEMA}")
+    let heat_help = if matches!(phase, "selection" | "web") {
+        "\n\ncapital_check includes portfolio_heat_pct, heat_headroom_pct, and heat_ceiling_pct. \
+         Do not approve entries that would push portfolio_heat_pct near or above heat_ceiling_pct."
+    } else {
+        ""
+    };
+    format!("{instructions}{patch_help}{feed_help}{heat_help}\n{RESPONSE_JSON_SCHEMA}")
 }
 
 fn llm_review_json_schema() -> Value {

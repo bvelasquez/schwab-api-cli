@@ -829,6 +829,27 @@ impl TraderRules {
             .collect()
     }
 
+    /// Non-fatal configuration hints surfaced by `rules validate` and agent startup.
+    pub fn validation_hints(&self) -> Vec<String> {
+        let mut hints = Vec::new();
+        if !self.playbook.closure.no_overnight_holds
+            && !self.playbook.closure.flatten_by_et.trim().is_empty()
+        {
+            hints.push(format!(
+                "flatten_by_et is set to `{}` but no_overnight_holds is false — EOD flatten will not trigger. \
+                 Set no_overnight_holds: true to enable EOD flattening.",
+                self.playbook.closure.flatten_by_et.trim()
+            ));
+        }
+        hints
+    }
+
+    pub fn log_validation_hints(&self) {
+        for hint in self.validation_hints() {
+            tracing::warn!(target: "trader", "{hint}");
+        }
+    }
+
     pub fn save(&self, path: &Path) -> Result<()> {
         let raw = serde_yaml::to_string(self)
             .with_context(|| format!("serialize rules {}", path.display()))?;
@@ -914,18 +935,30 @@ impl Default for TraderRules {
 
 pub fn validate_rules_file(path: &Path) -> Result<serde_json::Value> {
     let rules = TraderRules::load(path)?;
+    let hints = rules.validation_hints();
     Ok(serde_json::json!({
         "valid": true,
         "trader_id": rules.trader_id,
         "account_count": rules.accounts.len(),
         "watchlist_size": rules.all_watchlist_symbols().len(),
         "fixed_sleeve_cap_usd": rules.capital.fixed_sleeve_cap_usd,
+        "hints": hints,
     }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flatten_hint_when_overnight_holds_allowed() {
+        let mut rules = TraderRules::default();
+        rules.playbook.closure.no_overnight_holds = false;
+        rules.playbook.closure.flatten_by_et = "15:55".into();
+        let hints = rules.validation_hints();
+        assert_eq!(hints.len(), 1);
+        assert!(hints[0].contains("no_overnight_holds is false"));
+    }
 
     #[test]
     fn example_rules_parse() {
