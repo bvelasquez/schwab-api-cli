@@ -7,11 +7,13 @@ Crate names on crates.io (the names `schwab-api` and `schwab-cli` are taken by o
 | `crates/schwab-api` | `schwab-api-cli-core` | lib `schwab_api` |
 | `crates/schwab-market-data` | `schwab-api-cli-market-data` | lib `schwab_market_data` |
 | `crates/schwab-cli` | **`schwab-api-cli`** | bin `schwab` |
+| `crates/schwab-trader` | **`schwab-trader`** | bin `schwab-trader` |
 
 Users install with:
 
 ```bash
 cargo install schwab-api-cli
+cargo install schwab-trader
 ```
 
 ## API token (copy from UI, not download)
@@ -29,6 +31,8 @@ bash scripts/wait-for-crate.sh schwab-api-cli-core
 bash scripts/publish-crate.sh schwab-api-cli-market-data
 bash scripts/wait-for-crate.sh schwab-api-cli-market-data
 bash scripts/publish-crate.sh schwab-api-cli
+bash scripts/wait-for-crate.sh schwab-api-cli
+bash scripts/publish-crate.sh schwab-trader
 ```
 
 ## CI

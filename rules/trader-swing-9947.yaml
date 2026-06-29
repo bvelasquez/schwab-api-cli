@@ -1,0 +1,251 @@
+# Equity swing trader — beneficiary account 9947 (dedicated sleeve).
+# Auth: schwab auth login (shared token store with schwab CLI)
+# Validate: schwab-trader rules validate rules/trader-swing-9947.yaml --json
+# Dry tick: schwab-trader agent run rules/trader-swing-9947.yaml --dry-run --once --json
+# Sim tick: schwab-trader agent run rules/trader-swing-9947.yaml --simulate --once --json
+# Live: schwab-trader agent run rules/trader-swing-9947.yaml --trust --yes --json
+
+version: 1
+trader_id: swing-beneficiary-9947
+
+accounts:
+  - hash: 1BA372D01BE13B486750C8433AFDCFB96C2A694770C4688417F0BEA6B676B25B
+    label: Beneficiary account ending 9947 — equity swing sleeve
+    type: margin
+    enabled: true
+
+capital:
+  # v1: hard ceiling on market value of positions opened by this trader
+  fixed_sleeve_cap_usd: 4000
+
+  # Max deploy from free cash (after options reserve + floor)
+  max_pct_of_free_cash: 80
+
+  min_cash_floor_usd: 500
+
+  options_risk:
+    # Options agent on same account — reserve worst-case spread loss before equity buys
+    rules_file: rules/options-pilot-9947.yaml
+    fallback_reserve_usd: 500
+    buffer_pct: 10
+
+  # Never trade or count toward swing sleeve
+  core_holdings:
+    - SGOV
+    - JPST
+    - JAAA
+    - SCHD
+    - VYM
+
+schedule:
+  tick_interval_seconds: 90
+  market_hours_only: true
+  timezone: America/New_York
+  premarket_scan: true
+  premarket_start_et: "08:00"
+  premarket_tick_interval_seconds: 1800
+  premarket_open_grounding_interval_seconds: 900
+  overnight:
+    enabled: true
+    tick_interval_seconds: 3600
+    web_digest: true
+    skip_llm_when_flat: true
+
+playbook:
+  style: swing
+  direction: long
+  holding_period:
+    min_days: 2
+    max_days: 30
+    target_days: 10
+
+  entry:
+    min_price_usd: 5.0
+    min_avg_volume_20d: 500000
+    max_spread_pct: 0.6
+    require_above_sma: [20, 50]
+    rsi_14_range: [35, 68]
+    max_positions: 4
+    max_new_entries_per_day: 1
+    position_size:
+      method: risk_pct
+      risk_per_trade_pct: 0.75
+      max_position_pct: 15.0
+
+  exit:
+    profit_target_pct: 8.0
+    stop_loss_pct: 4.0
+    use_oco_at_entry: true
+    trailing:
+      enabled: true
+      activate_after_profit_pct: 5.0
+      trail_atr_multiple: 2.0
+    time_stop_days: 30
+    time_stop_minutes: 0
+    tighten_on_earnings_within_days: 3
+
+  closure:
+    no_overnight_holds: false
+    flatten_by_et: "15:55"
+    block_entries_after_et: "15:30"
+
+  intraday:
+    min_relative_volume: 1.2
+    momentum_rsi_min: 52.0
+    require_above_sma: [9, 20]
+
+  filters:
+    blocked_symbols: []
+    no_trade_before_earnings_days: 2
+
+  # Short selling: allowed in schema but OFF by default (danger zone).
+  # Requires safety.json allow_short_sales: true and playbook.direction: both
+  short:
+    enabled: false
+    min_avg_volume_20d: 2000000
+    max_spread_pct: 0.4
+
+watchlists:
+  core:
+    - AAPL
+    - MSFT
+    - NVDA
+    - AMD
+    - META
+    - GOOGL
+    - SPY
+    - QQQ
+    - IWM
+    - TQQQ
+    - SQQQ
+  thematic: []
+  dynamic: true
+  max_dynamic_symbols: 5
+
+sources:
+  web:
+    enabled: true
+    pick_budget_per_day: 5
+    require_corroboration: 1
+    providers:
+      - id: perplexity_sonar
+        type: llm_web
+        weight: 1.0
+  # Prefetched URLs/APIs/RSS injected into LLM prompts (see docs/TRADER_RULES.md)
+  feeds:
+    - id: marketwatch_headlines
+      label: MarketWatch Top Stories
+      kind: rss
+      url: https://feeds.marketwatch.com/marketwatch/topstories/
+    - id: cnbc_top
+      label: CNBC Top News
+      kind: rss
+      url: https://www.cnbc.com/id/100003114/device/rss/rss.html
+      phases:
+        - premarket_digest
+        - overnight_digest
+    # Bearer API example (set POLYGON_API_KEY in env, then enable):
+    - id: polygon_market_status
+      label: Polygon market status
+      enabled: false
+      kind: api
+      url: https://api.polygon.io/v1/marketstatus/now
+      auth:
+        kind: bearer
+        token_env: POLYGON_API_KEY
+      phases: [all]
+
+technical:
+  history:
+    period_type: month
+    period: 3
+    frequency_type: daily
+  intraday_history:
+    period_type: day
+    period: 5
+    frequency_type: minute
+  indicators:
+    - sma_20
+    - sma_50
+    - rsi_14
+    - atr_14
+    - volume_sma_20
+
+risk:
+  max_portfolio_heat_pct: 8.0
+  max_drawdown_halt_pct: 10.0
+  max_trades_per_day: 1
+
+execution:
+  entry_order_type: limit
+  entry_limit_basis: ask
+  bracket_mode: post_fill_oco
+  place_bracket_within_seconds: 30
+  oco_duration: GTC
+  require_preview: true
+  wait_for_fill: true
+  fill_timeout_seconds: 600
+  require_bracket_before_entry_resume: true
+
+llm:
+  enabled: true
+  selection_model: google/gemini-2.5-flash
+  monitor_model: google/gemini-2.5-flash
+  web_model: perplexity/sonar
+  learn_model: google/gemini-2.5-flash
+  review_every_ticks: 3
+  web_research_every_reviews: 2
+  learn_every_ticks: 6
+  learn_min_closed_trades: 1
+  max_tokens: 2500
+  veto_entries: true
+  allow_llm_exits: false
+  allow_rule_adaptation: true
+  adaptation_bounds:
+  # LLM may auto-tune within these bounds; Telegram on every change
+    profit_target_pct: { min: 5.0, max: 12.0, max_delta_per_change: 1.0 }
+    stop_loss_pct: { min: 2.5, max: 6.0, max_delta_per_change: 0.5 }
+    trail_atr_multiple: { min: 1.5, max: 3.0, max_delta_per_change: 0.25 }
+    rsi_14_range: { min_low: 30, max_low: 45, min_high: 60, max_high: 75 }
+  immutable_fields:
+    - capital.fixed_sleeve_cap_usd
+    - capital.max_pct_of_free_cash
+    - capital.min_cash_floor_usd
+    - capital.options_risk.fallback_reserve_usd
+    - playbook.direction
+    - playbook.short.enabled
+    - accounts
+  prompts:
+    selection: |
+      You are a conservative swing equity advisor for beneficiary account 9947.
+      Each candidate includes technical_context (SMA, RSI, ATR) and capital_check hints.
+      Approve at most one new long entry per day. Defer on earnings within 2 days,
+      extreme RSI, or weak volume. Never recommend shorts unless playbook.short.enabled.
+    selection_web: |
+      Research US equities suitable for 2-30 day swing trades: momentum with volume,
+      sector leaders, and macro headwinds. Return actionable symbols with brief thesis.
+      Avoid penny stocks and symbols with earnings in the next 2 sessions.
+    monitor: |
+      Monitor open swing positions. Mechanical OCO brackets are live at the broker.
+      Recommend tighten_exits or widen_exits only when news changes the thesis.
+      Do not recommend discretionary market sells unless allow_llm_exits is true.
+    learn: |
+      Analyze recent closed trades in recent_closed_trades and sim_stats.
+      Propose bounded playbook adjustments via rule_patches only (see patch_format).
+      Cite trade symbols, exit_reason, pnl_pct, and hold time. Never change immutable_fields.
+      Prefer small deltas within adaptation_bounds.max_delta_per_change.
+
+notify:
+  telegram:
+    enabled: true
+    notify_every_tick: false
+    notify_on_actions: true
+    notify_on_rule_adaptation: true
+
+# Paper trading (--simulate): separate virtual cash, live quotes for exits
+simulation:
+  starting_cash_usd: 4000
+  allow_rule_adaptation: true
+
+adaptation:
+  live_auto_apply: false

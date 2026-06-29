@@ -32,6 +32,9 @@ plans/local/
 rules/agent-state-*.json
 rules/agent-*.pid
 rules/agent-*.log
+# Equity trader runtime state (per rules file)
+rules/trader-state-*.json
+rules/trader-journal-*.jsonl
 # Legacy shared paths (pre per-file state)
 rules/agent-state.json
 rules/agent.pid

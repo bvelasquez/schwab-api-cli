@@ -1,0 +1,201 @@
+# Intraday equity trader — beneficiary account 9947 (same sleeve as swing).
+# Validate: schwab-trader rules validate rules/trader-intraday-9947.yaml --json
+# Sim:      schwab-trader agent run rules/trader-intraday-9947.yaml --simulate --once --json
+# Watch:    schwab-trader watch --rules-file rules/trader-intraday-9947.yaml --simulate
+
+version: 1
+trader_id: intraday-beneficiary-9947
+
+accounts:
+  - hash: 1BA372D01BE13B486750C8433AFDCFB96C2A694770C4688417F0BEA6B676B25B
+    label: Beneficiary account ending 9947 — intraday equity sleeve
+    type: margin
+    enabled: true
+
+capital:
+  fixed_sleeve_cap_usd: 4000
+  max_pct_of_free_cash: 80
+  min_cash_floor_usd: 500
+  options_risk:
+    rules_file: rules/options-pilot-9947.yaml
+    fallback_reserve_usd: 500
+    buffer_pct: 10
+  core_holdings:
+    - SGOV
+    - JPST
+    - JAAA
+    - SCHD
+    - VYM
+
+schedule:
+  tick_interval_seconds: 30
+  market_hours_only: true
+  timezone: America/New_York
+  premarket_scan: false
+  overnight:
+    enabled: false
+    tick_interval_seconds: 3600
+    web_digest: false
+    skip_llm_when_flat: true
+
+playbook:
+  style: intraday
+  direction: long
+  holding_period:
+    min_days: 0
+    max_days: 1
+    target_days: 0
+
+  entry:
+    min_price_usd: 10.0
+    min_avg_volume_20d: 1000000
+    max_spread_pct: 0.35
+    require_above_sma: [9, 20]
+    rsi_14_range: [45, 72]
+    max_positions: 2
+    max_new_entries_per_day: 3
+    position_size:
+      method: risk_pct
+      risk_per_trade_pct: 0.5
+      max_position_pct: 20.0
+
+  exit:
+    profit_target_pct: 1.2
+    stop_loss_pct: 0.8
+    use_oco_at_entry: true
+    trailing:
+      enabled: true
+      activate_after_profit_pct: 0.6
+      trail_atr_multiple: 1.5
+    time_stop_days: 1
+    time_stop_minutes: 90
+    tighten_on_earnings_within_days: 1
+
+  closure:
+    no_overnight_holds: true
+    flatten_by_et: "15:55"
+    block_entries_after_et: "15:30"
+
+  intraday:
+    min_relative_volume: 1.25
+    momentum_rsi_min: 55.0
+    require_above_sma: [9, 20]
+
+  filters:
+    blocked_symbols: []
+    no_trade_before_earnings_days: 1
+
+  short:
+    enabled: false
+    min_avg_volume_20d: 2000000
+    max_spread_pct: 0.4
+
+watchlists:
+  core:
+    - NVDA
+    - AMD
+    - TSLA
+    - META
+    - AAPL
+    - MSFT
+    - QQQ
+    - SPY
+  thematic: []
+  dynamic: false
+  max_dynamic_symbols: 0
+
+sources:
+  web:
+    enabled: false
+    pick_budget_per_day: 0
+    require_corroboration: 0
+    providers: []
+
+technical:
+  history:
+    period_type: month
+    period: 3
+    frequency_type: daily
+  intraday_history:
+    period_type: day
+    period: 1
+    frequency_type: minute
+  indicators:
+    - sma_9
+    - sma_20
+    - rsi_14
+    - atr_14
+    - volume_sma_20
+
+risk:
+  max_portfolio_heat_pct: 6.0
+  max_drawdown_halt_pct: 8.0
+  max_trades_per_day: 3
+
+execution:
+  entry_order_type: limit
+  entry_limit_basis: ask
+  bracket_mode: post_fill_oco
+  place_bracket_within_seconds: 15
+  oco_duration: DAY
+  require_preview: true
+  wait_for_fill: true
+  fill_timeout_seconds: 120
+  require_bracket_before_entry_resume: true
+
+llm:
+  enabled: true
+  selection_model: anthropic/claude-sonnet-4
+  monitor_model: google/gemini-2.5-flash
+  web_model: perplexity/sonar
+  learn_model: anthropic/claude-sonnet-4
+  review_every_ticks: 2
+  web_research_every_reviews: 4
+  learn_every_ticks: 4
+  learn_min_closed_trades: 1
+  max_tokens: 2500
+  veto_entries: true
+  allow_llm_exits: false
+  allow_rule_adaptation: true
+  adaptation_bounds:
+    profit_target_pct: { min: 0.6, max: 2.5, max_delta_per_change: 0.3 }
+    stop_loss_pct: { min: 0.4, max: 1.5, max_delta_per_change: 0.2 }
+    trail_atr_multiple: { min: 1.0, max: 2.5, max_delta_per_change: 0.25 }
+    rsi_14_range: { min_low: 40, max_low: 50, min_high: 65, max_high: 78 }
+  immutable_fields:
+    - capital.fixed_sleeve_cap_usd
+    - capital.max_pct_of_free_cash
+    - capital.min_cash_floor_usd
+    - capital.options_risk.fallback_reserve_usd
+    - playbook.direction
+    - playbook.short.enabled
+    - playbook.closure.no_overnight_holds
+    - playbook.style
+    - accounts
+  prompts:
+    selection: |
+      Intraday momentum advisor for account 9947. Candidates include minute-bar technicals
+      and relative_volume. Approve only high-conviction setups with volume confirmation.
+      No entries after block_entries_after_et. Flatten all positions before close.
+    selection_web: |
+      (disabled for intraday)
+    monitor: |
+      Monitor open intraday positions. Tighten exits into the close. Flag positions that
+      must flatten by flatten_by_et. No discretionary sells unless allow_llm_exits is true.
+    learn: |
+      Review recent_closed_trades from today. Tune profit_target_pct, stop_loss_pct, RSI band,
+      and trail_atr_multiple within adaptation_bounds. Cite exit_reason and pnl_pct per trade.
+
+notify:
+  telegram:
+    enabled: true
+    notify_every_tick: false
+    notify_on_actions: true
+    notify_on_rule_adaptation: true
+
+simulation:
+  starting_cash_usd: 4000
+  allow_rule_adaptation: true
+
+adaptation:
+  live_auto_apply: false

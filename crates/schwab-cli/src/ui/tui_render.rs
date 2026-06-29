@@ -3,7 +3,7 @@
 use chrono::Utc;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Gauge, ListItem};
+use ratatui::widgets::Gauge;
 
 use super::agent_health::{format_tick_error, SharedAgentHealth};
 use super::context::DashboardContext;
@@ -248,7 +248,7 @@ pub fn agent_status_lines(
             lines.push(Line::from(vec![
                 Span::styled("  last error ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
-                    truncate_err(&format_tick_error(err), 56),
+                    format_tick_error(err),
                     Style::default().fg(Color::Red),
                 ),
             ]));
@@ -354,7 +354,7 @@ pub fn risk_gauge(ctx: &DashboardContext) -> Gauge<'static> {
         .label(format!("risk ${used:.0} / ${max:.0}"))
 }
 
-pub fn activity_items(ctx: &DashboardContext) -> Vec<ListItem<'static>> {
+pub fn activity_lines(ctx: &DashboardContext) -> Vec<Line<'static>> {
     ctx.state
         .last_actions
         .iter()
@@ -363,21 +363,21 @@ pub fn activity_items(ctx: &DashboardContext) -> Vec<ListItem<'static>> {
         .map(|act| {
             let time = act.at.format("%H:%M").to_string();
             let detail = format_action_detail(&act.action, &act.detail);
-            ListItem::new(Line::from(vec![
+            Line::from(vec![
                 Span::styled(format!("{time} "), Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     format!("{:<14} ", act.action),
                     Style::default().add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(detail),
-            ]))
+            ])
         })
         .collect()
 }
 
-pub fn position_items(ctx: &DashboardContext) -> Vec<ListItem<'static>> {
+pub fn position_lines(ctx: &DashboardContext) -> Vec<Line<'static>> {
     if ctx.state.open_positions.is_empty() {
-        return vec![ListItem::new(Span::styled(
+        return vec![Line::from(Span::styled(
             "(flat — no open positions)",
             Style::default().fg(Color::DarkGray),
         ))];
@@ -396,7 +396,7 @@ pub fn position_items(ctx: &DashboardContext) -> Vec<ListItem<'static>> {
                 .map(|c| format!(" · cr ${c:.2}"))
                 .unwrap_or_default();
             let opened = ago_secs((Utc::now() - p.opened_at).num_seconds());
-            ListItem::new(Line::from(vec![
+            Line::from(vec![
                 Span::styled(
                     format!("{}{} ", p.underlying, contracts),
                     Style::default()
@@ -409,7 +409,7 @@ pub fn position_items(ctx: &DashboardContext) -> Vec<ListItem<'static>> {
                 )),
                 Span::styled("holding", Style::default().fg(Color::Green)),
                 Span::styled(format!(" · {opened}"), Style::default().fg(Color::DarkGray)),
-            ]))
+            ])
         })
         .collect()
 }
@@ -548,7 +548,7 @@ fn format_llm_review_lines(
         if !reason.is_empty() {
             lines.push(Line::from(vec![
                 Span::styled("  why: ", Style::default().fg(Color::DarkGray)),
-                Span::raw(truncate_str(reason, 200)),
+                Span::raw(reason.to_string()),
             ]));
         }
     }
@@ -557,7 +557,7 @@ fn format_llm_review_lines(
         if !commentary.is_empty() {
             lines.push(Line::from(vec![
                 Span::styled("  market: ", Style::default().fg(Color::DarkGray)),
-                Span::raw(truncate_str(commentary, 240)),
+                Span::raw(commentary.to_string()),
             ]));
         }
     }
@@ -594,14 +594,6 @@ fn format_llm_review_lines(
     }
 
     lines
-}
-
-fn truncate_str(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max.saturating_sub(1)])
-    }
 }
 
 pub fn rules_detail_lines(ctx: &DashboardContext) -> Vec<Line<'static>> {
@@ -823,14 +815,7 @@ fn format_action_detail(action: &str, detail: &serde_json::Value) -> String {
         "overnight_digest" => detail
             .get("market_commentary")
             .and_then(|v| v.as_str())
-            .map(|s| {
-                let t: String = s.chars().take(50).collect();
-                if s.len() > 50 {
-                    format!("{t}…")
-                } else {
-                    t
-                }
-            })
+            .map(str::to_string)
             .unwrap_or_else(|| "digest".into()),
         _ => action.to_string(),
     }
