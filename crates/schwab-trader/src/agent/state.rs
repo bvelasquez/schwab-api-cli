@@ -60,6 +60,15 @@ pub struct TraderState {
     pub last_premarket_digest_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub open_playbook: Option<Value>,
+    /// Active regime profile name (e.g. low_vol_trend, baseline).
+    #[serde(default)]
+    pub active_profile: Option<String>,
+    #[serde(default)]
+    pub active_profile_source: Option<String>,
+    #[serde(default)]
+    pub active_profile_reason: Option<String>,
+    #[serde(default)]
+    pub last_regime: Option<Value>,
     /// Consecutive entries where max_position_pct (not risk_pct) bound sizing — sim diagnostics.
     #[serde(default)]
     pub sizing_max_pct_binding_streak: u32,

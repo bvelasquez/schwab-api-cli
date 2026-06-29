@@ -158,6 +158,14 @@ pub enum SimCommands {
         #[arg(long)]
         rules_file: PathBuf,
     },
+    /// Full analysis report from journal + ledger (for post-simulation review)
+    Report {
+        #[arg(long)]
+        rules_file: PathBuf,
+        /// Write report JSON to this path (stdout via --json if omitted)
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     /// Reset paper portfolio and trade history
     Reset {
         #[arg(long)]

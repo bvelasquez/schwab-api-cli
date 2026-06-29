@@ -104,7 +104,26 @@ After closed trades (sim or live), the agent runs a **learn** phase (`learn_mode
 - `closed_trades_since_learn >= learn_min_closed_trades`, or
 - `learn_every_ticks` elapsed with pending closed trades
 
-The LLM receives `recent_closed_trades`, `sim_stats`, current `adaptable_playbook`, and `adaptation_bounds`. Patches are validated, clamped, and written to the rules YAML (simulate + live; dry-run journals only).
+The LLM receives `recent_closed_trades`, `sim_stats`, `regime`, `profile_catalog`, current `adaptable_playbook`, and `adaptation_bounds`. Patches are validated, clamped, and written to the rules YAML (simulate + live; dry-run journals only).
+
+## Regime-aware adaptation
+
+Each regular-hours tick:
+
+1. **Regime detection** — SPY trend (SMA 50/200), VIX level, realized-vol percentile → `low_vol_trend` | `elevated_vol` | `high_vol_chop` | `neutral`
+2. **Profile selection** — mechanical map (`adaptation.profile_map`) picks a named profile; LLM may override via `profile_selection` in selection/monitor/learn reviews
+3. **Effective playbook** — baseline `playbook` merged with profile `overrides` (in-memory; baseline YAML unchanged)
+4. **Monitor OCO adjust** — `tighten_exits` / `widen_exits` recommendations cancel/replace broker OCO within bounds
+5. **ATR-normalized sizing** — profiles may set `position_size.method: atr_normalized` to scale risk down in high vol
+
+Built-in profiles (when `adaptation.profiles` omitted): `baseline`, `low_vol_trend`, `high_vol_chop`, `elevated_vol`.
+
+| Profile | Typical use |
+|---------|-------------|
+| `baseline` | Default playbook from YAML |
+| `low_vol_trend` | Wider targets, normal size, calm uptrend |
+| `elevated_vol` | Reduced ATR-scaled size, moderate brackets |
+| `high_vol_chop` | No new entries, defensive size, wider stops |
 
 ```bash
 # Intraday paper trading + learn loop
@@ -119,7 +138,22 @@ schwab-trader agent run rules/trader-intraday-9947.yaml --simulate --once --json
 | **Simulation** | `--simulate` | None (instant paper fill) | Virtual ledger in state file | Yes — `sim stats` |
 | **Live** | `--trust --yes` | Real Schwab orders | Broker + state | Real P&L |
 
-`--dry-run` and `--simulate` are mutually exclusive. Simulation uses **live quotes** for mark-to-market and stop/profit/time exits, but debits a separate paper cash balance (`simulation.starting_cash_usd` in rules). LLM rule adaptation can run against simulated outcomes when `simulation.allow_rule_adaptation` is true.
+`--dry-run` and `--simulate` are mutually exclusive. Simulation uses **live quotes** for mark-to-market and stop/profit/time exits (including ATR trailing), but debits a separate paper cash balance (`simulation.starting_cash_usd` in rules). LLM rule adaptation can run against simulated outcomes when `simulation.allow_rule_adaptation` is true.
+
+### Simulation analysis
+
+Each `--simulate` tick appends a `sim_tick_summary` event to the journal. Entries/exits log `sim_entry_filled` / `sim_exit_filled` with brackets, P&L, profile, and regime.
+
+```bash
+# Quick ROI
+schwab-trader sim stats --rules-file rules/trader-swing-9947.yaml --json
+
+# Full week review (journal + ledger + adaptations + equity curve)
+schwab-trader sim report --rules-file rules/trader-swing-9947.yaml --json
+
+# Export to file for offline analysis
+schwab-trader sim report --rules-file rules/trader-swing-9947.yaml --output sim-week-report.json
+```
 
 ## Quick start
 
@@ -164,9 +198,11 @@ schwab-trader watch --rules-file rules/trader-swing-9947.yaml --trust --yes
 
 ## LLM governance
 
-- **Human:** initial `trader-rules.yaml` (accounts, capital caps, direction, short toggle)
-- **Automatic (sim):** bounded playbook tuning when `simulation.allow_rule_adaptation` is true
-- **Automatic (live):** only when `adaptation.live_auto_apply: true` (default **false**); Telegram on apply
+- **Human:** initial `trader-rules.yaml` (accounts, capital caps, direction, short toggle, custom profiles)
+- **Automatic (regime):** mechanical profile from SPY/VIX/realized vol each tick when `adaptation.regime_auto_select`
+- **Automatic (LLM):** `profile_selection` + bounded `rule_patches`; monitor OCO tighten/widen
+- **Automatic (sim):** bounded baseline YAML tuning when `simulation.allow_rule_adaptation` is true
+- **Automatic (live):** baseline YAML patches only when `adaptation.live_auto_apply: true` (default **false**); Telegram on apply
 - **Immutable by LLM:** `capital.fixed_sleeve_cap_usd`, `max_pct_of_free_cash`, `playbook.direction`, `accounts`
 
 ## Data sources (`sources.feeds`)

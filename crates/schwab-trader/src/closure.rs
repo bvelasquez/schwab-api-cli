@@ -42,6 +42,13 @@ pub fn is_manual_exit_reason(reason: &str) -> bool {
     matches!(reason, "time_stop" | "eod_flatten" | "overnight_flatten")
 }
 
+/// True when a live Schwab OCO is working. Sim positions use `None` or `"simulated"`.
+pub fn has_working_broker_oco(pos: &SwingPosition) -> bool {
+    pos.oco_order_id
+        .as_deref()
+        .is_some_and(|id| !id.eq_ignore_ascii_case("simulated"))
+}
+
 pub fn exit_reason_for_position(
     rules: &TraderRules,
     pos: &SwingPosition,
@@ -60,8 +67,8 @@ pub fn exit_reason_for_position(
         return Some("eod_flatten");
     }
 
-    // Stop/target: only when no working OCO (broker handles otherwise).
-    if pos.oco_order_id.is_none() {
+    // Stop/target: quote evaluation when no live broker OCO (sim + unbracketed).
+    if !has_working_broker_oco(pos) {
         if last <= pos.stop_price {
             return Some("stop_loss");
         }
@@ -255,7 +262,11 @@ async fn process_trailing_stops(
     let positions: Vec<SwingPosition> = state.open_positions.values().cloned().collect();
 
     for pos in positions {
-        let Some(oco_id) = &pos.oco_order_id else {
+        let Some(oco_id) = pos
+            .oco_order_id
+            .as_ref()
+            .filter(|_| has_working_broker_oco(&pos))
+        else {
             continue;
         };
 

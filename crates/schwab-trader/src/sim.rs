@@ -1,5 +1,6 @@
 //! Paper-trading ledger: simulated fills, exits, and ROI (no Schwab orders).
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::Result;
@@ -14,6 +15,7 @@ use crate::capital::exit_prices;
 use crate::closure::exit_reason_for_position;
 use crate::journal;
 use crate::rules::TraderRules;
+use crate::technical::fetch_technical_snapshot;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimLedger {
@@ -38,6 +40,16 @@ pub struct ClosedSimTrade {
     pub pnl_pct: f64,
     pub exit_reason: String,
     pub hold_days: u32,
+    #[serde(default)]
+    pub hold_minutes: u32,
+    #[serde(default)]
+    pub stop_price_at_exit: f64,
+    #[serde(default)]
+    pub profit_limit_at_exit: f64,
+    #[serde(default)]
+    pub active_profile: Option<String>,
+    #[serde(default)]
+    pub regime_class: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +74,10 @@ pub struct SimStats {
     pub avg_win_usd: f64,
     pub avg_loss_usd: f64,
     pub max_drawdown_pct: f64,
+    #[serde(default)]
+    pub exit_reason_counts: HashMap<String, u32>,
+    #[serde(default)]
+    pub expectancy_usd: f64,
 }
 
 pub fn ensure_ledger<'a>(state: &'a mut TraderState, rules: &TraderRules) -> &'a mut SimLedger {
@@ -119,11 +135,73 @@ pub fn record_sim_entry(
             profit_limit,
             stop_risk_usd: quantity * (fill_price - stop_px).max(0.0),
             market_value_usd: cost,
-            oco_order_id: Some("simulated".into()),
+            // No broker OCO in sim — brackets evaluated from quotes each tick.
+            oco_order_id: None,
             exit_plan_version: 1,
         },
     );
     Ok(())
+}
+
+/// ATR trailing stop updates (mirrors live OCO tighten logic without broker orders).
+pub async fn process_sim_trailing_stops(
+    rules_path: &Path,
+    rules: &TraderRules,
+    state: &mut TraderState,
+    market: &Arc<MarketDataApi>,
+) -> Result<Vec<Value>> {
+    if !rules.playbook.exit.trailing.enabled || state.open_positions.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let positions: Vec<SwingPosition> = state.open_positions.values().cloned().collect();
+    let mut updates = Vec::new();
+
+    for pos in positions {
+        let snap = fetch_technical_snapshot(market, rules, &pos.symbol).await?;
+        let last = snap.last;
+        if last <= 0.0 || pos.entry_price <= 0.0 {
+            continue;
+        }
+
+        let profit_pct = ((last - pos.entry_price) / pos.entry_price) * 100.0;
+        if profit_pct < rules.playbook.exit.trailing.activate_after_profit_pct {
+            continue;
+        }
+
+        let atr = snap.atr_14.unwrap_or(0.0);
+        if atr <= 0.0 {
+            continue;
+        }
+
+        let trail = rules.playbook.exit.trailing.trail_atr_multiple;
+        let new_stop = last - trail * atr;
+        if new_stop <= pos.stop_price {
+            continue;
+        }
+
+        if let Some(p) = state.open_positions.get_mut(&pos.position_id) {
+            p.stop_price = new_stop;
+            p.exit_plan_version += 1;
+        }
+
+        let event = json!({
+            "symbol": pos.symbol,
+            "position_id": pos.position_id,
+            "action": "sim_trailing_stop_tightened",
+            "old_stop": pos.stop_price,
+            "new_stop": new_stop,
+            "profit_pct": profit_pct,
+            "last": last,
+        });
+        updates.push(event.clone());
+        journal::append_event(rules_path, "sim_trailing_stop_updated", event)?;
+    }
+
+    if !updates.is_empty() {
+        save_state(rules_path, state)?;
+    }
+    Ok(updates)
 }
 
 pub async fn process_sim_exits(
@@ -136,6 +214,15 @@ pub async fn process_sim_exits(
         return Ok(vec![]);
     }
     ensure_ledger(state, rules);
+
+    let _ = process_sim_trailing_stops(rules_path, rules, state, market).await?;
+
+    let regime_class = state
+        .last_regime
+        .as_ref()
+        .and_then(|r| r.get("class"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
 
     let symbols: Vec<String> = state
         .open_positions
@@ -168,11 +255,11 @@ pub async fn process_sim_exits(
             continue;
         };
 
-        // Mark to market
         if let Some(p) = state.open_positions.get_mut(&pos_id) {
             p.market_value_usd = p.quantity * last;
         }
 
+        let hold_minutes = (Utc::now() - pos.opened_at).num_minutes().max(0) as u32;
         let hold_days = (Utc::now() - pos.opened_at).num_days().max(0) as u32;
         let exit_reason = exit_reason_for_position(rules, &pos, last);
 
@@ -180,11 +267,7 @@ pub async fn process_sim_exits(
             continue;
         };
 
-        let exit_price = match reason {
-            "stop_loss" => pos.stop_price,
-            "profit_target" => pos.profit_limit,
-            _ => last,
-        };
+        let exit_price = sim_fill_price(reason, &pos, last);
         let proceeds = pos.quantity * exit_price;
         let pnl = proceeds - (pos.quantity * pos.entry_price);
         let pnl_pct = if pos.entry_price > 0.0 {
@@ -207,6 +290,11 @@ pub async fn process_sim_exits(
                 pnl_pct,
                 exit_reason: reason.to_string(),
                 hold_days,
+                hold_minutes,
+                stop_price_at_exit: pos.stop_price,
+                profit_limit_at_exit: pos.profit_limit,
+                active_profile: state.active_profile.clone(),
+                regime_class: regime_class.clone(),
             });
         }
 
@@ -214,22 +302,35 @@ pub async fn process_sim_exits(
         state.closed_trades_since_learn += 1;
         exits.push(json!({
             "symbol": pos.symbol,
+            "trade_id": pos_id,
             "exit_reason": reason,
             "exit_price": exit_price,
+            "last": last,
             "pnl_usd": pnl,
             "pnl_pct": pnl_pct,
+            "stop_price": pos.stop_price,
+            "profit_limit": pos.profit_limit,
         }));
 
         journal::append_event(
             rules_path,
             "sim_exit_filled",
             json!({
+                "trade_id": pos_id,
                 "symbol": pos.symbol,
+                "quantity": pos.quantity,
+                "entry_price": pos.entry_price,
                 "exit_reason": reason,
                 "exit_price": exit_price,
+                "last": last,
                 "pnl_usd": pnl,
                 "pnl_pct": pnl_pct,
                 "hold_days": hold_days,
+                "hold_minutes": hold_minutes,
+                "stop_price": pos.stop_price,
+                "profit_limit": pos.profit_limit,
+                "active_profile": state.active_profile,
+                "regime_class": regime_class,
             }),
         )?;
     }
@@ -237,6 +338,15 @@ pub async fn process_sim_exits(
     snapshot_equity(state, rules);
     save_state(rules_path, state)?;
     Ok(exits)
+}
+
+/// Stop fills at stop price; target at limit; discretionary exits at last.
+fn sim_fill_price(reason: &str, pos: &SwingPosition, last: f64) -> f64 {
+    match reason {
+        "stop_loss" => pos.stop_price.min(last),
+        "profit_target" => pos.profit_limit.max(last),
+        _ => last,
+    }
 }
 
 pub fn snapshot_equity(state: &mut TraderState, rules: &TraderRules) {
@@ -290,11 +400,21 @@ pub fn compute_stats(state: &TraderState) -> Option<SimStats> {
     } else {
         losses.iter().map(|t| t.pnl_usd).sum::<f64>() / losses.len() as f64
     };
+    let expectancy = if closed.is_empty() {
+        0.0
+    } else {
+        total_pnl / closed.len() as f64
+    };
     let roi = if ledger.starting_cash_usd > 0.0 {
         (current_equity / ledger.starting_cash_usd - 1.0) * 100.0
     } else {
         0.0
     };
+
+    let mut exit_reason_counts: HashMap<String, u32> = HashMap::new();
+    for t in closed {
+        *exit_reason_counts.entry(t.exit_reason.clone()).or_insert(0) += 1;
+    }
 
     let mut peak = ledger.starting_cash_usd;
     let mut max_dd = 0.0f64;
@@ -320,6 +440,8 @@ pub fn compute_stats(state: &TraderState) -> Option<SimStats> {
         avg_win_usd: avg_win,
         avg_loss_usd: avg_loss,
         max_drawdown_pct: max_dd,
+        exit_reason_counts,
+        expectancy_usd: expectancy,
     })
 }
 
@@ -351,6 +473,7 @@ fn extract_last(raw: &Value, symbol: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rules::TraderRules;
 
     #[test]
     fn sim_tradable_budget_respects_cap() {
@@ -363,5 +486,52 @@ mod tests {
         let rules = TraderRules::default();
         let budget = sim_tradable_budget(&ledger, &rules, 1000.0);
         assert!(budget <= 3000.0);
+    }
+
+    #[test]
+    fn sim_position_triggers_stop_from_quotes() {
+        let rules = TraderRules::default();
+        let pos = SwingPosition {
+            position_id: "TEST|2026".into(),
+            symbol: "NVDA".into(),
+            account_hash: "h".into(),
+            quantity: 10.0,
+            entry_price: 100.0,
+            opened_at: Utc::now(),
+            stop_price: 96.0,
+            profit_limit: 108.0,
+            stop_risk_usd: 40.0,
+            market_value_usd: 1000.0,
+            oco_order_id: None,
+            exit_plan_version: 1,
+        };
+        assert_eq!(
+            exit_reason_for_position(&rules, &pos, 95.0),
+            Some("stop_loss")
+        );
+        assert_eq!(
+            exit_reason_for_position(&rules, &pos, 109.0),
+            Some("profit_target")
+        );
+    }
+
+    #[test]
+    fn sim_fill_price_uses_bracket_levels() {
+        let pos = SwingPosition {
+            position_id: "T".into(),
+            symbol: "A".into(),
+            account_hash: "h".into(),
+            quantity: 1.0,
+            entry_price: 100.0,
+            opened_at: Utc::now(),
+            stop_price: 96.0,
+            profit_limit: 108.0,
+            stop_risk_usd: 4.0,
+            market_value_usd: 100.0,
+            oco_order_id: None,
+            exit_plan_version: 1,
+        };
+        assert!((sim_fill_price("stop_loss", &pos, 90.0) - 90.0).abs() < 0.01);
+        assert!((sim_fill_price("profit_target", &pos, 110.0) - 110.0).abs() < 0.01);
     }
 }
