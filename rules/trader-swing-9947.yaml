@@ -205,6 +205,10 @@ llm:
     profit_target_pct: { min: 5.0, max: 12.0, max_delta_per_change: 1.0 }
     stop_loss_pct: { min: 2.5, max: 6.0, max_delta_per_change: 0.5 }
     trail_atr_multiple: { min: 1.5, max: 3.0, max_delta_per_change: 0.25 }
+    activate_after_profit_pct: { min: 3.0, max: 8.0, max_delta_per_change: 0.5 }
+    risk_per_trade_pct: { min: 0.3, max: 1.2, max_delta_per_change: 0.15 }
+    max_new_entries_per_day: { min: 0, max: 2, max_delta_per_change: 1 }
+    time_stop_days: { min: 5, max: 45, max_delta_per_change: 5 }
     rsi_14_range: { min_low: 30, max_low: 45, min_high: 60, max_high: 75 }
   immutable_fields:
     - capital.fixed_sleeve_cap_usd
@@ -218,6 +222,7 @@ llm:
     selection: |
       You are a conservative swing equity advisor for beneficiary account 9947.
       Each candidate includes technical_context (SMA, RSI, ATR) and capital_check hints.
+      regime and profile_catalog describe market conditions — set profile_selection accordingly.
       Approve at most one new long entry per day. Defer on earnings within 2 days,
       extreme RSI, or weak volume. Never recommend shorts unless playbook.short.enabled.
     selection_web: |
@@ -226,10 +231,13 @@ llm:
       Avoid penny stocks and symbols with earnings in the next 2 sessions.
     monitor: |
       Monitor open swing positions. Mechanical OCO brackets are live at the broker.
-      Recommend tighten_exits or widen_exits only when news changes the thesis.
+      Recommend tighten_exits or widen_exits when news or regime changes the thesis;
+      the agent will adjust OCO stops within bounded limits.
+      Set profile_selection when regime no longer fits the active playbook profile.
       Do not recommend discretionary market sells unless allow_llm_exits is true.
     learn: |
-      Analyze recent closed trades in recent_closed_trades and sim_stats.
+      Analyze recent_closed_trades and sim_stats alongside regime and active_profile.
+      Prefer profile_selection to pick baseline|low_vol_trend|high_vol_chop|elevated_vol when regime shifted.
       Propose bounded playbook adjustments via rule_patches only (see patch_format).
       Cite trade symbols, exit_reason, pnl_pct, and hold time. Never change immutable_fields.
       Prefer small deltas within adaptation_bounds.max_delta_per_change.
@@ -247,4 +255,24 @@ simulation:
   allow_rule_adaptation: true
 
 adaptation:
+  enabled: true
   live_auto_apply: false
+  regime_auto_select: true
+  llm_profile_select: true
+  regime:
+    enabled: true
+    benchmark_symbol: SPY
+    vix_symbol: $VIX
+    vix_low: 15.0
+    vix_high: 25.0
+  monitor_adjustments:
+    enabled: true
+    max_tighten_pct: 2.0
+    max_widen_pct: 1.5
+  default_profile: baseline
+  profile_map:
+    low_vol_trend: low_vol_trend
+    high_vol_chop: high_vol_chop
+    elevated_vol: elevated_vol
+    neutral: baseline
+  # profiles: baseline, low_vol_trend, high_vol_chop, elevated_vol — built-in when omitted

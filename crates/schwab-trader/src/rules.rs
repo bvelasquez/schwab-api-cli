@@ -1,8 +1,11 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+
+use crate::adaptation::PlaybookProfileOverrides;
 
 pub const RULES_VERSION: u32 = 1;
 
@@ -41,8 +44,56 @@ pub struct TraderRules {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AdaptationConfig {
+    /// Master switch for regime profiles, monitor adjustments, and profile selection.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// When false (default), live ticks journal proposed patches but do not write YAML.
     pub live_auto_apply: bool,
+    /// Pick profile from mechanical regime each tick.
+    pub regime_auto_select: bool,
+    /// Allow LLM to override active profile via profile_selection in reviews.
+    pub llm_profile_select: bool,
+    pub regime: RegimeConfig,
+    pub monitor_adjustments: MonitorAdjustmentsConfig,
+    /// Named playbook override sets (baseline uses playbook section as-is).
+    pub profiles: HashMap<String, TradingProfile>,
+    /// Regime class → profile name.
+    pub profile_map: HashMap<String, String>,
+    pub default_profile: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TradingProfile {
+    pub description: String,
+    #[serde(default)]
+    pub overrides: PlaybookProfileOverrides,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RegimeConfig {
+    pub enabled: bool,
+    pub benchmark_symbol: String,
+    pub vix_symbol: String,
+    pub vix_low: f64,
+    pub vix_high: f64,
+    pub realized_vol_lookback: usize,
+    pub realized_vol_history: usize,
+    pub realized_vol_high_percentile: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MonitorAdjustmentsConfig {
+    pub enabled: bool,
+    /// Max stop raise per tighten_exits (percent of entry→stop distance).
+    pub max_tighten_pct: f64,
+    /// Max stop lower per widen_exits (percent of entry→stop distance).
+    pub max_widen_pct: f64,
+    /// Do not tighten stop closer than this % below last price.
+    pub min_stop_distance_from_price_pct: f64,
+    /// Do not widen stop further than this % below last price.
+    pub max_stop_distance_from_price_pct: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,9 +230,14 @@ pub struct EntryConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PositionSizeConfig {
+    /// risk_pct | atr_normalized
     pub method: String,
     pub risk_per_trade_pct: f64,
     pub max_position_pct: f64,
+    /// Reference ATR% for vol scaling when method=atr_normalized.
+    pub atr_baseline_pct: f64,
+    pub atr_vol_scalar_min: f64,
+    pub atr_vol_scalar_max: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -511,6 +567,9 @@ impl Default for PositionSizeConfig {
             method: "risk_pct".into(),
             risk_per_trade_pct: 0.75,
             max_position_pct: 8.0,
+            atr_baseline_pct: 2.0,
+            atr_vol_scalar_min: 0.5,
+            atr_vol_scalar_max: 1.5,
         }
     }
 }
@@ -692,10 +751,147 @@ impl Default for TelegramNotify {
     }
 }
 
-impl Default for AdaptationConfig {
+impl Default for RegimeConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
+            benchmark_symbol: "SPY".into(),
+            vix_symbol: "$VIX".into(),
+            vix_low: 15.0,
+            vix_high: 25.0,
+            realized_vol_lookback: 20,
+            realized_vol_history: 60,
+            realized_vol_high_percentile: 70.0,
+        }
+    }
+}
+
+impl Default for MonitorAdjustmentsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_tighten_pct: 2.0,
+            max_widen_pct: 1.5,
+            min_stop_distance_from_price_pct: 1.5,
+            max_stop_distance_from_price_pct: 8.0,
+        }
+    }
+}
+
+impl Default for AdaptationConfig {
+    fn default() -> Self {
+        Self::default_swing()
+    }
+}
+
+impl AdaptationConfig {
+    pub fn default_swing() -> Self {
+        let mut profile_map = HashMap::new();
+        profile_map.insert("low_vol_trend".into(), "low_vol_trend".into());
+        profile_map.insert("high_vol_chop".into(), "high_vol_chop".into());
+        profile_map.insert("elevated_vol".into(), "elevated_vol".into());
+        profile_map.insert("neutral".into(), "baseline".into());
+
+        let mut profiles = HashMap::new();
+        profiles.insert(
+            "baseline".into(),
+            TradingProfile {
+                description: "Default playbook from rules YAML".into(),
+                overrides: PlaybookProfileOverrides::default(),
+            },
+        );
+        profiles.insert(
+            "low_vol_trend".into(),
+            TradingProfile {
+                description: "Calm uptrend — let winners run, normal participation".into(),
+                overrides: PlaybookProfileOverrides {
+                    exit: Some(crate::adaptation::ProfileExitOverrides {
+                        profit_target_pct: Some(10.0),
+                        stop_loss_pct: Some(3.5),
+                        trailing: Some(crate::adaptation::ProfileTrailingOverrides {
+                            activate_after_profit_pct: Some(4.0),
+                            trail_atr_multiple: Some(1.75),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    entry: Some(crate::adaptation::ProfileEntryOverrides {
+                        max_new_entries_per_day: Some(1),
+                        position_size: Some(crate::adaptation::ProfilePositionSizeOverrides {
+                            risk_per_trade_pct: Some(0.9),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            },
+        );
+        profiles.insert(
+            "high_vol_chop".into(),
+            TradingProfile {
+                description: "High vol chop — defensive sizing, wider stops, no new entries".into(),
+                overrides: PlaybookProfileOverrides {
+                    exit: Some(crate::adaptation::ProfileExitOverrides {
+                        profit_target_pct: Some(6.0),
+                        stop_loss_pct: Some(5.0),
+                        trailing: Some(crate::adaptation::ProfileTrailingOverrides {
+                            trail_atr_multiple: Some(2.5),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    entry: Some(crate::adaptation::ProfileEntryOverrides {
+                        max_new_entries_per_day: Some(0),
+                        position_size: Some(crate::adaptation::ProfilePositionSizeOverrides {
+                            risk_per_trade_pct: Some(0.4),
+                            method: Some("atr_normalized".into()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            },
+        );
+        profiles.insert(
+            "elevated_vol".into(),
+            TradingProfile {
+                description: "Elevated vol — reduced size, moderate targets".into(),
+                overrides: PlaybookProfileOverrides {
+                    exit: Some(crate::adaptation::ProfileExitOverrides {
+                        profit_target_pct: Some(7.0),
+                        stop_loss_pct: Some(4.5),
+                        trailing: Some(crate::adaptation::ProfileTrailingOverrides {
+                            trail_atr_multiple: Some(2.25),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    entry: Some(crate::adaptation::ProfileEntryOverrides {
+                        max_new_entries_per_day: Some(1),
+                        position_size: Some(crate::adaptation::ProfilePositionSizeOverrides {
+                            risk_per_trade_pct: Some(0.55),
+                            method: Some("atr_normalized".into()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            },
+        );
+
+        Self {
+            enabled: true,
             live_auto_apply: false,
+            regime_auto_select: true,
+            llm_profile_select: true,
+            regime: RegimeConfig::default(),
+            monitor_adjustments: MonitorAdjustmentsConfig::default(),
+            profiles,
+            profile_map,
+            default_profile: "baseline".into(),
         }
     }
 }
@@ -726,10 +922,23 @@ impl TraderRules {
     pub fn load(path: &Path) -> Result<Self> {
         let raw = fs::read_to_string(path)
             .with_context(|| format!("Failed to read rules file {}", path.display()))?;
-        let rules: TraderRules = serde_yaml::from_str(&raw)
+        let mut rules: TraderRules = serde_yaml::from_str(&raw)
             .with_context(|| format!("Failed to parse rules YAML {}", path.display()))?;
+        rules.normalize_adaptation();
         rules.validate()?;
         Ok(rules)
+    }
+
+    /// Fill built-in regime profiles when YAML omits them (backward compatible).
+    pub fn normalize_adaptation(&mut self) {
+        if self.adaptation.profiles.is_empty() {
+            let defaults = AdaptationConfig::default_swing();
+            self.adaptation.profiles = defaults.profiles;
+            self.adaptation.profile_map = defaults.profile_map;
+        }
+        if self.adaptation.default_profile.is_empty() {
+            self.adaptation.default_profile = "baseline".into();
+        }
     }
 
     pub fn validate(&self) -> Result<()> {

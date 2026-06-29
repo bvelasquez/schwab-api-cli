@@ -120,6 +120,39 @@ fn entry_quantity_zero_on_tiny_budget() {
 }
 
 #[test]
+fn rules_normalize_fills_default_profiles() {
+    let mut rules = TraderRules::default();
+    rules.trader_id = "test".into();
+    rules.accounts = vec![schwab_trader::rules::TraderAccount {
+        hash: "abc".into(),
+        label: None,
+        r#type: schwab_trader::rules::AccountType::Margin,
+        enabled: true,
+    }];
+    rules.adaptation.profiles.clear();
+    rules.normalize_adaptation();
+    assert!(rules.adaptation.profiles.contains_key("low_vol_trend"));
+    assert!(rules.adaptation.profiles.contains_key("high_vol_chop"));
+}
+
+#[test]
+fn high_vol_profile_blocks_entries_via_effective_rules() {
+    let mut rules = TraderRules::default();
+    rules.trader_id = "test".into();
+    rules.accounts = vec![schwab_trader::rules::TraderAccount {
+        hash: "abc".into(),
+        label: None,
+        r#type: schwab_trader::rules::AccountType::Margin,
+        enabled: true,
+    }];
+    rules.adaptation = schwab_trader::rules::AdaptationConfig::default_swing();
+    let mut state = TraderState::default();
+    state.active_profile = Some("high_vol_chop".into());
+    let effective = schwab_trader::adaptation::effective_rules(&rules, &state);
+    assert_eq!(effective.playbook.entry.max_new_entries_per_day, 0);
+}
+
+#[test]
 fn oco_status_variants_exist() {
     let _ = OcoStatus::Working;
     let _ = OcoStatus::FilledExit;

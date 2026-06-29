@@ -161,6 +161,11 @@ llm:
     profit_target_pct: { min: 0.6, max: 2.5, max_delta_per_change: 0.3 }
     stop_loss_pct: { min: 0.4, max: 1.5, max_delta_per_change: 0.2 }
     trail_atr_multiple: { min: 1.0, max: 2.5, max_delta_per_change: 0.25 }
+    activate_after_profit_pct: { min: 0.3, max: 1.5, max_delta_per_change: 0.2 }
+    risk_per_trade_pct: { min: 0.2, max: 1.0, max_delta_per_change: 0.1 }
+    time_stop_minutes: { min: 15, max: 120, max_delta_per_change: 15 }
+    min_relative_volume: { min: 0.8, max: 2.0, max_delta_per_change: 0.2 }
+    momentum_rsi_min: { min: 48.0, max: 60.0, max_delta_per_change: 2.0 }
     rsi_14_range: { min_low: 40, max_low: 50, min_high: 65, max_high: 78 }
   immutable_fields:
     - capital.fixed_sleeve_cap_usd
@@ -175,16 +180,18 @@ llm:
   prompts:
     selection: |
       Intraday momentum advisor for account 9947. Candidates include minute-bar technicals
-      and relative_volume. Approve only high-conviction setups with volume confirmation.
+      and relative_volume. Use regime and profile_catalog — set profile_selection for session vol.
+      Approve only high-conviction setups with volume confirmation.
       No entries after block_entries_after_et. Flatten all positions before close.
     selection_web: |
       (disabled for intraday)
     monitor: |
-      Monitor open intraday positions. Tighten exits into the close. Flag positions that
-      must flatten by flatten_by_et. No discretionary sells unless allow_llm_exits is true.
+      Monitor open intraday positions. Tighten exits into the close; widen if vol spikes.
+      tighten_exits/widen_exits adjust OCO stops within bounds. Update profile_selection if regime shifted.
+      Flag positions that must flatten by flatten_by_et. No discretionary sells unless allow_llm_exits is true.
     learn: |
-      Review recent_closed_trades from today. Tune profit_target_pct, stop_loss_pct, RSI band,
-      and trail_atr_multiple within adaptation_bounds. Cite exit_reason and pnl_pct per trade.
+      Review recent_closed_trades, regime, and active_profile. Prefer profile_selection when vol regime changed.
+      Tune intraday parameters within adaptation_bounds via rule_patches. Cite exit_reason and pnl_pct.
 
 notify:
   telegram:
@@ -198,4 +205,23 @@ simulation:
   allow_rule_adaptation: true
 
 adaptation:
+  enabled: true
   live_auto_apply: false
+  regime_auto_select: true
+  llm_profile_select: true
+  regime:
+    enabled: true
+    benchmark_symbol: SPY
+    vix_symbol: $VIX
+    vix_low: 15.0
+    vix_high: 25.0
+  monitor_adjustments:
+    enabled: true
+    max_tighten_pct: 1.5
+    max_widen_pct: 1.0
+  default_profile: baseline
+  profile_map:
+    low_vol_trend: low_vol_trend
+    high_vol_chop: high_vol_chop
+    elevated_vol: elevated_vol
+    neutral: baseline

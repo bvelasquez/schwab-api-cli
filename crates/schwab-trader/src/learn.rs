@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::adaptation::profile_catalog;
 use crate::agent::state::TraderState;
 use crate::journal;
 use crate::rules::TraderRules;
@@ -15,7 +16,15 @@ const ADAPTABLE_PATHS: &[&str] = &[
     "playbook.exit.profit_target_pct",
     "playbook.exit.stop_loss_pct",
     "playbook.exit.trailing.trail_atr_multiple",
+    "playbook.exit.trailing.activate_after_profit_pct",
+    "playbook.exit.time_stop_days",
+    "playbook.exit.time_stop_minutes",
     "playbook.entry.rsi_14_range",
+    "playbook.entry.position_size.risk_per_trade_pct",
+    "playbook.entry.position_size.method",
+    "playbook.entry.max_new_entries_per_day",
+    "playbook.intraday.min_relative_volume",
+    "playbook.intraday.momentum_rsi_min",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +78,9 @@ pub fn build_learn_context(
         "adaptation_bounds": rules.llm.adaptation_bounds,
         "immutable_fields": rules.llm.immutable_fields,
         "allowed_patch_paths": ADAPTABLE_PATHS,
+        "profile_catalog": profile_catalog(rules),
+        "active_profile": state.active_profile,
+        "last_regime": state.last_regime,
         "patch_format": {
             "path": "dotted field path from allowed_patch_paths",
             "value": "new scalar or [low, high] for rsi_14_range",
@@ -87,13 +99,19 @@ pub fn adaptable_playbook_snapshot(rules: &TraderRules) -> Value {
         "exit": {
             "profit_target_pct": rules.playbook.exit.profit_target_pct,
             "stop_loss_pct": rules.playbook.exit.stop_loss_pct,
-            "trailing": { "trail_atr_multiple": rules.playbook.exit.trailing.trail_atr_multiple },
+            "trailing": {
+                "trail_atr_multiple": rules.playbook.exit.trailing.trail_atr_multiple,
+                "activate_after_profit_pct": rules.playbook.exit.trailing.activate_after_profit_pct,
+            },
             "time_stop_days": rules.playbook.exit.time_stop_days,
             "time_stop_minutes": rules.playbook.exit.time_stop_minutes,
         },
         "entry": {
             "rsi_14_range": rules.playbook.entry.rsi_14_range,
+            "max_new_entries_per_day": rules.playbook.entry.max_new_entries_per_day,
+            "position_size": rules.playbook.entry.position_size,
         },
+        "intraday": rules.playbook.intraday,
     })
 }
 
@@ -145,7 +163,25 @@ fn read_path(rules: &TraderRules, path: &str) -> Result<Value> {
         "playbook.exit.trailing.trail_atr_multiple" => {
             json!(rules.playbook.exit.trailing.trail_atr_multiple)
         }
+        "playbook.exit.trailing.activate_after_profit_pct" => {
+            json!(rules.playbook.exit.trailing.activate_after_profit_pct)
+        }
+        "playbook.exit.time_stop_days" => json!(rules.playbook.exit.time_stop_days),
+        "playbook.exit.time_stop_minutes" => json!(rules.playbook.exit.time_stop_minutes),
         "playbook.entry.rsi_14_range" => json!(rules.playbook.entry.rsi_14_range),
+        "playbook.entry.position_size.risk_per_trade_pct" => {
+            json!(rules.playbook.entry.position_size.risk_per_trade_pct)
+        }
+        "playbook.entry.position_size.method" => {
+            json!(rules.playbook.entry.position_size.method)
+        }
+        "playbook.entry.max_new_entries_per_day" => {
+            json!(rules.playbook.entry.max_new_entries_per_day)
+        }
+        "playbook.intraday.min_relative_volume" => {
+            json!(rules.playbook.intraday.min_relative_volume)
+        }
+        "playbook.intraday.momentum_rsi_min" => json!(rules.playbook.intraday.momentum_rsi_min),
         _ => anyhow::bail!("unsupported path {path}"),
     };
     Ok(v)
@@ -162,6 +198,16 @@ fn write_path(rules: &mut TraderRules, path: &str, value: &Value) -> Result<()> 
         "playbook.exit.trailing.trail_atr_multiple" => {
             rules.playbook.exit.trailing.trail_atr_multiple = value.as_f64().context("number")?;
         }
+        "playbook.exit.trailing.activate_after_profit_pct" => {
+            rules.playbook.exit.trailing.activate_after_profit_pct =
+                value.as_f64().context("number")?;
+        }
+        "playbook.exit.time_stop_days" => {
+            rules.playbook.exit.time_stop_days = value.as_u64().context("integer")? as u32;
+        }
+        "playbook.exit.time_stop_minutes" => {
+            rules.playbook.exit.time_stop_minutes = value.as_u64().context("integer")? as u32;
+        }
         "playbook.entry.rsi_14_range" => {
             let arr = value.as_array().context("rsi_14_range array")?;
             anyhow::ensure!(arr.len() == 2, "rsi_14_range needs [low, high]");
@@ -169,6 +215,24 @@ fn write_path(rules: &mut TraderRules, path: &str, value: &Value) -> Result<()> 
                 arr[0].as_f64().context("low")?,
                 arr[1].as_f64().context("high")?,
             ];
+        }
+        "playbook.entry.position_size.risk_per_trade_pct" => {
+            rules.playbook.entry.position_size.risk_per_trade_pct =
+                value.as_f64().context("number")?;
+        }
+        "playbook.entry.position_size.method" => {
+            rules.playbook.entry.position_size.method =
+                value.as_str().context("string")?.to_string();
+        }
+        "playbook.entry.max_new_entries_per_day" => {
+            rules.playbook.entry.max_new_entries_per_day =
+                value.as_u64().context("integer")? as u32;
+        }
+        "playbook.intraday.min_relative_volume" => {
+            rules.playbook.intraday.min_relative_volume = value.as_f64().context("number")?;
+        }
+        "playbook.intraday.momentum_rsi_min" => {
+            rules.playbook.intraday.momentum_rsi_min = value.as_f64().context("number")?;
         }
         _ => anyhow::bail!("unsupported path {path}"),
     }
@@ -185,9 +249,26 @@ fn bound_value(
         "playbook.exit.profit_target_pct" => Some("profit_target_pct"),
         "playbook.exit.stop_loss_pct" => Some("stop_loss_pct"),
         "playbook.exit.trailing.trail_atr_multiple" => Some("trail_atr_multiple"),
+        "playbook.exit.trailing.activate_after_profit_pct" => Some("activate_after_profit_pct"),
+        "playbook.exit.time_stop_days" => Some("time_stop_days"),
+        "playbook.exit.time_stop_minutes" => Some("time_stop_minutes"),
         "playbook.entry.rsi_14_range" => Some("rsi_14_range"),
+        "playbook.entry.position_size.risk_per_trade_pct" => Some("risk_per_trade_pct"),
+        "playbook.entry.max_new_entries_per_day" => Some("max_new_entries_per_day"),
+        "playbook.intraday.min_relative_volume" => Some("min_relative_volume"),
+        "playbook.intraday.momentum_rsi_min" => Some("momentum_rsi_min"),
+        "playbook.entry.position_size.method" => None,
         _ => None,
     };
+
+    if path == "playbook.entry.position_size.method" {
+        let method = proposed.as_str().context("method string")?;
+        anyhow::ensure!(
+            method == "risk_pct" || method == "atr_normalized",
+            "method must be risk_pct or atr_normalized"
+        );
+        return Ok(json!(method));
+    }
 
     if path == "playbook.entry.rsi_14_range" {
         let arr = proposed.as_array().context("rsi_14_range")?;
@@ -210,6 +291,32 @@ fn bound_value(
         }
         anyhow::ensure!(low < high, "rsi low must be < high");
         return Ok(json!([low, high]));
+    }
+
+    if path == "playbook.entry.max_new_entries_per_day"
+        || path == "playbook.exit.time_stop_days"
+        || path == "playbook.exit.time_stop_minutes"
+    {
+        let new = proposed.as_u64().context("integer patch value")? as f64;
+        let cur = current.as_u64().map(|v| v as f64).unwrap_or(new);
+        let bounds = bounds_key.and_then(|k| rules.llm.adaptation_bounds.get(k));
+        let min = bounds
+            .and_then(|b| b.get("min"))
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let max = bounds
+            .and_then(|b| b.get("max"))
+            .and_then(|v| v.as_f64())
+            .unwrap_or(new);
+        let mut v = new.clamp(min, max);
+        if let Some(delta) = bounds
+            .and_then(|b| b.get("max_delta_per_change"))
+            .and_then(|v| v.as_f64())
+        {
+            v = v.clamp(cur - delta, cur + delta);
+            v = v.clamp(min, max);
+        }
+        return Ok(json!(v as u64));
     }
 
     let new = proposed.as_f64().context("numeric patch value")?;
