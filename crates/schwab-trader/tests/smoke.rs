@@ -24,5 +24,6 @@ fn trader_rules_validate_example() {
         .args(["rules", "validate", path, "--json"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("swing-beneficiary-9947"));
+        .stdout(predicate::str::contains("swing-beneficiary-9947"))
+        .stdout(predicate::str::contains("hints"));
 }

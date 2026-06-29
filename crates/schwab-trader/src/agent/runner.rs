@@ -45,6 +45,7 @@ pub async fn run_agent_loop(
     options: AgentRunOptions,
 ) -> Result<()> {
     let mut rules = TraderRules::load(rules_path)?;
+    rules.log_validation_hints();
     let account = rules.primary_account()?.hash.clone();
     let api = runtime.build_api()?;
     let market = runtime.build_market_api()?;

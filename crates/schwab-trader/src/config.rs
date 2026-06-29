@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use schwab_api::{ClientConfig, SchwabClient, TraderApi};
 use schwab_cli::config::RuntimeConfig;
-use schwab_cli::mode::CliMode;
 use schwab_cli::output::{OutputFormat, OutputSink, ResponseEnvelope};
 use schwab_cli::safety::SafetyContext;
 use schwab_cli::safety_config::SafetyConfig;
@@ -55,16 +54,15 @@ impl TraderRuntime {
     }
 
     pub fn as_schwab_runtime(&self) -> RuntimeConfig {
-        RuntimeConfig {
-            mode: CliMode::Agent,
-            output: self.output,
-            yes: self.yes,
-            dry_run: self.dry_run,
-            trust: self.trust,
-            suppress_tick_output: self.suppress_tick_output,
-            safety: self.safety.clone(),
-            sink: self.sink.clone(),
-        }
+        RuntimeConfig::for_agent_trading(
+            self.output,
+            self.yes,
+            self.dry_run,
+            self.trust,
+            self.suppress_tick_output,
+            self.safety.clone(),
+            self.sink.clone(),
+        )
     }
 
     pub fn build_api(&self) -> Result<Arc<TraderApi>> {
