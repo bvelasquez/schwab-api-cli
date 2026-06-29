@@ -29,6 +29,16 @@ pub struct CapitalCheck {
     pub open_equity_risk_usd: f64,
     #[serde(default)]
     pub sibling_deployed_usd: f64,
+    /// Open + pending stop risk as % of fixed sleeve cap.
+    #[serde(default)]
+    pub portfolio_heat_pct: f64,
+    /// Remaining heat budget before `heat_ceiling_pct`.
+    #[serde(default)]
+    pub heat_headroom_pct: f64,
+    #[serde(default)]
+    pub heat_ceiling_pct: f64,
+    #[serde(default)]
+    pub positions_open: u32,
     pub passed: bool,
     #[serde(default)]
     pub reject_reason: Option<String>,
@@ -101,6 +111,7 @@ pub async fn compute_capital_check(
     };
 
     let open_equity_risk = state.open_stop_risk_usd();
+    let heat = portfolio_heat_metrics(rules, state, open_equity_risk, pending_stop_risk);
     let mut check = CapitalCheck {
         cash_available,
         options_reserved_usd: opt.reserved_risk_usd,
@@ -119,6 +130,10 @@ pub async fn compute_capital_check(
         stop_risk_usd: pending_stop_risk,
         open_equity_risk_usd: open_equity_risk,
         sibling_deployed_usd: sibling_deployed,
+        portfolio_heat_pct: heat.portfolio_heat_pct,
+        heat_headroom_pct: heat.heat_headroom_pct,
+        heat_ceiling_pct: heat.heat_ceiling_pct,
+        positions_open: heat.positions_open,
         passed: true,
         reject_reason: None,
     };
@@ -165,6 +180,36 @@ pub async fn compute_capital_check(
     Ok(check)
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct PortfolioHeatMetrics {
+    pub portfolio_heat_pct: f64,
+    pub heat_headroom_pct: f64,
+    pub heat_ceiling_pct: f64,
+    pub positions_open: u32,
+}
+
+pub fn portfolio_heat_metrics(
+    rules: &TraderRules,
+    state: &TraderState,
+    open_equity_risk_usd: f64,
+    pending_stop_risk: Option<f64>,
+) -> PortfolioHeatMetrics {
+    let ceiling_pct = rules.risk.max_portfolio_heat_pct;
+    let sleeve = rules.capital.fixed_sleeve_cap_usd;
+    let heat_usd = open_equity_risk_usd + pending_stop_risk.unwrap_or(0.0);
+    let portfolio_heat_pct = if sleeve > 0.0 {
+        heat_usd / sleeve * 100.0
+    } else {
+        0.0
+    };
+    PortfolioHeatMetrics {
+        portfolio_heat_pct,
+        heat_headroom_pct: (ceiling_pct - portfolio_heat_pct).max(0.0),
+        heat_ceiling_pct: ceiling_pct,
+        positions_open: state.open_positions.len() as u32,
+    }
+}
+
 pub fn ensure_capital_check(check: &CapitalCheck) -> Result<()> {
     if check.passed {
         return Ok(());
@@ -189,6 +234,29 @@ pub fn exit_prices(entry_price: f64, rules: &TraderRules) -> (f64, f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn portfolio_heat_includes_pending_risk() {
+        let rules = TraderRules {
+            version: 1,
+            trader_id: "t".into(),
+            accounts: vec![],
+            capital: crate::rules::CapitalConfig {
+                fixed_sleeve_cap_usd: 4000.0,
+                ..Default::default()
+            },
+            risk: crate::rules::RiskConfig {
+                max_portfolio_heat_pct: 8.0,
+                ..Default::default()
+            },
+            ..TraderRules::default()
+        };
+        let state = TraderState::default();
+        let heat = portfolio_heat_metrics(&rules, &state, 100.0, Some(50.0));
+        assert!((heat.portfolio_heat_pct - 3.75).abs() < 0.01);
+        assert!((heat.heat_headroom_pct - 4.25).abs() < 0.01);
+        assert!((heat.heat_ceiling_pct - 8.0).abs() < 0.01);
+    }
 
     #[test]
     fn exit_prices_from_playbook() {

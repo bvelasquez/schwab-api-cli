@@ -66,8 +66,35 @@ pub fn compute_entry_quantity(
     stop_price: f64,
     tradable_budget: f64,
 ) -> f64 {
+    compute_position_sizing(rules, entry_price, stop_price, tradable_budget).quantity
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PositionSizing {
+    pub quantity: f64,
+    pub position_size_usd: f64,
+    pub risk_pct_size_usd: f64,
+    pub max_pct_size_usd: f64,
+    pub budget_cap_usd: f64,
+    pub binding_constraint: String,
+}
+
+pub fn compute_position_sizing(
+    rules: &TraderRules,
+    entry_price: f64,
+    stop_price: f64,
+    tradable_budget: f64,
+) -> PositionSizing {
+    let empty = PositionSizing {
+        quantity: 0.0,
+        position_size_usd: 0.0,
+        risk_pct_size_usd: 0.0,
+        max_pct_size_usd: 0.0,
+        budget_cap_usd: tradable_budget.max(0.0),
+        binding_constraint: "none".into(),
+    };
     if entry_price <= 0.0 || tradable_budget <= 0.0 {
-        return 0.0;
+        return empty;
     }
 
     let sleeve_cap = rules.capital.fixed_sleeve_cap_usd;
@@ -75,16 +102,97 @@ pub fn compute_entry_quantity(
     let stop_per_share = (entry_price - stop_price).max(0.01);
     let qty_by_risk = (risk_budget / stop_per_share).floor();
 
-    let max_position_value = (sleeve_cap * rules.playbook.entry.position_size.max_position_pct
-        / 100.0)
-        .min(tradable_budget);
+    let max_pct_size_usd =
+        sleeve_cap * rules.playbook.entry.position_size.max_position_pct / 100.0;
+    let max_position_value = max_pct_size_usd.min(tradable_budget);
     let qty_by_position_cap = (max_position_value / entry_price).floor();
     let qty_by_budget = (tradable_budget / entry_price).floor();
 
-    qty_by_risk
+    let quantity = qty_by_risk
         .min(qty_by_position_cap)
         .min(qty_by_budget)
-        .max(0.0)
+        .max(0.0);
+
+    let risk_pct_size_usd = qty_by_risk * entry_price;
+    let budget_cap_usd = qty_by_budget * entry_price;
+    let position_size_usd = quantity * entry_price;
+
+    let binding_constraint = if quantity <= 0.0 {
+        "none".to_string()
+    } else if quantity == qty_by_budget && qty_by_budget <= qty_by_risk.min(qty_by_position_cap) {
+        "tradable_budget".into()
+    } else if quantity == qty_by_position_cap
+        && qty_by_position_cap <= qty_by_risk.min(qty_by_budget)
+    {
+        "max_position_pct".into()
+    } else {
+        "risk_per_trade_pct".into()
+    };
+
+    PositionSizing {
+        quantity,
+        position_size_usd,
+        risk_pct_size_usd,
+        max_pct_size_usd,
+        budget_cap_usd,
+        binding_constraint,
+    }
+}
+
+pub fn log_position_sizing(sizing: &PositionSizing, max_position_pct: f64) {
+    if sizing.quantity <= 0.0 {
+        return;
+    }
+    match sizing.binding_constraint.as_str() {
+        "max_position_pct" => tracing::info!(
+            target: "capital",
+            "position_size=${:.0} (clamped by max_position_pct={max_position_pct:.1}%; risk_pct_size=${:.0})",
+            sizing.position_size_usd,
+            sizing.risk_pct_size_usd,
+        ),
+        "tradable_budget" => tracing::info!(
+            target: "capital",
+            "position_size=${:.0} (clamped by tradable_budget=${:.0}; risk_pct_size=${:.0})",
+            sizing.position_size_usd,
+            sizing.budget_cap_usd,
+            sizing.risk_pct_size_usd,
+        ),
+        _ => tracing::info!(
+            target: "capital",
+            "position_size=${:.0} (risk_per_trade_pct method; within max_position_pct={max_position_pct:.1}%)",
+            sizing.position_size_usd,
+        ),
+    }
+}
+
+fn record_sizing_streak(state: &mut TraderState, sizing: &PositionSizing, simulate: bool, rules_path: &Path) {
+    if sizing.quantity <= 0.0 {
+        return;
+    }
+    if sizing.binding_constraint == "max_position_pct" {
+        state.sizing_max_pct_binding_streak += 1;
+    } else {
+        state.sizing_max_pct_binding_streak = 0;
+    }
+    if simulate
+        && state.sizing_max_pct_binding_streak >= 3
+        && !state.sizing_redundant_risk_warned
+    {
+        state.sizing_redundant_risk_warned = true;
+        let msg = "risk_per_trade_pct sizing is consistently non-binding (max_position_pct clamps every recent entry); \
+                   consider reconciling risk_per_trade_pct and max_position_pct in rules YAML";
+        tracing::warn!(target: "capital", "{msg}");
+        let _ = journal::append_event(
+            rules_path,
+            "sizing_config_hint",
+            json!({
+                "message": msg,
+                "streak": state.sizing_max_pct_binding_streak,
+                "risk_pct_size_usd": sizing.risk_pct_size_usd,
+                "max_pct_size_usd": sizing.max_pct_size_usd,
+            }),
+        );
+    }
 }
 
 pub async fn attempt_entry(
@@ -149,14 +257,24 @@ pub async fn attempt_entry(
     )
     .await?;
     let (profit_limit, stop_price, stop_limit) = exit_prices(limit_price, rules);
-    let quantity = quantity_override.unwrap_or_else(|| {
-        compute_entry_quantity(
-            rules,
-            limit_price,
-            stop_price,
-            capital_preview.tradable_budget_usd,
-        )
-    });
+    let sizing = compute_position_sizing(
+        rules,
+        limit_price,
+        stop_price,
+        capital_preview.tradable_budget_usd,
+    );
+    let quantity = quantity_override.unwrap_or(sizing.quantity);
+    log_position_sizing(
+        &if quantity_override.is_some() {
+            PositionSizing {
+                quantity,
+                ..sizing.clone()
+            }
+        } else {
+            sizing.clone()
+        },
+        rules.playbook.entry.position_size.max_position_pct,
+    );
     if quantity < 1.0 {
         return Ok(skipped(
             &symbol,
@@ -191,6 +309,10 @@ pub async fn attempt_entry(
         ));
     }
 
+    if runtime.simulate && quantity_override.is_none() {
+        record_sizing_streak(state, &sizing, true, rules_path);
+    }
+
     let order = build_equity_order(
         TradeSide::Buy,
         &symbol,
@@ -218,6 +340,7 @@ pub async fn attempt_entry(
             "symbol": symbol,
             "quantity": quantity,
             "limit_price": limit_price,
+            "position_sizing": sizing,
             "capital_check": capital_check_to_json(&capital),
             "bracket_preview": bracket_preview,
             "dry_run": runtime.dry_run,
@@ -523,6 +646,17 @@ mod tests {
         let qty = compute_entry_quantity(&rules, entry, stop, 5000.0);
         // risk => 5 shares, max_position_pct 8% of $3k sleeve => 2 shares (binding)
         assert!((qty - 2.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn sizing_reports_max_position_pct_binding() {
+        let mut rules = TraderRules::default();
+        rules.capital.fixed_sleeve_cap_usd = 4000.0;
+        rules.playbook.entry.position_size.max_position_pct = 15.0;
+        let sizing = compute_position_sizing(&rules, 100.0, 96.0, 5000.0);
+        assert_eq!(sizing.binding_constraint, "max_position_pct");
+        assert!((sizing.position_size_usd - 600.0).abs() < 0.01);
+        assert!((sizing.risk_pct_size_usd - 700.0).abs() < 0.01);
     }
 
     #[test]

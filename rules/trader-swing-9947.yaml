@@ -117,7 +117,6 @@ watchlists:
     - QQQ
     - IWM
     - TQQQ
-    - SQQQ
   thematic: []
   dynamic: true
   max_dynamic_symbols: 5
@@ -180,7 +179,7 @@ execution:
   entry_order_type: limit
   entry_limit_basis: ask
   bracket_mode: post_fill_oco
-  place_bracket_within_seconds: 30
+  place_bracket_within_seconds: 60
   oco_duration: GTC
   require_preview: true
   wait_for_fill: true
@@ -196,7 +195,7 @@ llm:
   review_every_ticks: 3
   web_research_every_reviews: 2
   learn_every_ticks: 6
-  learn_min_closed_trades: 1
+  learn_min_closed_trades: 3
   max_tokens: 2500
   veto_entries: true
   allow_llm_exits: false
