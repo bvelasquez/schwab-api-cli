@@ -19,6 +19,7 @@ Agent-first Rust CLI for the [Charles Schwab Trader API](https://developer.schwa
 - **Trading** — `trade buy` / `trade sell` with preview and safety guardrails
 - **Trade plans** — YAML/JSON multi-step rebalances; LLM-authored, CLI-validated
 - **Options agent** — long-running daemon from `rules/*.yaml`; put credit spreads, mechanical exits, phased schedule (regular / overnight), OpenRouter LLM advisor, Telegram alerts
+- **Equity swing trader** — separate `schwab-trader` CLI for short/medium-term stock swings; capital sleeve on beneficiary account, post-fill OCO brackets, Perplexity picks ([docs/TRADER_RULES.md](docs/TRADER_RULES.md))
 - **Order wait** — poll until limit orders fill before advancing a plan
 - **Safety config** — `safety.json` enforces max trade size, symbols, order types (cannot be bypassed)
 - **Trust mode** — autonomous agent execution requires `--trust --yes`
@@ -38,9 +39,11 @@ cd schwab-api-cli
 
 # Install from source
 cargo install --path crates/schwab-cli --force
+cargo install --path crates/schwab-trader --force
 
 # Or install from crates.io
 cargo install schwab-api-cli
+cargo install schwab-trader
 
 # Configure credentials
 cp .env.example .env
@@ -580,17 +583,18 @@ schwab-api-cli/
 
 ## Publish to crates.io
 
-The CLI is published as [`schwab-api-cli`](https://crates.io/crates/schwab-api-cli). Supporting libraries: `schwab-api-cli-core`, `schwab-api-cli-market-data`. Homepage: [soki-creative.com](https://soki-creative.com).
+The CLIs are published as [`schwab-api-cli`](https://crates.io/crates/schwab-api-cli) and [`schwab-trader`](https://crates.io/crates/schwab-trader). Supporting libraries: `schwab-api-cli-core`, `schwab-api-cli-market-data`. Homepage: [soki-creative.com](https://soki-creative.com).
 
 ```bash
 cargo install schwab-api-cli
+cargo install schwab-trader
 ```
 
 The crates.io README includes the same **use at your own risk** disclaimer as this repository.
 
 ### Maintainer release flow
 
-1. Bump `version` in all three `crates/*/Cargo.toml` files (keep versions aligned).
+1. Bump `version` in all four `crates/*/Cargo.toml` files (keep versions aligned).
 2. Commit and push to `main` (or run **Publish crates.io** workflow manually).
 
 See **[docs/CRATES_IO_PUBLISH.md](docs/CRATES_IO_PUBLISH.md)** for crate name mapping and `CRATES_IO_TOKEN` setup.
@@ -601,6 +605,8 @@ bash scripts/wait-for-crate.sh schwab-api-cli-core
 bash scripts/publish-crate.sh schwab-api-cli-market-data
 bash scripts/wait-for-crate.sh schwab-api-cli-market-data
 bash scripts/publish-crate.sh schwab-api-cli
+bash scripts/wait-for-crate.sh schwab-api-cli
+bash scripts/publish-crate.sh schwab-trader
 ```
 
 ## Development
@@ -610,6 +616,7 @@ cargo check --workspace
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
 cargo build --release -p schwab-api-cli
+cargo build --release -p schwab-trader
 ```
 
 ## Security
