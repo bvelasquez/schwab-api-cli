@@ -7,6 +7,10 @@ use chrono::Utc;
 use serde_json::{json, Value};
 use tokio::time::sleep;
 
+use crate::adaptation::{
+    apply_llm_profile_selection, apply_monitor_exit_adjustments, apply_regime_profile,
+    effective_rules, profile_catalog,
+};
 use crate::agent::llm::{candidate_approved, OpenRouterClient, TraderLlmReview};
 use crate::agent::paths::state_path;
 use crate::agent::schedule::{
@@ -24,6 +28,7 @@ use crate::learn::{
     adaptation_allowed, apply_rule_patches, build_learn_context, should_run_learn,
 };
 use crate::reconcile::reconcile_tick;
+use crate::regime::detect_regime;
 use crate::risk::{monitoring_metrics, update_drawdown};
 use crate::rules::TraderRules;
 use crate::sim::{compute_stats, snapshot_equity};
@@ -400,6 +405,7 @@ async fn tick_regular(
 ) -> Result<Value> {
     let at_open = transition.just_opened;
     state.regular_tick_count += 1;
+    let profile_before = state.active_profile.clone();
 
     let reconcile_report = reconcile_tick(
         runtime, rules_path, rules, state, api, account_hash,
@@ -408,18 +414,37 @@ async fn tick_regular(
 
     let drawdown = update_drawdown(state, rules);
 
+    let regime = detect_regime(market, rules).await.unwrap_or_else(|err| {
+        tracing::warn!("regime detection failed: {err}");
+        crate::regime::RegimeSnapshot {
+            class: "neutral".into(),
+            benchmark_symbol: rules.adaptation.regime.benchmark_symbol.clone(),
+            vix_symbol: rules.adaptation.regime.vix_symbol.clone(),
+            benchmark_last: 0.0,
+            vix: None,
+            above_sma_50: false,
+            above_sma_200: false,
+            realized_vol_annualized_pct: 0.0,
+            realized_vol_percentile: 50.0,
+            recommended_profile: rules.adaptation.default_profile.clone(),
+            signals: json!({}),
+        }
+    });
+    apply_regime_profile(state, rules, &regime);
+    let mut tick_rules = effective_rules(rules, state);
+
     let closure_exits = process_closure_exits(
-        runtime, rules_path, rules, state, api, market, account_hash,
+        runtime, rules_path, &tick_rules, state, api, market, account_hash,
     )
     .await?;
     if runtime.simulate {
-        snapshot_equity(state, rules);
+        snapshot_equity(state, &tick_rules);
     }
 
-    let scan = run_scan_inner(market, rules, state).await?;
+    let scan = run_scan_inner(market, &tick_rules, state).await?;
     let capital = compute_capital_check(
         api,
-        rules,
+        &tick_rules,
         state,
         account_hash,
         None,
@@ -437,33 +462,60 @@ async fn tick_regular(
 
     let mut llm_review: Option<TraderLlmReview> = None;
     let mut llm_summary = None;
+    let mut monitor_adjustments = Vec::<Value>::new();
+    let mut llm_phase: Option<&str> = None;
 
     if let Some(client) = llm_client {
         if let Some((phase, model, use_web)) =
-            resolve_regular_llm_phase(rules, state, has_candidates, has_positions)
+            resolve_regular_llm_phase(&tick_rules, state, has_candidates, has_positions)
         {
+            llm_phase = Some(phase);
             let context = llm_context_with_feeds(
-                rules,
+                &tick_rules,
                 phase,
                 json!({
                     "phase": phase,
                     "regular_tick": state.regular_tick_count,
                     "at_open": at_open,
-                    "playbook_style": rules.playbook.style,
-                    "adaptable_playbook": crate::learn::adaptable_playbook_snapshot(rules),
+                    "playbook_style": tick_rules.playbook.style,
+                    "adaptable_playbook": crate::learn::adaptable_playbook_snapshot(&tick_rules),
+                    "profile_catalog": profile_catalog(rules),
+                    "active_profile": state.active_profile,
+                    "active_profile_reason": state.active_profile_reason,
+                    "regime": regime.to_json(),
                     "open_playbook": state.open_playbook,
                     "capital_check": capital_check_to_json(&capital),
                     "scan": scan,
                     "open_positions": state.open_positions,
                     "sim_stats": compute_stats(state),
                     "closure_exits_this_tick": closure_exits,
-                    "entries_blocked": crate::closure::entry_block_reason(rules),
+                    "entries_blocked": crate::closure::entry_block_reason(&tick_rules),
                 }),
             )
             .await;
-            match client.review(&rules.llm, phase, model, &context, use_web).await {
+            match client.review(&tick_rules.llm, phase, model, &context, use_web).await {
                 Ok(review) => {
-                    apply_web_picks(state, rules, &review);
+                    apply_web_picks(state, &tick_rules, &review);
+                    if apply_llm_profile_selection(state, rules, &review) {
+                        tick_rules = effective_rules(rules, state);
+                    }
+                    if phase == "monitor" {
+                        monitor_adjustments = apply_monitor_exit_adjustments(
+                            runtime,
+                            rules_path,
+                            &tick_rules,
+                            state,
+                            api,
+                            market,
+                            account_hash,
+                            &review,
+                        )
+                        .await
+                        .unwrap_or_else(|err| {
+                            tracing::warn!("monitor exit adjustments failed: {err}");
+                            vec![]
+                        });
+                    }
                     llm_summary = Some(serde_json::to_value(&review)?);
                     state.last_llm_summary = llm_summary.clone();
                     state.last_llm_review_tick = Some(state.regular_tick_count);
@@ -478,7 +530,7 @@ async fn tick_regular(
     }
 
     let mut entry_attempts = Vec::new();
-    if capital.passed && state.entry_block_reason(rules).is_none() {
+    if capital.passed && state.entry_block_reason(&tick_rules).is_none() {
         if let Some(candidates) = scan.get("candidates").and_then(|v| v.as_array()) {
             for candidate in candidates {
                 let symbol = candidate
@@ -490,7 +542,7 @@ async fn tick_regular(
                 }
 
                 let llm_ok = match &llm_review {
-                    Some(review) => candidate_approved(review, symbol, rules.llm.veto_entries),
+                    Some(review) => candidate_approved(review, symbol, tick_rules.llm.veto_entries),
                     None if rules.llm.enabled && !runtime.dry_run && !runtime.simulate => false,
                     None if rules.llm.enabled && runtime.dry_run => true,
                     None => true,
@@ -507,7 +559,7 @@ async fn tick_regular(
                 let attempt = attempt_entry(
                     runtime,
                     rules_path,
-                    rules,
+                    &tick_rules,
                     state,
                     api,
                     market,
@@ -612,15 +664,22 @@ async fn tick_regular(
         }
     }
 
-    Ok(json!({
+    let tick_result = json!({
         "session": "regular",
         "at_open": at_open,
         "regular_tick": state.regular_tick_count,
-        "market_clock": crate::market_session::market_clock_json(rules),
+        "tick": state.tick_count,
+        "market_clock": crate::market_session::market_clock_json(&tick_rules),
         "next_sleep_seconds": transition.sleep_seconds,
         "reconcile_report": reconcile_report,
         "drawdown": drawdown,
-        "monitoring": monitoring_metrics(state, rules),
+        "regime": regime.to_json(),
+        "active_profile": state.active_profile,
+        "active_profile_source": state.active_profile_source,
+        "active_profile_reason": state.active_profile_reason,
+        "llm_phase": llm_phase,
+        "monitor_adjustments": monitor_adjustments,
+        "monitoring": monitoring_metrics(state, &tick_rules),
         "scan": scan,
         "capital_check": capital_check_to_json(&capital),
         "llm": llm_summary,
@@ -630,9 +689,29 @@ async fn tick_regular(
         "sim_stats": compute_stats(state),
         "dry_run": runtime.dry_run,
         "simulate": runtime.simulate,
-        "playbook_style": rules.playbook.style,
+        "playbook_style": tick_rules.playbook.style,
+        "effective_playbook": crate::learn::adaptable_playbook_snapshot(&tick_rules),
         "state_path": state_path(rules_path),
-    }))
+    });
+
+    if runtime.simulate {
+        if state.active_profile != profile_before {
+            let _ = journal::append_event(
+                rules_path,
+                "profile_changed",
+                json!({
+                    "from": profile_before,
+                    "to": state.active_profile,
+                    "source": state.active_profile_source,
+                    "reason": state.active_profile_reason,
+                    "regime": regime.to_json(),
+                }),
+            );
+        }
+        let _ = journal::append_event(rules_path, "sim_tick_summary", tick_result.clone());
+    }
+
+    Ok(tick_result)
 }
 
 async fn llm_context_with_feeds(rules: &TraderRules, phase: &str, context: Value) -> Value {

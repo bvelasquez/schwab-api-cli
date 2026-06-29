@@ -66,7 +66,17 @@ pub fn compute_entry_quantity(
     stop_price: f64,
     tradable_budget: f64,
 ) -> f64 {
-    compute_position_sizing(rules, entry_price, stop_price, tradable_budget).quantity
+    compute_position_sizing(rules, entry_price, stop_price, tradable_budget, None).quantity
+}
+
+pub fn compute_entry_quantity_with_atr(
+    rules: &TraderRules,
+    entry_price: f64,
+    stop_price: f64,
+    tradable_budget: f64,
+    atr_14: Option<f64>,
+) -> f64 {
+    compute_position_sizing(rules, entry_price, stop_price, tradable_budget, atr_14).quantity
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -84,6 +94,7 @@ pub fn compute_position_sizing(
     entry_price: f64,
     stop_price: f64,
     tradable_budget: f64,
+    atr_14: Option<f64>,
 ) -> PositionSizing {
     let empty = PositionSizing {
         quantity: 0.0,
@@ -98,12 +109,22 @@ pub fn compute_position_sizing(
     }
 
     let sleeve_cap = rules.capital.fixed_sleeve_cap_usd;
-    let risk_budget = sleeve_cap * rules.playbook.entry.position_size.risk_per_trade_pct / 100.0;
+    let ps = &rules.playbook.entry.position_size;
+    let mut risk_budget = sleeve_cap * ps.risk_per_trade_pct / 100.0;
+
+    if ps.method == "atr_normalized" {
+        if let Some(atr) = atr_14.filter(|a| *a > 0.0 && entry_price > 0.0) {
+            let atr_pct = (atr / entry_price) * 100.0;
+            let scalar = (ps.atr_baseline_pct / atr_pct.max(0.1))
+                .clamp(ps.atr_vol_scalar_min, ps.atr_vol_scalar_max);
+            risk_budget *= scalar;
+        }
+    }
+
     let stop_per_share = (entry_price - stop_price).max(0.01);
     let qty_by_risk = (risk_budget / stop_per_share).floor();
 
-    let max_pct_size_usd =
-        sleeve_cap * rules.playbook.entry.position_size.max_position_pct / 100.0;
+    let max_pct_size_usd = sleeve_cap * ps.max_position_pct / 100.0;
     let max_position_value = max_pct_size_usd.min(tradable_budget);
     let qty_by_position_cap = (max_position_value / entry_price).floor();
     let qty_by_budget = (tradable_budget / entry_price).floor();
@@ -262,6 +283,7 @@ pub async fn attempt_entry(
         limit_price,
         stop_price,
         capital_preview.tradable_budget_usd,
+        snap.atr_14,
     );
     let quantity = quantity_override.unwrap_or(sizing.quantity);
     log_position_sizing(
@@ -382,11 +404,16 @@ pub async fn attempt_entry(
             "sim_entry_filled",
             json!({
                 "source": source,
+                "trade_id": pos_id,
                 "symbol": symbol,
                 "quantity": quantity,
                 "fill_price": limit_price,
+                "stop_price": stop_price,
+                "profit_limit": profit_limit,
                 "capital_check": capital_check_to_json(&capital),
-                "bracket_preview": bracket_preview,
+                "position_sizing": sizing,
+                "active_profile": state.active_profile,
+                "regime_class": state.last_regime.as_ref().and_then(|r| r.get("class")),
             }),
         )?;
 
@@ -653,7 +680,7 @@ mod tests {
         let mut rules = TraderRules::default();
         rules.capital.fixed_sleeve_cap_usd = 4000.0;
         rules.playbook.entry.position_size.max_position_pct = 15.0;
-        let sizing = compute_position_sizing(&rules, 100.0, 96.0, 5000.0);
+        let sizing = compute_position_sizing(&rules, 100.0, 96.0, 5000.0, None);
         assert_eq!(sizing.binding_constraint, "max_position_pct");
         assert!((sizing.position_size_usd - 600.0).abs() < 0.01);
         assert!((sizing.risk_pct_size_usd - 700.0).abs() < 0.01);
@@ -683,5 +710,16 @@ mod tests {
         let mut rules_mid = rules;
         rules_mid.execution.entry_limit_basis = "mid".into();
         assert!((resolve_entry_limit_price(&snap, &rules_mid) - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn atr_normalized_sizing_reduces_size_in_high_vol() {
+        let mut rules = TraderRules::default();
+        rules.playbook.entry.position_size.method = "atr_normalized".into();
+        rules.playbook.entry.position_size.risk_per_trade_pct = 1.0;
+        rules.playbook.entry.position_size.max_position_pct = 50.0;
+        let calm = compute_position_sizing(&rules, 100.0, 96.0, 5000.0, Some(2.0));
+        let hot = compute_position_sizing(&rules, 100.0, 96.0, 5000.0, Some(5.0));
+        assert!(hot.quantity < calm.quantity);
     }
 }

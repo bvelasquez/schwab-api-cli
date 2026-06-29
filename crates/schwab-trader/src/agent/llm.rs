@@ -15,7 +15,8 @@ Respond ONLY with valid JSON matching this schema:
   "positions": [{"position_id": "string", "recommendation": "hold|watch|tighten_exits|widen_exits", "urgency": "low|medium|high", "reasoning": "string"}],
   "new_entries": {"recommendation": "proceed|defer|skip", "reasoning": "string"},
   "risk_alerts": ["string"],
-  "rule_patches": []
+  "rule_patches": [],
+  "profile_selection": {"profile": "baseline|low_vol_trend|high_vol_chop|elevated_vol", "reasoning": "string"}
 }"#;
 
 #[derive(Debug, Clone, Copy)]
@@ -38,6 +39,8 @@ pub struct TraderLlmReview {
     pub entry_reasoning: String,
     pub risk_alerts: Vec<String>,
     pub rule_patches: Vec<Value>,
+    pub profile_name: Option<String>,
+    pub profile_reasoning: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,6 +181,12 @@ fn build_system_prompt(
     } else {
         ""
     };
+    let profile_help = if matches!(phase, "selection" | "monitor" | "learn" | "web") {
+        "\n\nprofile_selection.profile must be one of the profile names in profile_catalog. \
+         Select the profile that fits current regime and market conditions. Use baseline when uncertain."
+    } else {
+        ""
+    };
     let feed_help = if has_source_feeds {
         "\n\nThe user message includes source_feeds with pre-fetched content from configured URLs/APIs/RSS feeds. Treat that as primary ground truth. Cite the feed id in web_insights and candidate reasoning."
     } else {
@@ -189,7 +198,7 @@ fn build_system_prompt(
     } else {
         ""
     };
-    format!("{instructions}{patch_help}{feed_help}{heat_help}\n{RESPONSE_JSON_SCHEMA}")
+    format!("{instructions}{patch_help}{profile_help}{feed_help}{heat_help}\n{RESPONSE_JSON_SCHEMA}")
 }
 
 fn llm_review_json_schema() -> Value {
@@ -244,6 +253,15 @@ fn llm_review_json_schema() -> Value {
             "rule_patches": {
                 "type": "array",
                 "items": { "type": "object" }
+            },
+            "profile_selection": {
+                "type": "object",
+                "properties": {
+                    "profile": { "type": "string" },
+                    "reasoning": { "type": "string" }
+                },
+                "required": ["profile", "reasoning"],
+                "additionalProperties": false
             }
         },
         "required": [
@@ -253,7 +271,8 @@ fn llm_review_json_schema() -> Value {
             "positions",
             "new_entries",
             "risk_alerts",
-            "rule_patches"
+            "rule_patches",
+            "profile_selection"
         ],
         "additionalProperties": false
     })
@@ -481,6 +500,16 @@ fn parse_review(phase: &str, model: &str, raw: Value) -> TraderLlmReview {
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default(),
+        profile_name: raw
+            .get("profile_selection")
+            .and_then(|v| v.get("profile"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        profile_reasoning: raw
+            .get("profile_selection")
+            .and_then(|v| v.get("reasoning"))
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
     }
 }
 
@@ -512,7 +541,7 @@ mod tests {
     fn extracts_json_from_markdown_fence() {
         let raw = r#"Here is the review:
 ```json
-{"market_commentary":"ok","web_insights":["x"],"candidates":[],"positions":[],"new_entries":{"recommendation":"proceed","reasoning":"fine"},"risk_alerts":[],"rule_patches":[]}
+{"market_commentary":"ok","web_insights":["x"],"candidates":[],"positions":[],"new_entries":{"recommendation":"proceed","reasoning":"fine"},"risk_alerts":[],"rule_patches":[],"profile_selection":{"profile":"baseline","reasoning":"test"}}
 ```"#;
         let parsed = parse_llm_json_content(raw).unwrap();
         assert_eq!(

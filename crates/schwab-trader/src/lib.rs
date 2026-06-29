@@ -1,8 +1,10 @@
+pub mod adaptation;
 pub mod agent;
 pub mod capital;
 pub mod closure;
 pub mod learn;
 pub mod market_session;
+pub mod regime;
 pub mod cli;
 pub mod commands;
 pub mod config;
