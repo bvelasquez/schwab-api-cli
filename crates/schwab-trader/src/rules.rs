@@ -248,6 +248,8 @@ pub struct PositionSizeConfig {
 #[serde(default)]
 pub struct ExitConfig {
     pub profit_target_pct: f64,
+    /// Cap profit target at `atr_multiple × ATR%` when enabled (uses min with profit_target_pct).
+    pub profit_target_atr_cap: ProfitTargetAtrCapConfig,
     pub stop_loss_pct: f64,
     pub use_oco_at_entry: bool,
     pub trailing: TrailingConfig,
@@ -255,6 +257,14 @@ pub struct ExitConfig {
     /// Intraday max hold in minutes (0 = use closure rules only).
     pub time_stop_minutes: u32,
     pub tighten_on_earnings_within_days: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProfitTargetAtrCapConfig {
+    pub enabled: bool,
+    /// Effective target % = min(profit_target_pct, atr_multiple × daily ATR%).
+    pub atr_multiple: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -273,6 +283,15 @@ pub struct FilterConfig {
     /// Min 30d return vs benchmark (symbol % − benchmark %). None = disabled.
     #[serde(default)]
     pub min_rs_vs_benchmark_30d: Option<f64>,
+    /// Reject when pct_from_52w_high > -N (e.g. 3.0 → must be ≥3% below 52w high).
+    #[serde(default)]
+    pub min_distance_from_52w_high_pct: Option<f64>,
+    /// Between min_distance and this zone below the 52w high, shrink entry size.
+    #[serde(default)]
+    pub near_52w_high_soft_zone_pct: Option<f64>,
+    /// Position size multiplier in the soft zone (e.g. 0.5).
+    #[serde(default)]
+    pub near_52w_high_size_scalar: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -603,10 +622,20 @@ impl Default for PositionSizeConfig {
     }
 }
 
+impl Default for ProfitTargetAtrCapConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            atr_multiple: 2.5,
+        }
+    }
+}
+
 impl Default for ExitConfig {
     fn default() -> Self {
         Self {
             profit_target_pct: 8.0,
+            profit_target_atr_cap: ProfitTargetAtrCapConfig::default(),
             stop_loss_pct: 4.0,
             use_oco_at_entry: true,
             trailing: TrailingConfig::default(),
@@ -633,6 +662,9 @@ impl Default for FilterConfig {
             blocked_symbols: vec![],
             no_trade_before_earnings_days: 2,
             min_rs_vs_benchmark_30d: None,
+            min_distance_from_52w_high_pct: None,
+            near_52w_high_soft_zone_pct: None,
+            near_52w_high_size_scalar: None,
         }
     }
 }

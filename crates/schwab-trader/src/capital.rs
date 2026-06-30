@@ -224,8 +224,30 @@ pub fn capital_check_to_json(check: &CapitalCheck) -> Value {
     serde_json::to_value(check).unwrap_or(json!({}))
 }
 
-pub fn exit_prices(entry_price: f64, rules: &TraderRules) -> (f64, f64, f64) {
-    let profit = entry_price * (1.0 + rules.playbook.exit.profit_target_pct / 100.0);
+pub fn effective_profit_target_pct(
+    entry_price: f64,
+    rules: &TraderRules,
+    atr_14: Option<f64>,
+) -> f64 {
+    let base = rules.playbook.exit.profit_target_pct;
+    let cap = &rules.playbook.exit.profit_target_atr_cap;
+    if !cap.enabled {
+        return base;
+    }
+    let Some(atr) = atr_14.filter(|a| *a > 0.0 && entry_price > 0.0) else {
+        return base;
+    };
+    let atr_pct = (atr / entry_price) * 100.0;
+    base.min(cap.atr_multiple * atr_pct)
+}
+
+pub fn exit_prices(
+    entry_price: f64,
+    rules: &TraderRules,
+    atr_14: Option<f64>,
+) -> (f64, f64, f64) {
+    let profit_pct = effective_profit_target_pct(entry_price, rules, atr_14);
+    let profit = entry_price * (1.0 + profit_pct / 100.0);
     let stop = entry_price * (1.0 - rules.playbook.exit.stop_loss_pct / 100.0);
     let stop_limit = stop * 0.995;
     (profit, stop, stop_limit)
@@ -266,8 +288,24 @@ mod tests {
             accounts: vec![],
             ..TraderRules::default()
         };
-        let (profit, stop, _) = exit_prices(100.0, &rules);
+        let (profit, stop, _) = exit_prices(100.0, &rules, None);
         assert!((profit - 108.0).abs() < 0.01);
         assert!((stop - 96.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn exit_prices_atr_cap_lowers_target() {
+        let mut rules = TraderRules {
+            version: 1,
+            trader_id: "t".into(),
+            accounts: vec![],
+            ..TraderRules::default()
+        };
+        rules.playbook.exit.profit_target_pct = 8.0;
+        rules.playbook.exit.profit_target_atr_cap.enabled = true;
+        rules.playbook.exit.profit_target_atr_cap.atr_multiple = 2.5;
+        // ATR 2 on price 100 → ATR% = 2%, cap = 5% < 8%
+        let (profit, _, _) = exit_prices(100.0, &rules, Some(2.0));
+        assert!((profit - 105.0).abs() < 0.01);
     }
 }

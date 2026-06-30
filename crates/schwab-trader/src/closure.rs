@@ -299,7 +299,7 @@ async fn process_trailing_stops(
             continue;
         }
 
-        let (_, _, stop_limit) = exit_prices(pos.entry_price, rules);
+        let (_, _, stop_limit) = exit_prices(pos.entry_price, rules, None);
         let new_stop_limit = new_stop * 0.995;
 
         let bracket = replace_oco_bracket(

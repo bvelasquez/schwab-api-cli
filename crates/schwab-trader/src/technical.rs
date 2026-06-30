@@ -226,8 +226,52 @@ pub fn passes_entry_filters(
         }
     }
 
+    if let Some(min_dist) = rules.playbook.filters.min_distance_from_52w_high_pct {
+        match snap
+            .history_features
+            .as_ref()
+            .and_then(|h| h.pct_from_52w_high)
+        {
+            Some(pct) if pct > -min_dist => {
+                return Some(format!(
+                    "within {min_dist:.1}% of 52w high ({pct:.1}% from high)"
+                ));
+            }
+            None => return Some("missing pct_from_52w_high".into()),
+            _ => {}
+        }
+    }
+
     let _ = tech;
     None
+}
+
+/// Shrink position size when price is in the soft zone below the 52w-high block threshold.
+pub fn near_52w_high_size_scalar(rules: &TraderRules, snap: &TechnicalSnapshot) -> f64 {
+    let filters = &rules.playbook.filters;
+    let Some(scalar) = filters.near_52w_high_size_scalar else {
+        return 1.0;
+    };
+    let Some(soft_zone) = filters.near_52w_high_soft_zone_pct else {
+        return 1.0;
+    };
+    let min_dist = filters
+        .min_distance_from_52w_high_pct
+        .unwrap_or(soft_zone);
+    let Some(pct) = snap
+        .history_features
+        .as_ref()
+        .and_then(|h| h.pct_from_52w_high)
+    else {
+        return 1.0;
+    };
+    if pct <= -soft_zone {
+        1.0
+    } else if pct <= -min_dist {
+        scalar
+    } else {
+        1.0
+    }
 }
 
 fn passes_intraday_filters(snap: &TechnicalSnapshot, cfg: &IntradayConfig) -> Option<String> {

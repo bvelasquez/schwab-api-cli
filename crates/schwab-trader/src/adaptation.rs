@@ -31,11 +31,19 @@ pub struct PlaybookProfileOverrides {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProfileExitOverrides {
     pub profit_target_pct: Option<f64>,
+    #[serde(default)]
+    pub profit_target_atr_cap: Option<ProfileProfitTargetAtrCapOverrides>,
     pub stop_loss_pct: Option<f64>,
     pub time_stop_days: Option<u32>,
     pub time_stop_minutes: Option<u32>,
     #[serde(default)]
     pub trailing: Option<ProfileTrailingOverrides>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProfileProfitTargetAtrCapOverrides {
+    pub enabled: Option<bool>,
+    pub atr_multiple: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -82,6 +90,14 @@ pub fn apply_profile_overrides(
     if let Some(exit) = &overrides.exit {
         if let Some(v) = exit.profit_target_pct {
             pb.exit.profit_target_pct = v;
+        }
+        if let Some(cap) = &exit.profit_target_atr_cap {
+            if let Some(v) = cap.enabled {
+                pb.exit.profit_target_atr_cap.enabled = v;
+            }
+            if let Some(v) = cap.atr_multiple {
+                pb.exit.profit_target_atr_cap.atr_multiple = v;
+            }
         }
         if let Some(v) = exit.stop_loss_pct {
             pb.exit.stop_loss_pct = v;
@@ -235,7 +251,7 @@ pub async fn apply_monitor_exit_adjustments(
             continue;
         }
 
-        let (_, base_stop, _) = exit_prices(pos.entry_price, rules);
+        let (_, base_stop, _) = exit_prices(pos.entry_price, rules, None);
         let stop_range = (pos.entry_price - base_stop).max(0.01);
         let delta_pct = if action == "tighten_exits" {
             cfg.max_tighten_pct
