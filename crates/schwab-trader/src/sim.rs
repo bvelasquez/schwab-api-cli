@@ -120,6 +120,7 @@ pub fn record_sim_entry(
         fill_price,
         position_id,
         Utc::now(),
+        None,
     )
 }
 
@@ -132,6 +133,7 @@ pub fn record_sim_entry_at(
     fill_price: f64,
     position_id: &str,
     opened_at: DateTime<Utc>,
+    atr_14: Option<f64>,
 ) -> Result<()> {
     let cost = quantity * fill_price;
     let ledger = ensure_ledger(state, rules);
@@ -142,7 +144,7 @@ pub fn record_sim_entry_at(
     );
     ledger.cash_usd -= cost;
 
-    let (profit_limit, stop_px, _) = exit_prices(fill_price, rules);
+    let (profit_limit, stop_px, _) = exit_prices(fill_price, rules, atr_14);
     state.open_positions.insert(
         position_id.to_string(),
         SwingPosition {

@@ -85,22 +85,50 @@ pub fn capital_lines(ctx: &WatchContext) -> Vec<Line<'static>> {
 }
 
 pub fn position_lines(ctx: &WatchContext) -> Vec<Line<'static>> {
-    if ctx.state.open_positions.is_empty() {
-        return vec![Line::from("(no open swing positions)")];
-    }
-    ctx.state
-        .open_positions
-        .values()
-        .map(|p| {
-            Line::from(format!(
-                "{} x{:.0} @ ${:.2} │ stop ${:.2} │ target ${:.2}",
-                p.symbol, p.quantity, p.entry_price, p.stop_price, p.profit_limit
-            ))
-        })
-        .collect()
+    crate::ui::live::position_monitor_lines(
+        &ctx.rules,
+        &ctx.state,
+        ctx.live.as_ref(),
+        chrono::Utc::now(),
+    )
+}
+
+pub fn position_rules_context_lines(ctx: &WatchContext) -> Vec<Line<'static>> {
+    crate::ui::live::regime_and_rules_lines(ctx)
 }
 
 pub fn candidate_lines(ctx: &WatchContext) -> Vec<Line<'static>> {
+    let mut lines = candidate_lines_core(ctx);
+    if let (Some(live), Some(scan)) = (ctx.live.as_ref(), ctx.scan()) {
+        if let Some(cands) = scan.get("candidates").and_then(|v| v.as_array()) {
+            for (i, c) in cands.iter().enumerate() {
+                let sym = c
+                    .get("symbol")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_uppercase();
+                if let Some(q) = live.quotes.get(&sym) {
+                    let rsi = c
+                        .pointer("/technical_context/rsi_14")
+                        .and_then(|v| v.as_f64())
+                        .map(|r| format!("RSI {r:.1}"))
+                        .unwrap_or_default();
+                    // lines 0 = header, then one per candidate
+                    let idx = i + 1;
+                    if idx < lines.len() {
+                        lines[idx] = Line::from(format!(
+                            "  + {sym}  last ${:.2}  {rsi}",
+                            q.last
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    lines
+}
+
+fn candidate_lines_core(ctx: &WatchContext) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     if let Some(scan) = ctx.scan() {
         if let Some(cands) = scan.get("candidates").and_then(|v| v.as_array()) {
@@ -167,31 +195,70 @@ pub fn entry_attempt_lines(ctx: &WatchContext) -> Vec<Line<'static>> {
 }
 
 pub fn llm_lines(ctx: &WatchContext) -> Vec<Line<'static>> {
-    let Some(llm) = ctx.llm() else {
-        return vec![Line::from("(no LLM review yet)")];
-    };
-    if let Some(err) = llm.get("error").and_then(|v| v.as_str()) {
-        return vec![Line::from(format!("error: {err}"))];
-    }
-    let mut lines = vec![
+    let tick = ctx.last_tick();
+    let llm = ctx.llm().or(ctx.state.last_llm_summary.as_ref());
+
+    let mut header = vec![
         Line::from(format!(
-            "phase: {}",
-            llm.get("phase").and_then(|v| v.as_str()).unwrap_or("?")
+            "session: {}  │  phase: {}",
+            ctx.session_label(),
+            ctx.llm_phase().unwrap_or("—")
         )),
-        Line::from(format!(
-            "entry: {}",
-            llm.get("entry_recommendation")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?")
-        )),
-        Line::from(""),
-        Line::from(
-            llm.get("market_commentary")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-        ),
     ];
+    if let Some(open) = ctx.market_open() {
+        let style = if open {
+            Style::default().fg(Color::Green)
+        } else {
+            Style::default().fg(Color::Yellow)
+        };
+        header.push(Line::from(Span::styled(
+            if open {
+                "market: OPEN (regular session)"
+            } else {
+                "market: CLOSED"
+            },
+            style,
+        )));
+    }
+    if let Some(reason) = ctx.entry_block_reason() {
+        header.push(Line::from(vec![
+            Span::styled("entries blocked: ", Style::default().fg(Color::Yellow)),
+            Span::raw(reason.to_string()),
+        ]));
+    }
+    if let Some(ts) = ctx.state.last_tick.as_ref() {
+        header.push(Line::from(format!(
+            "agent tick {}  │  review at {}",
+            ctx.state.tick_count,
+            ts.format("%H:%M:%S UTC")
+        )));
+    }
+    header.push(Line::from(""));
+
+    let Some(llm) = llm else {
+        header.push(Line::from("(no LLM review on last tick — monitor runs every few ticks when entries are blocked)"));
+        return header;
+    };
+
+    if let Some(err) = llm.get("error").and_then(|v| v.as_str()) {
+        header.push(Line::from(format!("error: {err}")));
+        return header;
+    }
+
+    let mut lines = header;
+    lines.push(Line::from(format!(
+        "entry recommendation: {}",
+        llm.get("entry_recommendation")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?")
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(
+        llm.get("market_commentary")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+    ));
     if let Some(alerts) = llm.get("risk_alerts").and_then(|v| v.as_array()) {
         for a in alerts {
             if let Some(s) = a.as_str() {
@@ -202,14 +269,18 @@ pub fn llm_lines(ctx: &WatchContext) -> Vec<Line<'static>> {
             }
         }
     }
+    if tick.and_then(|t| t.get("llm")).is_none() && ctx.state.last_llm_summary.is_some() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "(showing last stored review — no new LLM call this tick)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
     lines
 }
 
 pub fn journal_lines(ctx: &WatchContext) -> Vec<Line<'static>> {
-    if ctx.journal_tail.is_empty() {
-        return vec![Line::from("(journal empty)")];
-    }
-    ctx.journal_tail.iter().map(|l| Line::from(l.clone())).collect()
+    crate::ui::journal_view::format_journal_events(&ctx.journal_events)
 }
 
 pub fn log_lines(ctx: &WatchContext) -> Vec<Line<'static>> {

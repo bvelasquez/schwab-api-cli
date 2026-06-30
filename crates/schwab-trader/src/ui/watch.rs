@@ -1,5 +1,6 @@
 use std::io;
 use std::path::Path;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -17,9 +18,10 @@ use ratatui::Terminal;
 
 use crate::ui::context::{header_line, WatchContext};
 use crate::ui::health::SharedAgentHealth;
+use crate::ui::live::WatchLiveSnapshot;
 use crate::ui::render::{
     candidate_lines, capital_lines, entry_attempt_lines, journal_lines, llm_lines, log_lines,
-    overview_agent_lines, position_lines, rules_summary,
+    overview_agent_lines, position_lines, position_rules_context_lines, rules_summary,
 };
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(3);
@@ -37,6 +39,7 @@ pub struct WatchConfig {
     pub dry_run: bool,
     pub simulate: bool,
     pub agent_health: Option<SharedAgentHealth>,
+    pub live: Arc<RwLock<WatchLiveSnapshot>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -92,6 +95,7 @@ struct WatchUiState {
     journal_scroll: ScrollState,
     log_scroll: ScrollState,
     llm_scroll: ScrollState,
+    positions_scroll: ScrollState,
 }
 
 pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
@@ -103,7 +107,7 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
     terminal.clear()?;
 
     let mut tab = WatchTab::Overview;
-    let mut ctx = WatchContext::load(&config.rules_path)?;
+    let mut ctx = load_watch_context(&config.rules_path, &config.live)?;
     let mut last_refresh = Instant::now();
     let agent_mode_str = match config.agent_mode {
         WatchAgentMode::Embedded => "embedded agent",
@@ -114,6 +118,7 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
         journal_scroll: ScrollState { scroll: 0 },
         log_scroll: ScrollState { scroll: 0 },
         llm_scroll: ScrollState { scroll: 0 },
+        positions_scroll: ScrollState { scroll: 0 },
     };
 
     loop {
@@ -154,7 +159,7 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
                         KeyCode::Char('6') => tab = WatchTab::Llm,
                         KeyCode::Char('j') | KeyCode::Down => scroll_tab(tab, &mut scroll, 1),
                         KeyCode::Char('k') | KeyCode::Up => scroll_tab(tab, &mut scroll, -1),
-                        KeyCode::Char('r') => match WatchContext::load(&config.rules_path) {
+                        KeyCode::Char('r') => match load_watch_context(&config.rules_path, &config.live) {
                             Ok(c) => {
                                 ctx = c;
                                 last_refresh = Instant::now();
@@ -170,7 +175,7 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
                 }
             }
         } else if last_refresh.elapsed() >= REFRESH_INTERVAL {
-            if let Ok(c) = WatchContext::load(&config.rules_path) {
+            if let Ok(c) = load_watch_context(&config.rules_path, &config.live) {
                 ctx = c;
             }
             last_refresh = Instant::now();
@@ -183,11 +188,20 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
     Ok(())
 }
 
+fn load_watch_context(
+    rules_path: &Path,
+    live: &Arc<RwLock<WatchLiveSnapshot>>,
+) -> Result<WatchContext> {
+    let snapshot = live.read().ok().map(|g| g.clone());
+    WatchContext::load_with_live(rules_path, snapshot)
+}
+
 fn scroll_tab(tab: WatchTab, state: &mut WatchUiState, delta: i16) {
     let scroll = match tab {
         WatchTab::Journal => &mut state.journal_scroll.scroll,
         WatchTab::Llm => &mut state.llm_scroll.scroll,
         WatchTab::Overview => &mut state.log_scroll.scroll,
+        WatchTab::Positions => &mut state.positions_scroll.scroll,
         _ => return,
     };
     if delta < 0 {
@@ -254,9 +268,23 @@ fn draw_ui(
     match tab {
         WatchTab::Overview => render_overview(f, outer[2], ctx, agent_mode, dry_run, simulate, health, scroll),
         WatchTab::Positions => {
+            let area = outer[2];
+            let split = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(8), Constraint::Min(4)])
+                .split(area);
             f.render_widget(
-                wrap_paragraph(position_lines(ctx)).block(panel_block("Open Positions")),
-                outer[2],
+                wrap_paragraph(position_rules_context_lines(ctx))
+                    .block(panel_block("Regime / Rules")),
+                split[0],
+            );
+            render_scroll(
+                f,
+                split[1],
+                position_lines(ctx),
+                scroll.positions_scroll.scroll,
+                "Live Positions",
+                live_quote_footer(ctx),
             );
         }
         WatchTab::Candidates => {
@@ -299,9 +327,29 @@ fn draw_ui(
         ratatui::text::Span::styled("j/k scroll ", Style::default().fg(Color::DarkGray)),
         ratatui::text::Span::styled("r refresh ", Style::default().fg(Color::DarkGray)),
         ratatui::text::Span::styled("q quit ", Style::default().fg(Color::DarkGray)),
+        ratatui::text::Span::styled(live_quote_footer(ctx), Style::default().fg(Color::DarkGray)),
+        ratatui::text::Span::raw(" "),
         ratatui::text::Span::styled(status_msg, Style::default().fg(Color::DarkGray)),
     ]);
     f.render_widget(wrap_paragraph(footer), outer[3]);
+}
+
+fn live_quote_footer(ctx: &WatchContext) -> String {
+    if let Some(live) = &ctx.live {
+        if let Some(at) = live.last_fetch {
+            let age = (chrono::Utc::now() - at).num_seconds();
+            return format!("quotes {}s ago", age.max(0));
+        }
+        if let Some(err) = &live.last_error {
+            let short = if err.len() > 40 {
+                format!("{}…", &err[..37])
+            } else {
+                err.clone()
+            };
+            return format!("quotes: {short}");
+        }
+    }
+    String::new()
 }
 
 fn render_overview(
@@ -352,7 +400,21 @@ fn render_overview(
     );
 
     f.render_widget(
-        wrap_paragraph(entry_attempt_lines(ctx)).block(panel_block("Last Entry")),
+        wrap_paragraph(if ctx.state.open_positions.is_empty() {
+            entry_attempt_lines(ctx)
+        } else {
+            let mut lines = position_lines(ctx);
+            if lines.len() > 6 {
+                lines.truncate(6);
+                lines.push(Line::from("… see Positions tab"));
+            }
+            lines
+        })
+        .block(panel_block(if ctx.state.open_positions.is_empty() {
+            "Last Entry"
+        } else {
+            "Live Positions (preview)"
+        })),
         rows[2],
     );
 

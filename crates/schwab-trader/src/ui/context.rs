@@ -8,37 +8,38 @@ use crate::agent::state::{load_state, TraderState};
 use crate::journal;
 use crate::rules::TraderRules;
 
+use crate::ui::live::WatchLiveSnapshot;
+
 #[derive(Debug, Clone)]
 pub struct WatchContext {
     pub rules_path: PathBuf,
     pub rules: TraderRules,
     pub state: TraderState,
     pub log_tail: Vec<String>,
-    pub journal_tail: Vec<String>,
+    pub journal_events: Vec<serde_json::Value>,
+    pub live: Option<WatchLiveSnapshot>,
 }
 
 impl WatchContext {
     pub fn load(rules_path: &Path) -> Result<Self> {
+        Self::load_with_live(rules_path, None)
+    }
+
+    pub fn load_with_live(
+        rules_path: &Path,
+        live: Option<WatchLiveSnapshot>,
+    ) -> Result<Self> {
         let rules = TraderRules::load(rules_path)?;
         let state = load_state(rules_path, &rules.trader_id)?;
         let log_tail = tail_file(&log_path(rules_path), 40);
-        let journal_tail = journal::read_recent(rules_path, 15)?
-            .into_iter()
-            .map(|e| {
-                let ty = e
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("event");
-                let payload = e.get("payload").cloned().unwrap_or_default();
-                format!("{ty}: {}", payload)
-            })
-            .collect();
+        let journal_events = journal::read_recent(rules_path, 20)?;
         Ok(Self {
             rules_path: rules_path.to_path_buf(),
             rules,
             state,
             log_tail,
-            journal_tail,
+            journal_events,
+            live,
         })
     }
 
@@ -65,6 +66,33 @@ impl WatchContext {
 
     pub fn llm(&self) -> Option<&serde_json::Value> {
         self.last_tick().and_then(|t| t.get("llm"))
+    }
+
+    pub fn llm_phase(&self) -> Option<&str> {
+        self.last_tick()
+            .and_then(|t| t.get("llm_phase"))
+            .and_then(|v| v.as_str())
+            .or_else(|| self.llm().and_then(|l| l.get("phase")).and_then(|v| v.as_str()))
+    }
+
+    pub fn session_label(&self) -> &str {
+        self.last_tick()
+            .and_then(|t| t.get("session"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("—")
+    }
+
+    pub fn entry_block_reason(&self) -> Option<&str> {
+        self.last_tick()
+            .and_then(|t| t.get("entry_block_reason"))
+            .and_then(|v| v.as_str())
+    }
+
+    pub fn market_open(&self) -> Option<bool> {
+        self.last_tick()
+            .and_then(|t| t.get("market_clock"))
+            .and_then(|c| c.get("regular_session_open"))
+            .and_then(|v| v.as_bool())
     }
 }
 
@@ -96,8 +124,17 @@ pub fn header_line(
     } else {
         "LIVE"
     };
+    let quotes = ctx
+        .live
+        .as_ref()
+        .and_then(|l| l.last_fetch)
+        .map(|t| {
+            let age = (chrono::Utc::now() - t).num_seconds().max(0);
+            format!(" │ quotes {age}s")
+        })
+        .unwrap_or_default();
     Line::from(format!(
-        " schwab-trader watch │ {} │ {} │ tick {} │ {} open ",
+        " schwab-trader watch │ {} │ {} │ tick {} │ {} open{quotes} ",
         ctx.rules.trader_id,
         mode,
         ctx.state.tick_count,

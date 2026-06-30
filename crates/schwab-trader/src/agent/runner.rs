@@ -409,6 +409,11 @@ async fn tick_regular(
     state.regular_tick_count += 1;
     let profile_before = state.active_profile.clone();
 
+    if at_open {
+        // Overnight digest text often says "market closed" — drop it at the open.
+        state.open_playbook = None;
+    }
+
     let reconcile_report = reconcile_tick(
         runtime, rules_path, rules, state, api, account_hash,
     )
@@ -478,20 +483,23 @@ async fn tick_regular(
                 phase,
                 json!({
                     "phase": phase,
+                    "session": "regular",
                     "regular_tick": state.regular_tick_count,
                     "at_open": at_open,
+                    "market_clock": crate::market_session::market_clock_json(&tick_rules),
                     "playbook_style": tick_rules.playbook.style,
                     "adaptable_playbook": crate::learn::adaptable_playbook_snapshot(&tick_rules),
                     "profile_catalog": profile_catalog(rules),
                     "active_profile": state.active_profile,
                     "active_profile_reason": state.active_profile_reason,
                     "regime": regime.to_json(),
-                    "open_playbook": state.open_playbook,
+                    "overnight_digest_snapshot": state.open_playbook,
                     "capital_check": capital_check_to_json(&capital),
                     "scan": scan,
                     "open_positions": state.open_positions,
                     "sim_stats": compute_stats(state),
                     "closure_exits_this_tick": closure_exits,
+                    "entry_block_reason": state.entry_block_reason(&tick_rules),
                     "entries_blocked": crate::closure::entry_block_reason(&tick_rules),
                 }),
             )
@@ -694,6 +702,14 @@ async fn tick_regular(
         "learn": learn_result,
         "entry_attempts": entry_attempts,
         "closure_exits": closure_exits,
+        "entry_block_reason": state.entry_block_reason(&tick_rules),
+        "entry_limits": {
+            "trades_today": state.trades_today,
+            "max_new_entries_per_day": tick_rules.playbook.entry.max_new_entries_per_day,
+            "max_trades_per_day": tick_rules.risk.max_trades_per_day,
+            "max_positions": tick_rules.playbook.entry.max_positions,
+            "active_profile": state.active_profile,
+        },
         "sim_stats": compute_stats(state),
         "dry_run": runtime.dry_run,
         "simulate": runtime.simulate,
@@ -738,7 +754,10 @@ fn resolve_regular_llm_phase<'a>(
     if !rules.llm.enabled {
         return None;
     }
-    if has_candidates {
+
+    let entry_blocked = state.entry_block_reason(rules);
+
+    if has_candidates && entry_blocked.is_none() {
         let use_web = should_use_web_research(
             state.llm_review_count,
             rules.llm.web_research_every_reviews,
@@ -752,6 +771,7 @@ fn resolve_regular_llm_phase<'a>(
         let phase = if use_web { "web" } else { "selection" };
         return Some((phase, model, use_web));
     }
+
     if has_positions
         && should_run_monitor_review(
             state.regular_tick_count,
@@ -761,6 +781,7 @@ fn resolve_regular_llm_phase<'a>(
     {
         return Some(("monitor", &rules.llm.monitor_model, false));
     }
+
     None
 }
 

@@ -215,10 +215,18 @@ impl TraderState {
             }
         }
         if self.trades_today >= rules.risk.max_trades_per_day {
-            return Some("max_trades_per_day reached".into());
+            return Some(format!(
+                "max_trades_per_day reached ({}/{})",
+                self.trades_today,
+                rules.risk.max_trades_per_day
+            ));
         }
         if self.trades_today >= rules.playbook.entry.max_new_entries_per_day {
-            return Some("max_new_entries_per_day reached".into());
+            return Some(format!(
+                "max_new_entries_per_day reached ({}/{})",
+                self.trades_today,
+                rules.playbook.entry.max_new_entries_per_day
+            ));
         }
         if self.open_positions.len() >= rules.playbook.entry.max_positions as usize {
             return Some("max_positions reached".into());

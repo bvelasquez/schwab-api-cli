@@ -6,6 +6,7 @@ use crate::agent::runner::{run_agent_loop, AgentRunOptions};
 use crate::config::TraderRuntime;
 use crate::rules::TraderRules;
 use crate::ui::health::new_shared_health;
+use crate::ui::live_feed::{new_live_snapshot, spawn_live_quote_feed};
 use crate::ui::{run_watch_tui, WatchAgentMode, WatchConfig};
 use schwab_cli::safety::require_trading_approval;
 
@@ -67,12 +68,28 @@ pub async fn run(
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     }
 
+    let live = new_live_snapshot();
+    let _quote_feed = match runtime.build_market_api() {
+        Ok(market) => Some(spawn_live_quote_feed(
+            rules_path.to_path_buf(),
+            live.clone(),
+            market,
+        )),
+        Err(err) => {
+            if let Ok(mut g) = live.write() {
+                g.last_error = Some(format!("market API: {err:#}"));
+            }
+            None
+        }
+    };
+
     let watch_config = WatchConfig {
         rules_path: rules_path.to_path_buf(),
         agent_mode,
         dry_run: runtime.dry_run,
         simulate: runtime.simulate,
         agent_health,
+        live,
     };
 
     let watch_result = tokio::task::spawn_blocking(move || run_watch_tui(&watch_config))
