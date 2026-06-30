@@ -1,8 +1,8 @@
 use anyhow::Result;
-use schwab_market_data::MarketDataApi;
 use serde_json::{json, Value};
-use std::sync::Arc;
 
+use crate::history_features::{compute_history_features, HistoryFeatures};
+use crate::market_ctx::MarketCtx;
 use crate::rules::{EntryConfig, IntradayConfig, TechnicalConfig, TraderRules};
 
 #[derive(Debug, Clone)]
@@ -31,51 +31,96 @@ pub struct TechnicalSnapshot {
     pub above_sma_20: Option<bool>,
     pub above_sma_50: Option<bool>,
     pub intraday: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub history_features: Option<HistoryFeatures>,
 }
 
 pub async fn fetch_technical_snapshot(
-    market: &Arc<MarketDataApi>,
+    market: &MarketCtx,
     rules: &TraderRules,
     symbol: &str,
 ) -> Result<TechnicalSnapshot> {
+    fetch_technical_snapshot_with_benchmark(market, rules, symbol, None).await
+}
+
+pub async fn fetch_technical_snapshot_with_benchmark(
+    market: &MarketCtx,
+    rules: &TraderRules,
+    symbol: &str,
+    benchmark_candles: Option<&[Candle]>,
+) -> Result<TechnicalSnapshot> {
     let symbol = symbol.trim().to_uppercase();
-    let quote_raw = market
-        .quotes()
-        .get_quote(&symbol, Some("quote"), None)
-        .await?;
-    let quote = extract_quote(&quote_raw, &symbol);
-    let last = quote_f64(&quote, "lastPrice").unwrap_or(0.0);
-    let bid = quote_f64(&quote, "bidPrice");
-    let ask = quote_f64(&quote, "askPrice");
+    let (last, bid, ask) = market.quote_last_bid_ask(&symbol).await?;
     let spread_pct = match (bid, ask, last) {
         (Some(b), Some(a), l) if l > 0.0 => Some(((a - b) / l) * 100.0),
         _ => None,
     };
 
     let hist = rules.effective_history();
-    let history = market
-        .price_history()
-        .get(
+    let candles = market
+        .daily_candles_with_config(
             &symbol,
-            Some(&hist.period_type),
-            Some(hist.period),
-            Some(&hist.frequency_type),
-            None,
-            None,
-            None,
-            None,
-            None,
+            &hist.period_type,
+            hist.period,
+            &hist.frequency_type,
         )
         .await?;
-    let candles = parse_candles(&history);
 
+    let bench_owned;
+    let bench_for_features: Option<&[Candle]> = if let Some(b) = benchmark_candles {
+        Some(b)
+    } else {
+        let bench_sym = rules.adaptation.regime.benchmark_symbol.trim();
+        if bench_sym.is_empty() {
+            None
+        } else {
+            bench_owned = market
+                .daily_candles_with_config(bench_sym, "year", 1, "daily")
+                .await
+                .unwrap_or_default();
+            if bench_owned.is_empty() {
+                None
+            } else {
+                Some(bench_owned.as_slice())
+            }
+        }
+    };
+
+    let mut snap = build_technical_snapshot(
+        &symbol,
+        last,
+        bid,
+        ask,
+        spread_pct,
+        &candles,
+        rules.is_intraday(),
+    )?;
+    if candles.len() >= 30 {
+        snap.history_features = Some(compute_history_features(
+            &candles,
+            last,
+            bench_for_features,
+        ));
+    }
+    Ok(snap)
+}
+
+pub fn build_technical_snapshot(
+    symbol: &str,
+    last: f64,
+    bid: Option<f64>,
+    ask: Option<f64>,
+    spread_pct: Option<f64>,
+    candles: &[Candle],
+    intraday: bool,
+) -> Result<TechnicalSnapshot> {
     let closes: Vec<f64> = candles.iter().map(|c| c.close).collect();
     let volumes: Vec<f64> = candles.iter().map(|c| c.volume).collect();
     let sma_9 = sma(&closes, 9);
     let sma_20 = sma(&closes, 20);
     let sma_50 = sma(&closes, 50);
     let rsi_14 = rsi(&closes, 14);
-    let atr_14 = atr(&candles, 14);
+    let atr_14 = atr(candles, 14);
     let volume_sma_20 = sma(&volumes, 20);
     let relative_volume = candles.last().and_then(|last_bar| {
         volume_sma_20
@@ -84,7 +129,7 @@ pub async fn fetch_technical_snapshot(
     });
 
     Ok(TechnicalSnapshot {
-        symbol: symbol.clone(),
+        symbol: symbol.to_string(),
         last,
         bid,
         ask,
@@ -99,7 +144,8 @@ pub async fn fetch_technical_snapshot(
         above_sma_9: sma_9.map(|s| last >= s),
         above_sma_20: sma_20.map(|s| last >= s),
         above_sma_50: sma_50.map(|s| last >= s),
-        intraday: rules.is_intraday(),
+        intraday,
+        history_features: None,
     })
 }
 
@@ -164,6 +210,22 @@ pub fn passes_entry_filters(
         }
     }
 
+    if let Some(min_rs) = rules.playbook.filters.min_rs_vs_benchmark_30d {
+        match snap
+            .history_features
+            .as_ref()
+            .and_then(|h| h.rs_vs_benchmark_30d_pct)
+        {
+            Some(rs) if rs < min_rs => {
+                return Some(format!(
+                    "RS vs benchmark 30d {rs:.1}% below min {min_rs:.1}%"
+                ));
+            }
+            None => return Some("missing rs_vs_benchmark_30d".into()),
+            _ => {}
+        }
+    }
+
     let _ = tech;
     None
 }
@@ -205,38 +267,6 @@ fn passes_intraday_filters(snap: &TechnicalSnapshot, cfg: &IntradayConfig) -> Op
 
 pub fn technical_to_json(snap: &TechnicalSnapshot) -> Value {
     serde_json::to_value(snap).unwrap_or(json!({}))
-}
-
-fn extract_quote(raw: &Value, symbol: &str) -> Value {
-    if let Some(entry) = raw.get(&symbol) {
-        return entry.get("quote").cloned().unwrap_or(json!({}));
-    }
-    raw.get("quote")
-        .cloned()
-        .unwrap_or_else(|| raw.clone())
-}
-
-fn quote_f64(quote: &Value, field: &str) -> Option<f64> {
-    quote.get(field).and_then(|v| v.as_f64())
-}
-
-fn parse_candles(history: &Value) -> Vec<Candle> {
-    history
-        .get("candles")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|c| {
-                    Some(Candle {
-                        close: c.get("close")?.as_f64()?,
-                        high: c.get("high")?.as_f64()?,
-                        low: c.get("low")?.as_f64()?,
-                        volume: c.get("volume")?.as_f64()?,
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 fn sma(values: &[f64], period: usize) -> Option<f64> {
@@ -293,5 +323,21 @@ mod tests {
     fn sma_computes_tail() {
         let v = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         assert!((sma(&v, 3).unwrap() - 4.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn build_snapshot_from_candles() {
+        let candles: Vec<Candle> = (0..60)
+            .map(|i| Candle {
+                close: 100.0 + i as f64,
+                high: 101.0 + i as f64,
+                low: 99.0 + i as f64,
+                volume: 1_000_000.0,
+            })
+            .collect();
+        let snap = build_technical_snapshot("TEST", 159.0, None, None, None, &candles, false)
+            .unwrap();
+        assert!(snap.sma_20.is_some());
+        assert!(snap.rsi_14.is_some());
     }
 }

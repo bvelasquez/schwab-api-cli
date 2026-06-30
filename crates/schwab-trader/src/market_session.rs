@@ -24,7 +24,11 @@ pub fn now_in_tz(tz: Tz) -> DateTime<Tz> {
 }
 
 pub fn trading_day(tz_name: &str) -> NaiveDate {
-    now_in_tz(trading_tz(tz_name)).date_naive()
+    trading_day_at(Utc::now(), tz_name)
+}
+
+pub fn trading_day_at(now: DateTime<Utc>, tz_name: &str) -> NaiveDate {
+    now.with_timezone(&trading_tz(tz_name)).date_naive()
 }
 
 pub fn parse_et_hms(hhmm: &str) -> Option<NaiveTime> {
@@ -74,22 +78,36 @@ pub fn past_entry_cutoff(rules: &TraderRules) -> bool {
 }
 
 pub fn must_flatten_now(rules: &TraderRules) -> bool {
+    must_flatten_now_at(rules, Utc::now())
+}
+
+pub fn must_flatten_now_at(rules: &TraderRules, now: DateTime<Utc>) -> bool {
     if !rules.playbook.closure.no_overnight_holds {
         return false;
     }
     let Some(flatten) = parse_et_hms(&rules.playbook.closure.flatten_by_et) else {
         return false;
     };
-    if !equity_regular_session_open(Utc::now(), &rules.schedule.timezone) {
+    if !equity_regular_session_open(now, &rules.schedule.timezone) {
         return rules.is_intraday();
     }
-    now_in_tz(trading_tz(&rules.schedule.timezone)).time() >= flatten
+    now.with_timezone(&trading_tz(&rules.schedule.timezone))
+        .time()
+        >= flatten
 }
 
 pub fn opened_on_prior_et_day(opened_at: DateTime<Utc>, tz_name: &str) -> bool {
+    opened_on_prior_et_day_at(opened_at, tz_name, Utc::now())
+}
+
+pub fn opened_on_prior_et_day_at(
+    opened_at: DateTime<Utc>,
+    tz_name: &str,
+    now: DateTime<Utc>,
+) -> bool {
     let tz = trading_tz(tz_name);
     let open_day = opened_at.with_timezone(&tz).date_naive();
-    let today = now_in_tz(tz).date_naive();
+    let today = now.with_timezone(&tz).date_naive();
     open_day < today
 }
 

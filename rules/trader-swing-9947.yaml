@@ -1,48 +1,30 @@
-# Equity swing trader — beneficiary account 9947 (dedicated sleeve).
-# Auth: schwab auth login (shared token store with schwab CLI)
-# Validate: schwab-trader rules validate rules/trader-swing-9947.yaml --json
-# Dry tick: schwab-trader agent run rules/trader-swing-9947.yaml --dry-run --once --json
-# Sim tick: schwab-trader agent run rules/trader-swing-9947.yaml --simulate --once --json
-# Live: schwab-trader agent run rules/trader-swing-9947.yaml --trust --yes --json
-
 version: 1
 trader_id: swing-beneficiary-9947
-
 accounts:
-  - hash: 1BA372D01BE13B486750C8433AFDCFB96C2A694770C4688417F0BEA6B676B25B
-    label: Beneficiary account ending 9947 — equity swing sleeve
-    type: margin
-    enabled: true
-
+- hash: 1BA372D01BE13B486750C8433AFDCFB96C2A694770C4688417F0BEA6B676B25B
+  label: Beneficiary account ending 9947 — equity swing sleeve
+  type: margin
+  enabled: true
 capital:
-  # v1: hard ceiling on market value of positions opened by this trader
-  fixed_sleeve_cap_usd: 4000
-
-  # Max deploy from free cash (after options reserve + floor)
-  max_pct_of_free_cash: 80
-
-  min_cash_floor_usd: 500
-
+  fixed_sleeve_cap_usd: 4000.0
+  max_pct_of_free_cash: 80.0
+  min_cash_floor_usd: 500.0
   options_risk:
-    # Options agent on same account — reserve worst-case spread loss before equity buys
     rules_file: rules/options-pilot-9947.yaml
-    fallback_reserve_usd: 500
-    buffer_pct: 10
-
-  # Never trade or count toward swing sleeve
+    fallback_reserve_usd: 500.0
+    buffer_pct: 10.0
   core_holdings:
-    - SGOV
-    - JPST
-    - JAAA
-    - SCHD
-    - VYM
-
+  - SGOV
+  - JPST
+  - JAAA
+  - SCHD
+  - VYM
 schedule:
   tick_interval_seconds: 90
   market_hours_only: true
   timezone: America/New_York
   premarket_scan: true
-  premarket_start_et: "08:00"
+  premarket_start_et: 08:00
   premarket_tick_interval_seconds: 1800
   premarket_open_grounding_interval_seconds: 900
   overnight:
@@ -50,7 +32,6 @@ schedule:
     tick_interval_seconds: 3600
     web_digest: true
     skip_llm_when_flat: true
-
 playbook:
   style: swing
   direction: long
@@ -58,23 +39,28 @@ playbook:
     min_days: 2
     max_days: 30
     target_days: 10
-
   entry:
     min_price_usd: 5.0
-    min_avg_volume_20d: 500000
+    min_avg_volume_20d: 500000.0
     max_spread_pct: 0.6
-    require_above_sma: [20, 50]
-    rsi_14_range: [35, 68]
+    require_above_sma:
+    - 20
+    - 50
+    rsi_14_range:
+    - 35.0
+    - 68.0
     max_positions: 4
     max_new_entries_per_day: 1
     position_size:
-      method: risk_pct
+      method: atr_normalized
       risk_per_trade_pct: 0.75
-      max_position_pct: 15.0
-
+      max_position_pct: 18.0
+      atr_baseline_pct: 2.0
+      atr_vol_scalar_min: 0.5
+      atr_vol_scalar_max: 1.5
   exit:
     profit_target_pct: 8.0
-    stop_loss_pct: 4.0
+    stop_loss_pct: 5.0
     use_oco_at_entry: true
     trailing:
       enabled: true
@@ -83,77 +69,116 @@ playbook:
     time_stop_days: 30
     time_stop_minutes: 0
     tighten_on_earnings_within_days: 3
-
   closure:
     no_overnight_holds: false
-    flatten_by_et: "15:55"
-    block_entries_after_et: "15:30"
-
+    flatten_by_et: 15:55
+    block_entries_after_et: 15:30
   intraday:
     min_relative_volume: 1.2
     momentum_rsi_min: 52.0
-    require_above_sma: [9, 20]
-
+    require_above_sma:
+    - 9
+    - 20
   filters:
-    blocked_symbols: []
+    blocked_symbols:
+    - TQQQ
+    - JPM
+    - XLK
+    - MU
     no_trade_before_earnings_days: 2
-
-  # Short selling: allowed in schema but OFF by default (danger zone).
-  # Requires safety.json allow_short_sales: true and playbook.direction: both
+    min_rs_vs_benchmark_30d: -4.0
   short:
     enabled: false
-    min_avg_volume_20d: 2000000
+    min_avg_volume_20d: 2000000.0
     max_spread_pct: 0.4
-
 watchlists:
   core:
-    - AAPL
-    - MSFT
-    - NVDA
-    - AMD
-    - META
-    - GOOGL
-    - SPY
-    - QQQ
-    - IWM
-    - TQQQ
-  thematic: []
+  - AAPL
+  - MSFT
+  - AMD
+  - GOOGL
+  - QQQ
+  - IWM
+  thematic:
+  - symbol: SMH
+    tags:
+    - screened
+  - symbol: ASML
+    tags:
+    - screened
+  - symbol: UNH
+    tags:
+    - screened
+  - symbol: RTX
+    tags:
+    - screened
+  - symbol: DIA
+    tags:
+    - screened
+  - symbol: XLI
+    tags:
+    - screened
+  - symbol: LLY
+    tags:
+    - screened
+  - symbol: CAT
+    tags:
+    - screened
+  candidate_pool_file: universe/sp100-liquid.yaml
+  candidate_pool: []
+  screened:
+    enabled: true
+    top_n: 12
+    min_score: 0.45
+    refresh_days: 7
   dynamic: true
   max_dynamic_symbols: 5
-
 sources:
   web:
     enabled: true
     pick_budget_per_day: 5
     require_corroboration: 1
     providers:
-      - id: perplexity_sonar
-        type: llm_web
-        weight: 1.0
-  # Prefetched URLs/APIs/RSS injected into LLM prompts (see docs/TRADER_RULES.md)
+    - id: perplexity_sonar
+      type: llm_web
+      weight: 1.0
   feeds:
-    - id: marketwatch_headlines
-      label: MarketWatch Top Stories
-      kind: rss
-      url: https://feeds.marketwatch.com/marketwatch/topstories/
-    - id: cnbc_top
-      label: CNBC Top News
-      kind: rss
-      url: https://www.cnbc.com/id/100003114/device/rss/rss.html
-      phases:
-        - premarket_digest
-        - overnight_digest
-    # Bearer API example (set POLYGON_API_KEY in env, then enable):
-    - id: polygon_market_status
-      label: Polygon market status
-      enabled: false
-      kind: api
-      url: https://api.polygon.io/v1/marketstatus/now
-      auth:
-        kind: bearer
-        token_env: POLYGON_API_KEY
-      phases: [all]
-
+  - id: marketwatch_headlines
+    label: MarketWatch Top Stories
+    enabled: true
+    kind: rss
+    url: https://feeds.marketwatch.com/marketwatch/topstories/
+    phases: []
+    auth: null
+    headers: {}
+    max_bytes: 12000
+    timeout_seconds: 15
+  - id: cnbc_top
+    label: CNBC Top News
+    enabled: true
+    kind: rss
+    url: https://www.cnbc.com/id/100003114/device/rss/rss.html
+    phases:
+    - premarket_digest
+    - overnight_digest
+    auth: null
+    headers: {}
+    max_bytes: 12000
+    timeout_seconds: 15
+  - id: polygon_market_status
+    label: Polygon market status
+    enabled: false
+    kind: api
+    url: https://api.polygon.io/v1/marketstatus/now
+    phases:
+    - all
+    auth:
+      kind: bearer
+      token_env: POLYGON_API_KEY
+      header_name: null
+    headers: {}
+    max_bytes: 12000
+    timeout_seconds: 15
 technical:
   history:
     period_type: month
@@ -164,17 +189,19 @@ technical:
     period: 5
     frequency_type: minute
   indicators:
-    - sma_20
-    - sma_50
-    - rsi_14
-    - atr_14
-    - volume_sma_20
-
+  - sma_20
+  - sma_50
+  - rsi_14
+  - atr_14
+  - volume_sma_20
+  market_cache:
+    enabled: true
+    refresh_if_older_than_days: 1
+    refresh_cooldown_seconds: 3600
 risk:
   max_portfolio_heat_pct: 8.0
   max_drawdown_halt_pct: 10.0
   max_trades_per_day: 1
-
 execution:
   entry_order_type: limit
   entry_limit_basis: ask
@@ -185,7 +212,6 @@ execution:
   wait_for_fill: true
   fill_timeout_seconds: 600
   require_bracket_before_entry_resume: true
-
 llm:
   enabled: true
   selection_model: google/gemini-2.5-flash
@@ -196,35 +222,64 @@ llm:
   web_research_every_reviews: 2
   learn_every_ticks: 6
   learn_min_closed_trades: 3
+  learn_cooldown_ticks: 20
+  backtest_learn_min_closed_trades: 5
+  backtest_learn_cooldown_ticks: 30
   max_tokens: 2500
   veto_entries: true
   allow_llm_exits: false
   allow_rule_adaptation: true
   adaptation_bounds:
-  # LLM may auto-tune within these bounds; Telegram on every change
-    profit_target_pct: { min: 5.0, max: 12.0, max_delta_per_change: 1.0 }
-    stop_loss_pct: { min: 2.5, max: 6.0, max_delta_per_change: 0.5 }
-    trail_atr_multiple: { min: 1.5, max: 3.0, max_delta_per_change: 0.25 }
-    activate_after_profit_pct: { min: 3.0, max: 8.0, max_delta_per_change: 0.5 }
-    risk_per_trade_pct: { min: 0.3, max: 1.2, max_delta_per_change: 0.15 }
-    max_new_entries_per_day: { min: 0, max: 2, max_delta_per_change: 1 }
-    time_stop_days: { min: 5, max: 45, max_delta_per_change: 5 }
-    rsi_14_range: { min_low: 30, max_low: 45, min_high: 60, max_high: 75 }
+    activate_after_profit_pct:
+      max: 8.0
+      max_delta_per_change: 0.5
+      min: 3.0
+    max_new_entries_per_day:
+      max: 2
+      max_delta_per_change: 1
+      min: 0
+    profit_target_pct:
+      max: 12.0
+      max_delta_per_change: 1.0
+      min: 5.0
+    risk_per_trade_pct:
+      max: 1.2
+      max_delta_per_change: 0.15
+      min: 0.3
+    rsi_14_range:
+      max_high: 75
+      max_low: 45
+      min_high: 60
+      min_low: 30
+    stop_loss_pct:
+      max: 6.0
+      max_delta_per_change: 0.5
+      min: 2.5
+    time_stop_days:
+      max: 45
+      max_delta_per_change: 5
+      min: 5
+    trail_atr_multiple:
+      max: 3.0
+      max_delta_per_change: 0.25
+      min: 1.5
   immutable_fields:
-    - capital.fixed_sleeve_cap_usd
-    - capital.max_pct_of_free_cash
-    - capital.min_cash_floor_usd
-    - capital.options_risk.fallback_reserve_usd
-    - playbook.direction
-    - playbook.short.enabled
-    - accounts
+  - capital.fixed_sleeve_cap_usd
+  - capital.max_pct_of_free_cash
+  - capital.min_cash_floor_usd
+  - capital.options_risk.fallback_reserve_usd
+  - playbook.direction
+  - playbook.short.enabled
+  - accounts
   prompts:
     selection: |
       You are a conservative swing equity advisor for beneficiary account 9947.
-      Each candidate includes technical_context (SMA, RSI, ATR) and capital_check hints.
+      Each candidate includes technical_context (SMA, RSI, ATR, history_features) and capital_check hints.
+      history_features.rs_vs_benchmark_30d_pct is symbol 30d return minus SPY; prefer positive RS in uptrends.
       regime and profile_catalog describe market conditions — set profile_selection accordingly.
       Approve at most one new long entry per day. Defer on earnings within 2 days,
-      extreme RSI, or weak volume. Never recommend shorts unless playbook.short.enabled.
+      extreme RSI, weak volume, or rs_vs_benchmark_30d_pct below filters.min_rs_vs_benchmark_30d.
+      Never recommend shorts unless playbook.short.enabled.
     selection_web: |
       Research US equities suitable for 2-30 day swing trades: momentum with volume,
       sector leaders, and macro headwinds. Return actionable symbols with brief thesis.
@@ -238,22 +293,20 @@ llm:
     learn: |
       Analyze recent_closed_trades and sim_stats alongside regime and active_profile.
       Prefer profile_selection to pick baseline|low_vol_trend|high_vol_chop|elevated_vol when regime shifted.
-      Propose bounded playbook adjustments via rule_patches only (see patch_format).
-      Cite trade symbols, exit_reason, pnl_pct, and hold time. Never change immutable_fields.
+      Propose bounded playbook adjustments via rule_patches only (allowed_patch_paths: exits + rsi_14_range).
+      Cite trade symbols, exit_reason, pnl_pct, hold time, and rs_vs_benchmark where relevant.
+      Never change immutable_fields or sizing/method/entry caps.
       Prefer small deltas within adaptation_bounds.max_delta_per_change.
-
 notify:
   telegram:
     enabled: true
     notify_every_tick: false
     notify_on_actions: true
     notify_on_rule_adaptation: true
-
-# Paper trading (--simulate): separate virtual cash, live quotes for exits
 simulation:
-  starting_cash_usd: 4000
+  starting_cash_usd: 4000.0
   allow_rule_adaptation: true
-
+  allow_fractional_shares: true
 adaptation:
   enabled: true
   live_auto_apply: false
@@ -263,16 +316,93 @@ adaptation:
     enabled: true
     benchmark_symbol: SPY
     vix_symbol: $VIX
-    vix_low: 15.0
-    vix_high: 25.0
+    vix_low: 14.0
+    vix_high: 28.0
+    realized_vol_lookback: 20
+    realized_vol_history: 60
+    realized_vol_high_percentile: 75.0
   monitor_adjustments:
     enabled: true
     max_tighten_pct: 2.0
     max_widen_pct: 1.5
-  default_profile: baseline
+    min_stop_distance_from_price_pct: 1.5
+    max_stop_distance_from_price_pct: 8.0
+  profiles:
+    elevated_vol:
+      description: Elevated vol — reduced size, moderate targets
+      overrides:
+        exit:
+          profit_target_pct: 7.0
+          stop_loss_pct: 4.5
+          time_stop_days: null
+          time_stop_minutes: null
+          trailing:
+            activate_after_profit_pct: null
+            trail_atr_multiple: 2.25
+        entry:
+          rsi_14_range: null
+          max_new_entries_per_day: 1
+          position_size:
+            method: atr_normalized
+            risk_per_trade_pct: 0.55
+            max_position_pct: null
+            atr_baseline_pct: null
+            atr_vol_scalar_min: null
+            atr_vol_scalar_max: null
+        intraday: null
+    baseline:
+      description: Default playbook from rules YAML
+      overrides:
+        exit: null
+        entry: null
+        intraday: null
+    low_vol_trend:
+      description: Calm uptrend — let winners run, normal participation
+      overrides:
+        exit:
+          profit_target_pct: 10.0
+          stop_loss_pct: 3.5
+          time_stop_days: null
+          time_stop_minutes: null
+          trailing:
+            activate_after_profit_pct: 4.0
+            trail_atr_multiple: 1.75
+        entry:
+          rsi_14_range: null
+          max_new_entries_per_day: 1
+          position_size:
+            method: null
+            risk_per_trade_pct: 0.9
+            max_position_pct: null
+            atr_baseline_pct: null
+            atr_vol_scalar_min: null
+            atr_vol_scalar_max: null
+        intraday: null
+    high_vol_chop:
+      description: High vol chop — defensive sizing, wider stops, no new entries
+      overrides:
+        exit:
+          profit_target_pct: 6.0
+          stop_loss_pct: 5.0
+          time_stop_days: null
+          time_stop_minutes: null
+          trailing:
+            activate_after_profit_pct: null
+            trail_atr_multiple: 2.5
+        entry:
+          rsi_14_range: null
+          max_new_entries_per_day: 0
+          position_size:
+            method: atr_normalized
+            risk_per_trade_pct: 0.4
+            max_position_pct: null
+            atr_baseline_pct: null
+            atr_vol_scalar_min: null
+            atr_vol_scalar_max: null
+        intraday: null
   profile_map:
     low_vol_trend: low_vol_trend
-    high_vol_chop: high_vol_chop
     elevated_vol: elevated_vol
+    high_vol_chop: high_vol_chop
     neutral: baseline
-  # profiles: baseline, low_vol_trend, high_vol_chop, elevated_vol — built-in when omitted
+  default_profile: baseline

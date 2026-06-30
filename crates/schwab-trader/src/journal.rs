@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 
 use crate::agent::paths::journal_path;
@@ -13,12 +13,35 @@ use crate::rules::TraderRules;
 use crate::sim::compute_stats;
 
 pub fn append_event(rules_path: &Path, event_type: &str, payload: Value) -> Result<()> {
-    let path = journal_path(rules_path);
+    append_event_at(rules_path, Utc::now(), event_type, payload, false)
+}
+
+pub fn append_backtest_event(
+    rules_path: &Path,
+    at: DateTime<Utc>,
+    event_type: &str,
+    payload: Value,
+) -> Result<()> {
+    append_event_at(rules_path, at, event_type, payload, true)
+}
+
+fn append_event_at(
+    rules_path: &Path,
+    at: DateTime<Utc>,
+    event_type: &str,
+    payload: Value,
+    backtest: bool,
+) -> Result<()> {
+    let path = if backtest {
+        crate::agent::paths::backtest_journal_path(rules_path)
+    } else {
+        journal_path(rules_path)
+    };
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
     let line = serde_json::json!({
-        "ts": Utc::now().to_rfc3339(),
+        "ts": at.to_rfc3339(),
         "type": event_type,
         "payload": payload,
     });
@@ -41,16 +64,31 @@ pub fn read_recent(rules_path: &Path, limit: usize) -> Result<Vec<Value>> {
 }
 
 pub fn read_all(rules_path: &Path) -> Result<Vec<Value>> {
-    let path = journal_path(rules_path);
+    read_journal_file(&journal_path(rules_path))
+}
+
+pub fn read_all_backtest(rules_path: &Path) -> Result<Vec<Value>> {
+    read_journal_file(&crate::agent::paths::backtest_journal_path(rules_path))
+}
+
+fn read_journal_file(path: &Path) -> Result<Vec<Value>> {
     if !path.is_file() {
         return Ok(vec![]);
     }
-    let raw = std::fs::read_to_string(&path)?;
+    let raw = std::fs::read_to_string(path)?;
     Ok(raw
         .lines()
         .filter(|l| !l.trim().is_empty())
         .filter_map(|l| serde_json::from_str(l).ok())
         .collect())
+}
+
+pub fn clear_backtest_journal(rules_path: &Path) -> Result<()> {
+    let path = crate::agent::paths::backtest_journal_path(rules_path);
+    if path.is_file() {
+        std::fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+    }
+    Ok(())
 }
 
 pub fn stats_from_journal(rules_path: &Path) -> Result<Value> {

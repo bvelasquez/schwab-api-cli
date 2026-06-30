@@ -32,6 +32,7 @@ async fn run_buy(
     let account = rules.primary_account()?.hash.clone();
     let api = runtime.build_api()?;
     let market = runtime.build_market_api()?;
+    let market = crate::market_ctx::MarketCtx::for_rules(market, rules_path, &rules);
     let mut state = load_state(rules_path, &rules.trader_id)?;
 
     let result = attempt_entry(
@@ -47,6 +48,7 @@ async fn run_buy(
         Some(quantity),
         bracket,
         "manual",
+        None,
     )
     .await?;
 
