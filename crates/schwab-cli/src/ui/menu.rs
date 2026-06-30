@@ -134,6 +134,9 @@ async fn run_agent_background(runtime: &RuntimeConfig, file: Option<PathBuf>) ->
     if runtime.dry_run {
         extra.push("--dry-run".into());
     }
+    if runtime.simulate {
+        extra.push("--simulate".into());
+    }
     extra.push("--trust".into());
     extra.push("--yes".into());
     let pid = spawn_background(&rules_path, &extra)?;

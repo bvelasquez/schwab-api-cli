@@ -47,6 +47,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub dry_run: bool,
 
+    /// Paper trading: virtual fills from live chain marks (no broker orders; separate state file)
+    #[arg(long, global = true)]
+    pub simulate: bool,
+
     /// Trusted agent mode: allow autonomous trading with --trust --yes (safety.json limits still enforced)
     #[arg(long, global = true)]
     pub trust: bool,
@@ -596,6 +600,25 @@ pub enum AgentCommands {
     },
     /// Stop a background agent started with `agent run --background`
     Stop { file: PathBuf },
+    /// Paper-trading stats and ledger for --simulate runs
+    Sim {
+        #[command(subcommand)]
+        command: AgentSimCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AgentSimCommands {
+    /// ROI, win rate, open risk summary
+    Stats { file: PathBuf },
+    /// Full analysis from sim ledger + open positions
+    Report {
+        file: PathBuf,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Reset paper portfolio (keeps live agent-state untouched)
+    Reset { file: PathBuf },
 }
 
 #[derive(Debug, Subcommand)]

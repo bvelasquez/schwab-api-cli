@@ -28,11 +28,12 @@ use crate::safety::{execute_trading_order, require_trading_approval};
 
 use super::exits::{
     evaluate_position_monitor, exit_signal_json_for_account, find_tracked_position,
-    reconcile_open_positions, stable_position_key,
+    option_group_from_tracked, reconcile_open_positions, stable_position_key,
 };
 use super::llm::OpenRouterClient;
 use super::market_context::{market_context_summary_for_llm, vertical_entry_market_context};
-use super::paths::{default_state_path, load_agent_state};
+use super::paths::{active_state_path, load_agent_state, load_sim_agent_state};
+use super::sim::{ensure_ledger, record_sim_entry, record_sim_exit};
 use super::schedule::{self, AgentSession};
 use super::state::{save_state, AgentState, PendingOrder, PendingOrderAction, TrackedPosition};
 use crate::ui::agent_health::{is_fatal_auth_error, SharedAgentHealth};
@@ -61,8 +62,12 @@ pub async fn run_agent_loop(
     watch_health: Option<SharedAgentHealth>,
 ) -> Result<()> {
     let rules = RulesConfig::load(rules_path)?;
-    let state_path = default_state_path(rules_path);
-    let mut state = load_agent_state(rules_path, &rules.agent_id);
+    let state_path = active_state_path(rules_path, runtime.simulate);
+    let mut state = if runtime.simulate {
+        load_sim_agent_state(rules_path, &rules.agent_id)
+    } else {
+        load_agent_state(rules_path, &rules.agent_id)
+    };
     state.agent_id = rules.agent_id.clone();
 
     if rules.execution.require_preview && !runtime.safety.require_preview_before_place {
@@ -71,7 +76,7 @@ pub async fn run_agent_loop(
         );
     }
 
-    if !runtime.dry_run {
+    if !runtime.dry_run && !runtime.simulate {
         crate::safety::require_trading_approval(
             runtime,
             "agent run",
@@ -142,6 +147,7 @@ pub async fn run_agent_loop(
                     "monitored_positions": result.monitored_positions,
                     "llm_review": result.llm_review,
                     "dry_run": runtime.dry_run,
+                    "simulate": runtime.simulate,
                 });
 
                 if runtime.suppress_tick_output {
@@ -248,8 +254,15 @@ pub async fn tick_once(
         llm_review: None,
     };
 
-    reconcile_open_positions(trader, state, rules).await?;
-    poll_pending_orders(trader, state, rules, &mut result).await?;
+    if runtime.simulate {
+        let _ = ensure_ledger(state, rules);
+        result
+            .skipped
+            .push("simulate — using paper state (no Schwab reconcile)".into());
+    } else {
+        reconcile_open_positions(trader, state, rules).await?;
+        poll_pending_orders(trader, state, rules, &mut result).await?;
+    }
 
     let (market_open, hours) = fetch_option_market_status(market).await?;
     state.last_market_open = Some(market_open);
@@ -286,32 +299,77 @@ pub async fn tick_once(
     let blocked_events_active = !rules.risk.blocked_events.is_empty();
 
     // Exit evaluation and position monitoring (always runs when market is open)
-    for account in rules.enabled_accounts() {
-        let legs = list_option_positions(trader, Some(&account.hash)).await?;
-        let groups = group_option_legs(&legs);
-        for group in &groups {
-            let tracked = find_tracked_position(state, &account.hash, group);
-            let monitor = evaluate_position_monitor(market, group, rules, today, tracked).await?;
-
+    if runtime.simulate {
+        let position_ids: Vec<String> = state.open_positions.keys().cloned().collect();
+        for position_id in position_ids {
+            let Some(tracked) = state.open_positions.get(&position_id) else {
+                continue;
+            };
+            let Some(group) = option_group_from_tracked(tracked) else {
+                result.skipped.push(format!(
+                    "simulate exit skip {position_id}: missing entry_params"
+                ));
+                continue;
+            };
+            let monitor =
+                evaluate_position_monitor(market, &group, rules, today, Some(tracked)).await?;
             if !group.legs.is_empty() {
                 result.monitored_positions.push(monitor.snapshot);
             }
-
             if let Some(eval) = monitor.exit {
-                let exit = exit_signal_json_for_account(&account.hash, group, &eval);
+                let exit = exit_signal_json_for_account(&tracked.account_hash, &group, &eval);
                 result.signals.push(exit.clone());
-                let position_id = stable_position_key(&account.hash, group);
-                if state.has_pending_position(&position_id) {
-                    result
-                        .skipped
-                        .push(format!("exit already pending for {position_id}"));
-                } else if !runtime.dry_run {
-                    if let Ok(action) =
-                        execute_exit(runtime, trader, &account.hash, rules, group, &exit, state)
-                            .await
-                    {
-                        result.actions.push(action);
-                        notify_action(telegram, "EXIT", &exit).await;
+                if !runtime.dry_run {
+                    match record_sim_exit(
+                        rules_path,
+                        state,
+                        rules,
+                        &position_id,
+                        &eval.reason,
+                        &eval.mark,
+                        &exit,
+                    ) {
+                        Ok(action) => {
+                            result.actions.push(action);
+                            notify_action(telegram, "SIM EXIT", &exit).await;
+                        }
+                        Err(err) => {
+                            result
+                                .skipped
+                                .push(format!("sim exit failed {position_id}: {err:#}"));
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        for account in rules.enabled_accounts() {
+            let legs = list_option_positions(trader, Some(&account.hash)).await?;
+            let groups = group_option_legs(&legs);
+            for group in &groups {
+                let tracked = find_tracked_position(state, &account.hash, group);
+                let monitor = evaluate_position_monitor(market, group, rules, today, tracked).await?;
+
+                if !group.legs.is_empty() {
+                    result.monitored_positions.push(monitor.snapshot);
+                }
+
+                if let Some(eval) = monitor.exit {
+                    let exit = exit_signal_json_for_account(&account.hash, group, &eval);
+                    result.signals.push(exit.clone());
+                    let position_id = stable_position_key(&account.hash, group);
+                    if state.has_pending_position(&position_id) {
+                        result
+                            .skipped
+                            .push(format!("exit already pending for {position_id}"));
+                    } else if !runtime.dry_run {
+                        if let Ok(action) =
+                            execute_exit(runtime, trader, &account.hash, rules, group, &exit, state)
+                                .await
+                        {
+                            result.actions.push(action);
+                            notify_action(telegram, "EXIT", &exit).await;
+                        }
                     }
                 }
             }
@@ -466,7 +524,7 @@ pub async fn tick_once(
     }
 
     // LLM-requested exits (high urgency only, when enabled)
-    if !llm_close_ids.is_empty() && !runtime.dry_run {
+    if !llm_close_ids.is_empty() && !runtime.dry_run && !runtime.simulate {
         for account in rules.enabled_accounts() {
             let legs = list_option_positions(trader, Some(&account.hash)).await?;
             let groups = group_option_legs(&legs);
@@ -505,25 +563,51 @@ pub async fn tick_once(
 
     // Execute pending entries unless LLM vetoed (dry-run never executes)
     if !llm_veto_entries && !runtime.dry_run {
-        for (account_hash, kind, signal) in pending_entries {
-            if let Ok(Some(a)) =
-                maybe_execute_entry(runtime, trader, &account_hash, kind, &signal, rules, state)
-                    .await
-            {
-                result.actions.push(a.clone());
-                let label = a
-                    .pointer("/fill_status")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("UNKNOWN");
-                match label {
-                    "FILLED" => notify_action(telegram, "ENTRY FILLED", &a).await,
-                    "WORKING" | "ACCEPTED" | "PENDING_ACTIVATION" | "QUEUED" => {
-                        notify_action(telegram, "ORDER WORKING (limit)", &a).await
+        if runtime.simulate {
+            for (account_hash, kind, signal) in pending_entries {
+                match record_sim_entry(rules_path, state, rules, &account_hash, kind, &signal) {
+                    Ok(detail) => {
+                        if detail
+                            .get("fill_status")
+                            .and_then(|v| v.as_str())
+                            == Some("FILLED")
+                        {
+                            result.actions.push(detail.clone());
+                            notify_action(telegram, "SIM ENTRY", &detail).await;
+                        } else {
+                            result.skipped.push(format!(
+                                "sim entry skipped: {}",
+                                detail
+                                    .get("reason")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unknown")
+                            ));
+                        }
                     }
-                    other if is_failure_status(other) => {
-                        notify_action(telegram, "ORDER REJECTED", &a).await
+                    Err(err) => result.skipped.push(format!("sim entry failed: {err:#}")),
+                }
+            }
+        } else {
+            for (account_hash, kind, signal) in pending_entries {
+                if let Ok(Some(a)) =
+                    maybe_execute_entry(runtime, trader, &account_hash, kind, &signal, rules, state)
+                        .await
+                {
+                    result.actions.push(a.clone());
+                    let label = a
+                        .pointer("/fill_status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("UNKNOWN");
+                    match label {
+                        "FILLED" => notify_action(telegram, "ENTRY FILLED", &a).await,
+                        "WORKING" | "ACCEPTED" | "PENDING_ACTIVATION" | "QUEUED" => {
+                            notify_action(telegram, "ORDER WORKING (limit)", &a).await
+                        }
+                        other if is_failure_status(other) => {
+                            notify_action(telegram, "ORDER REJECTED", &a).await
+                        }
+                        _ => notify_action(telegram, "ORDER", &a).await,
                     }
-                    _ => notify_action(telegram, "ORDER", &a).await,
                 }
             }
         }
@@ -826,6 +910,7 @@ fn track_filled_entry_from_pending(state: &mut AgentState, detail: &Value, pendi
             entry_credit,
             max_loss_usd: pending.reserved_risk_usd,
             contracts,
+            entry_params: None,
         });
 }
 
@@ -1572,6 +1657,7 @@ async fn maybe_execute_entry(
                 entry_credit: new_credit,
                 max_loss_usd: margin,
                 contracts: order_contracts,
+                entry_params: None,
             },
         );
     }

@@ -154,6 +154,7 @@ mod tests {
                 entry_credit: Some(0.25),
                 max_loss_usd: 175.0,
                 contracts: 1,
+                entry_params: None,
             },
         );
         assert!(should_run_overnight_digest(&state, &cfg, Utc::now()));

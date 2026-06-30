@@ -23,6 +23,32 @@ pub fn default_state_path(rules_path: &Path) -> PathBuf {
     dir.join(format!("agent-state-{stem}.json"))
 }
 
+pub fn sim_state_path(rules_path: &Path) -> PathBuf {
+    let dir = rules_runtime_dir(rules_path);
+    let stem = rules_runtime_stem(rules_path);
+    dir.join(format!("agent-sim-state-{stem}.json"))
+}
+
+pub fn journal_path(rules_path: &Path) -> PathBuf {
+    let dir = rules_runtime_dir(rules_path);
+    let stem = rules_runtime_stem(rules_path);
+    dir.join(format!("agent-journal-{stem}.jsonl"))
+}
+
+pub fn sim_journal_path(rules_path: &Path) -> PathBuf {
+    let dir = rules_runtime_dir(rules_path);
+    let stem = rules_runtime_stem(rules_path);
+    dir.join(format!("agent-sim-journal-{stem}.jsonl"))
+}
+
+pub fn active_state_path(rules_path: &Path, simulate: bool) -> PathBuf {
+    if simulate {
+        sim_state_path(rules_path)
+    } else {
+        default_state_path(rules_path)
+    }
+}
+
 pub fn pid_path(rules_path: &Path) -> PathBuf {
     let dir = rules_runtime_dir(rules_path);
     let stem = rules_runtime_stem(rules_path);
@@ -52,10 +78,22 @@ pub fn append_agent_log(rules_path: &Path, line: &str) -> std::io::Result<()> {
 
 /// Load persisted state for a rules file, migrating legacy `agent-state.json` when agent_id matches.
 pub fn load_agent_state(rules_path: &Path, agent_id: &str) -> super::state::AgentState {
+    load_agent_state_from(rules_path, agent_id, false)
+}
+
+pub fn load_sim_agent_state(rules_path: &Path, agent_id: &str) -> super::state::AgentState {
+    load_agent_state_from(rules_path, agent_id, true)
+}
+
+fn load_agent_state_from(rules_path: &Path, agent_id: &str, simulate: bool) -> super::state::AgentState {
     use super::state::{load_state, save_state};
 
-    let state_path = default_state_path(rules_path);
+    let state_path = active_state_path(rules_path, simulate);
     if state_path.exists() {
+        return load_state(&state_path).unwrap_or_default();
+    }
+
+    if simulate {
         return load_state(&state_path).unwrap_or_default();
     }
 
@@ -63,7 +101,8 @@ pub fn load_agent_state(rules_path: &Path, agent_id: &str) -> super::state::Agen
     if legacy.exists() {
         if let Ok(state) = load_state(&legacy) {
             if state.agent_id.is_empty() || state.agent_id == agent_id {
-                let _ = save_state(&state_path, &state);
+                let canonical = default_state_path(rules_path);
+                let _ = save_state(&canonical, &state);
                 return state;
             }
         }
