@@ -16,6 +16,8 @@ pub struct RuntimeConfig {
     pub output: OutputFormat,
     pub yes: bool,
     pub dry_run: bool,
+    /// Paper options trading — separate state file, no broker orders.
+    pub simulate: bool,
     /// Explicit trusted agent mode — required with --yes for autonomous trading.
     pub trust: bool,
     /// When true, agent ticks do not print to stdout (watch TUI mode).
@@ -27,11 +29,16 @@ pub struct RuntimeConfig {
 impl RuntimeConfig {
     pub fn from_cli(cli: &Cli) -> Result<Self> {
         let safety_cfg = SafetyConfig::load().context("Failed to load safety.json")?;
+        anyhow::ensure!(
+            !(cli.dry_run && cli.simulate),
+            "--dry-run and --simulate are mutually exclusive"
+        );
         Ok(Self {
             mode: cli.mode,
             output: cli.effective_output(),
             yes: cli.yes,
             dry_run: cli.dry_run,
+            simulate: cli.simulate,
             trust: cli.trust,
             suppress_tick_output: false,
             safety: SafetyContext::new(safety_cfg),
@@ -82,6 +89,7 @@ impl RuntimeConfig {
             output,
             yes,
             dry_run,
+            simulate: false,
             trust,
             suppress_tick_output,
             safety,

@@ -31,6 +31,15 @@ pub struct RulesConfig {
     pub llm: LlmConfig,
     #[serde(default)]
     pub notify: NotifyConfig,
+    /// Paper trading (--simulate): virtual budget separate from live agent state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simulation: Option<SimulationConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimulationConfig {
+    /// Virtual risk budget for paper P&L (defaults to risk.max_portfolio_risk_usd).
+    pub starting_budget_usd: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -599,6 +608,7 @@ mod tests {
             execution: ExecutionConfig::default(),
             llm: LlmConfig::default(),
             notify: NotifyConfig::default(),
+            simulation: None,
         };
         rules.validate().unwrap();
     }

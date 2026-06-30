@@ -163,6 +163,7 @@ mod tests {
             output: OutputFormat::Json,
             yes,
             dry_run: false,
+            simulate: false,
             trust,
             suppress_tick_output: false,
             safety: SafetyContext::new(SafetyConfig::default()),

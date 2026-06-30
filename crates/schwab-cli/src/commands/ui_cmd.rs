@@ -41,7 +41,7 @@ pub async fn run_watch(
 
     let will_spawn_agent = matches!(agent_mode, WatchAgentMode::Embedded);
 
-    if will_spawn_agent && !runtime.dry_run {
+    if will_spawn_agent && !runtime.dry_run && !runtime.simulate {
         let agent_id = RulesConfig::load(&rules_path)
             .map(|r| r.agent_id)
             .unwrap_or_else(|_| "agent".into());
