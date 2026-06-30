@@ -27,6 +27,7 @@ fn sample_snap() -> TechnicalSnapshot {
         above_sma_20: Some(true),
         above_sma_50: Some(true),
         intraday: false,
+        history_features: None,
     }
 }
 
@@ -43,7 +44,7 @@ fn missing_indicators_fail_closed() {
 #[test]
 fn live_adaptation_blocked_by_default() {
     let rules = TraderRules::default();
-    assert!(!adaptation_allowed(false, false, &rules));
+    assert!(!adaptation_allowed(false, false, &rules, false));
 }
 
 #[test]

@@ -7,6 +7,8 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::agent::paths::{backtest_state_path, state_path};
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TraderState {
     pub trader_id: String,
@@ -188,14 +190,29 @@ impl TraderState {
     }
 
     pub fn entry_block_reason(&self, rules: &crate::rules::TraderRules) -> Option<String> {
+        self.entry_block_reason_inner(rules, true)
+    }
+
+    /// Backtest/replay: skip live session clock gates (market hours, EOD cutoff).
+    pub fn entry_block_reason_replay(&self, rules: &crate::rules::TraderRules) -> Option<String> {
+        self.entry_block_reason_inner(rules, false)
+    }
+
+    fn entry_block_reason_inner(
+        &self,
+        rules: &crate::rules::TraderRules,
+        check_session: bool,
+    ) -> Option<String> {
         if let Some(reason) = &self.trading_halted_reason {
             return Some(reason.clone());
         }
         if let Some(reason) = crate::risk::drawdown_halt_reason(self, rules) {
             return Some(reason);
         }
-        if let Some(reason) = crate::closure::entry_block_reason(rules) {
-            return Some(reason);
+        if check_session {
+            if let Some(reason) = crate::closure::entry_block_reason(rules) {
+                return Some(reason);
+            }
         }
         if self.trades_today >= rules.risk.max_trades_per_day {
             return Some("max_trades_per_day reached".into());
@@ -225,17 +242,29 @@ impl TraderState {
 }
 
 pub fn position_id(symbol: &str, tz_name: &str) -> String {
-    let tz = crate::market_session::trading_tz(tz_name);
-    let today = Utc::now().with_timezone(&tz).format("%Y-%m-%d");
-    format!("{}|{}", symbol.trim().to_uppercase(), today)
+    position_id_for_date(symbol, tz_name, crate::market_session::trading_day(tz_name))
+}
+
+pub fn position_id_for_date(symbol: &str, _tz_name: &str, day: NaiveDate) -> String {
+    format!("{}|{}", symbol.trim().to_uppercase(), day)
 }
 
 pub fn load_state(rules_path: &Path, trader_id: &str) -> Result<TraderState> {
-    let path = crate::agent::paths::state_path(rules_path);
+    let path = state_path(rules_path);
+    TraderState::load(&path, trader_id)
+}
+
+pub fn load_backtest_state(rules_path: &Path, trader_id: &str) -> Result<TraderState> {
+    let path = backtest_state_path(rules_path);
     TraderState::load(&path, trader_id)
 }
 
 pub fn save_state(rules_path: &Path, state: &TraderState) -> Result<()> {
-    let path = crate::agent::paths::state_path(rules_path);
+    let path = state_path(rules_path);
     state.save(&path).context("save trader state")
+}
+
+pub fn save_backtest_state(rules_path: &Path, state: &TraderState) -> Result<()> {
+    let path = backtest_state_path(rules_path);
+    state.save(&path).context("save backtest state")
 }

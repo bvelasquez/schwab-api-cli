@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::adaptation::PlaybookProfileOverrides;
+use crate::market_cache::MarketCacheConfig;
 
 pub const RULES_VERSION: u32 = 1;
 
@@ -103,6 +104,9 @@ pub struct SimulationConfig {
     /// Allow LLM rule adaptation from simulated trade outcomes
     #[serde(default = "default_true")]
     pub allow_rule_adaptation: bool,
+    /// Allow fractional share sizing in simulation/backtest (Schwab supports fractional)
+    #[serde(default)]
+    pub allow_fractional_shares: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -266,6 +270,9 @@ pub struct TrailingConfig {
 pub struct FilterConfig {
     pub blocked_symbols: Vec<String>,
     pub no_trade_before_earnings_days: u32,
+    /// Min 30d return vs benchmark (symbol % − benchmark %). None = disabled.
+    #[serde(default)]
+    pub min_rs_vs_benchmark_30d: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -281,8 +288,22 @@ pub struct ShortConfig {
 pub struct WatchlistsConfig {
     pub core: Vec<String>,
     pub thematic: Vec<WatchlistThematic>,
+    /// Large seed universe for `watchlist build` (path relative to rules file dir).
+    pub candidate_pool_file: Option<String>,
+    /// Inline candidate symbols (merged with pool file when set).
+    pub candidate_pool: Vec<String>,
+    pub screened: WatchlistScreenedConfig,
     pub dynamic: bool,
     pub max_dynamic_symbols: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WatchlistScreenedConfig {
+    pub enabled: bool,
+    pub top_n: u32,
+    pub min_score: f64,
+    pub refresh_days: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -371,6 +392,8 @@ pub struct TechnicalConfig {
     pub history: HistoryConfig,
     pub intraday_history: HistoryConfig,
     pub indicators: Vec<String>,
+    #[serde(default)]
+    pub market_cache: MarketCacheConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -416,6 +439,12 @@ pub struct LlmConfig {
     pub web_research_every_reviews: u64,
     pub learn_every_ticks: u64,
     pub learn_min_closed_trades: u32,
+    /// Minimum ticks between learn runs after thresholds are met (live + sim).
+    pub learn_cooldown_ticks: u64,
+    /// Stricter closed-trade threshold for backtest learn (API cost control).
+    pub backtest_learn_min_closed_trades: u32,
+    /// Minimum ticks between backtest learn runs.
+    pub backtest_learn_cooldown_ticks: u64,
     pub max_tokens: u32,
     pub veto_entries: bool,
     pub allow_llm_exits: bool,
@@ -603,6 +632,7 @@ impl Default for FilterConfig {
         Self {
             blocked_symbols: vec![],
             no_trade_before_earnings_days: 2,
+            min_rs_vs_benchmark_30d: None,
         }
     }
 }
@@ -617,11 +647,25 @@ impl Default for ShortConfig {
     }
 }
 
+impl Default for WatchlistScreenedConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            top_n: 12,
+            min_score: 0.0,
+            refresh_days: 7,
+        }
+    }
+}
+
 impl Default for WatchlistsConfig {
     fn default() -> Self {
         Self {
             core: vec![],
             thematic: vec![],
+            candidate_pool_file: None,
+            candidate_pool: vec![],
+            screened: WatchlistScreenedConfig::default(),
             dynamic: false,
             max_dynamic_symbols: 5,
         }
@@ -659,6 +703,7 @@ impl Default for TechnicalConfig {
                 "rsi_14".into(),
                 "atr_14".into(),
             ],
+            market_cache: MarketCacheConfig::default(),
         }
     }
 }
@@ -720,7 +765,10 @@ impl Default for LlmConfig {
             review_every_ticks: 3,
             web_research_every_reviews: 2,
             learn_every_ticks: 6,
-            learn_min_closed_trades: 1,
+            learn_min_closed_trades: 3,
+            learn_cooldown_ticks: 20,
+            backtest_learn_min_closed_trades: 5,
+            backtest_learn_cooldown_ticks: 30,
             max_tokens: 2000,
             veto_entries: true,
             allow_llm_exits: false,
@@ -929,6 +977,23 @@ impl TraderRules {
         Ok(rules)
     }
 
+    pub fn fractional_shares_allowed(&self) -> bool {
+        self.simulation
+            .as_ref()
+            .map(|s| s.allow_fractional_shares)
+            .unwrap_or(false)
+    }
+
+    pub fn backtest_learn_enabled(&self) -> bool {
+        self.llm.enabled
+            && self.llm.allow_rule_adaptation
+            && self
+                .simulation
+                .as_ref()
+                .map(|s| s.allow_rule_adaptation)
+                .unwrap_or(true)
+    }
+
     /// Fill built-in regime profiles when YAML omits them (backward compatible).
     pub fn normalize_adaptation(&mut self) {
         if self.adaptation.profiles.is_empty() {
@@ -1100,6 +1165,55 @@ impl TraderRules {
             }
         }
         out
+    }
+
+    /// Symbols from candidate pool file + inline list (for screening / prefetch).
+    pub fn candidate_pool_symbols(&self, rules_path: &Path) -> Result<Vec<String>> {
+        let mut out = Vec::new();
+        if let Some(rel) = &self.watchlists.candidate_pool_file {
+            let rel = rel.trim();
+            if !rel.is_empty() {
+                let pool_path = rules_path
+                    .parent()
+                    .map(|p| p.join(rel))
+                    .unwrap_or_else(|| PathBuf::from(rel));
+                let pool = crate::watchlist::pool::load_pool_file(&pool_path)?;
+                for sym in pool.symbols {
+                    let u = sym.trim().to_uppercase();
+                    if !u.is_empty() && !out.contains(&u) {
+                        out.push(u);
+                    }
+                }
+            }
+        }
+        for sym in &self.watchlists.candidate_pool {
+            let u = sym.trim().to_uppercase();
+            if !u.is_empty() && !out.contains(&u) {
+                out.push(u);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Pool symbols eligible for mechanical screening (excludes core, blocked, core holdings).
+    pub fn symbols_for_screening(&self, rules_path: &Path) -> Result<Vec<String>> {
+        let core: std::collections::HashSet<String> = self
+            .all_watchlist_symbols()
+            .into_iter()
+            .collect();
+        let mut out = Vec::new();
+        for sym in self.candidate_pool_symbols(rules_path)? {
+            if core.contains(&sym) {
+                continue;
+            }
+            if self.is_core_holding(&sym) || self.is_blocked_symbol(&sym) {
+                continue;
+            }
+            if !out.contains(&sym) {
+                out.push(sym);
+            }
+        }
+        Ok(out)
     }
 
     pub fn is_core_holding(&self, symbol: &str) -> bool {

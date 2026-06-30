@@ -198,7 +198,15 @@ fn build_system_prompt(
     } else {
         ""
     };
-    format!("{instructions}{patch_help}{profile_help}{feed_help}{heat_help}\n{RESPONSE_JSON_SCHEMA}")
+    let history_help = if matches!(phase, "selection" | "web" | "monitor") {
+        "\n\ntechnical_context.history_features includes return_30d_pct, pct_from_52w_high, \
+         rs_vs_benchmark_30d_pct (symbol minus benchmark), and above_sma_200. \
+         Defer entries with rs_vs_benchmark_30d_pct below playbook.filters.min_rs_vs_benchmark_30d when set. \
+         Prefer candidates with positive RS vs benchmark in uptrends."
+    } else {
+        ""
+    };
+    format!("{instructions}{patch_help}{profile_help}{feed_help}{heat_help}{history_help}\n{RESPONSE_JSON_SCHEMA}")
 }
 
 fn llm_review_json_schema() -> Value {

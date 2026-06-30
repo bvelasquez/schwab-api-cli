@@ -1,7 +1,11 @@
 pub mod adaptation;
 pub mod agent;
+pub mod backtest;
 pub mod capital;
 pub mod closure;
+pub mod history_features;
+pub mod market_cache;
+pub mod market_ctx;
 pub mod learn;
 pub mod market_session;
 pub mod regime;
@@ -19,3 +23,4 @@ pub mod sim;
 pub mod sources;
 pub mod technical;
 pub mod ui;
+pub mod watchlist;

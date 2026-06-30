@@ -5,16 +5,18 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use schwab_api::TraderApi;
-use schwab_market_data::MarketDataApi;
 use serde_json::{json, Value};
 
 use crate::agent::state::{save_state, SwingPosition, TraderState};
 use crate::capital::exit_prices;
 use crate::config::TraderRuntime;
 use crate::journal;
-use crate::market_session::{entries_blocked, must_flatten_now, opened_on_prior_et_day};
+use crate::market_ctx::MarketCtx;
+use crate::market_session::{
+    entries_blocked, must_flatten_now, must_flatten_now_at, opened_on_prior_et_day_at,
+};
 use crate::orders::{cancel_order, poll_oco_status, replace_oco_bracket, OcoStatus};
 use crate::rules::TraderRules;
 use crate::sim;
@@ -54,20 +56,29 @@ pub fn exit_reason_for_position(
     pos: &SwingPosition,
     last: f64,
 ) -> Option<&'static str> {
+    exit_reason_for_position_at(rules, pos, last, Utc::now())
+}
+
+pub fn exit_reason_for_position_at(
+    rules: &TraderRules,
+    pos: &SwingPosition,
+    last: f64,
+    now: DateTime<Utc>,
+) -> Option<&'static str> {
     if last <= 0.0 {
         return None;
     }
 
     if rules.playbook.closure.no_overnight_holds
-        && opened_on_prior_et_day(pos.opened_at, &rules.schedule.timezone)
+        && opened_on_prior_et_day_at(pos.opened_at, &rules.schedule.timezone, now)
     {
         return Some("overnight_flatten");
     }
-    if must_flatten_now(rules) {
+    if must_flatten_now_at(rules, now) {
         return Some("eod_flatten");
     }
 
-    // Stop/target: quote evaluation when no live broker OCO (sim + unbracketed).
+    // Stop/target on close — caller may evaluate high/low separately (backtest).
     if !has_working_broker_oco(pos) {
         if last <= pos.stop_price {
             return Some("stop_loss");
@@ -77,13 +88,13 @@ pub fn exit_reason_for_position(
         }
     }
 
-    let hold_minutes = (Utc::now() - pos.opened_at).num_minutes().max(0) as u32;
+    let hold_minutes = (now - pos.opened_at).num_minutes().max(0) as u32;
     if rules.is_intraday() && rules.playbook.exit.time_stop_minutes > 0 {
         if hold_minutes >= rules.playbook.exit.time_stop_minutes {
             return Some("time_stop");
         }
     } else {
-        let hold_days = (Utc::now() - pos.opened_at).num_days().max(0) as u32;
+        let hold_days = (now - pos.opened_at).num_days().max(0) as u32;
         if hold_days < rules.playbook.holding_period.min_days {
             return None;
         }
@@ -101,7 +112,7 @@ pub async fn process_closure_exits(
     rules: &TraderRules,
     state: &mut TraderState,
     api: &Arc<TraderApi>,
-    market: &Arc<MarketDataApi>,
+    market: &MarketCtx,
     account_hash: &str,
 ) -> Result<Vec<Value>> {
     if state.open_positions.is_empty() {
@@ -138,11 +149,7 @@ pub async fn process_closure_exits(
         .collect();
 
     for symbol in symbols {
-        let quote_raw = market
-            .quotes()
-            .get_quote(&symbol, Some("quote"), None)
-            .await?;
-        let last = extract_last(&quote_raw, &symbol).unwrap_or(0.0);
+        let (last, _, _) = market.quote_last_bid_ask(&symbol).await?;
 
         let pos_id = state
             .open_positions
@@ -251,7 +258,7 @@ async fn process_trailing_stops(
     rules: &TraderRules,
     state: &mut TraderState,
     api: &Arc<TraderApi>,
-    market: &Arc<MarketDataApi>,
+    market: &MarketCtx,
     account_hash: &str,
 ) -> Result<Vec<Value>> {
     if !rules.playbook.exit.trailing.enabled {
@@ -346,15 +353,11 @@ async fn process_trailing_stops(
 async fn evaluate_dry_run_exits(
     rules: &TraderRules,
     state: &TraderState,
-    market: &Arc<MarketDataApi>,
+    market: &MarketCtx,
 ) -> Result<Vec<Value>> {
     let mut would_exit = Vec::new();
     for pos in state.open_positions.values() {
-        let quote_raw = market
-            .quotes()
-            .get_quote(&pos.symbol, Some("quote"), None)
-            .await?;
-        let last = extract_last(&quote_raw, &pos.symbol).unwrap_or(0.0);
+        let (last, _, _) = market.quote_last_bid_ask(&pos.symbol).await?;
         if let Some(reason) = exit_reason_for_position(rules, pos, last) {
             would_exit.push(json!({
                 "symbol": pos.symbol,
@@ -440,14 +443,6 @@ async fn flatten_live_position(
         .unwrap_or(limit_price);
 
     Ok(FlattenResult { fill_price })
-}
-
-fn extract_last(raw: &Value, symbol: &str) -> Option<f64> {
-    raw.get(symbol)
-        .and_then(|e| e.get("quote"))
-        .or_else(|| raw.get("quote"))
-        .and_then(|q| q.get("lastPrice"))
-        .and_then(|v| v.as_f64())
 }
 
 #[cfg(test)]

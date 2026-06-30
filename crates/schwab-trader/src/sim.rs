@@ -5,15 +5,14 @@ use std::path::Path;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use schwab_market_data::MarketDataApi;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::Arc;
 
 use crate::agent::state::{save_state, SwingPosition, TraderState};
 use crate::capital::exit_prices;
 use crate::closure::exit_reason_for_position;
 use crate::journal;
+use crate::market_ctx::MarketCtx;
 use crate::rules::TraderRules;
 use crate::technical::fetch_technical_snapshot;
 
@@ -112,6 +111,28 @@ pub fn record_sim_entry(
     fill_price: f64,
     position_id: &str,
 ) -> Result<()> {
+    record_sim_entry_at(
+        state,
+        rules,
+        account_hash,
+        symbol,
+        quantity,
+        fill_price,
+        position_id,
+        Utc::now(),
+    )
+}
+
+pub fn record_sim_entry_at(
+    state: &mut TraderState,
+    rules: &TraderRules,
+    account_hash: &str,
+    symbol: &str,
+    quantity: f64,
+    fill_price: f64,
+    position_id: &str,
+    opened_at: DateTime<Utc>,
+) -> Result<()> {
     let cost = quantity * fill_price;
     let ledger = ensure_ledger(state, rules);
     anyhow::ensure!(
@@ -130,7 +151,7 @@ pub fn record_sim_entry(
             account_hash: account_hash.to_string(),
             quantity,
             entry_price: fill_price,
-            opened_at: Utc::now(),
+            opened_at,
             stop_price: stop_px,
             profit_limit,
             stop_risk_usd: quantity * (fill_price - stop_px).max(0.0),
@@ -148,7 +169,7 @@ pub async fn process_sim_trailing_stops(
     rules_path: &Path,
     rules: &TraderRules,
     state: &mut TraderState,
-    market: &Arc<MarketDataApi>,
+    market: &MarketCtx,
 ) -> Result<Vec<Value>> {
     if !rules.playbook.exit.trailing.enabled || state.open_positions.is_empty() {
         return Ok(vec![]);
@@ -208,7 +229,7 @@ pub async fn process_sim_exits(
     rules_path: &Path,
     rules: &TraderRules,
     state: &mut TraderState,
-    market: &Arc<MarketDataApi>,
+    market: &MarketCtx,
 ) -> Result<Vec<Value>> {
     if state.sim.is_none() && state.open_positions.is_empty() {
         return Ok(vec![]);
@@ -233,10 +254,9 @@ pub async fn process_sim_exits(
     let mut exits = Vec::new();
     for symbol in symbols {
         let quote_raw = market
-            .quotes()
-            .get_quote(&symbol, Some("quote"), None)
+            .quote_last_bid_ask(&symbol)
             .await?;
-        let last = extract_last(&quote_raw, &symbol).unwrap_or(0.0);
+        let last = quote_raw.0;
         if last <= 0.0 {
             continue;
         }
@@ -341,7 +361,7 @@ pub async fn process_sim_exits(
 }
 
 /// Stop fills at stop price; target at limit; discretionary exits at last.
-fn sim_fill_price(reason: &str, pos: &SwingPosition, last: f64) -> f64 {
+pub fn sim_fill_price(reason: &str, pos: &SwingPosition, last: f64) -> f64 {
     match reason {
         "stop_loss" => pos.stop_price.min(last),
         "profit_target" => pos.profit_limit.max(last),
@@ -350,6 +370,10 @@ fn sim_fill_price(reason: &str, pos: &SwingPosition, last: f64) -> f64 {
 }
 
 pub fn snapshot_equity(state: &mut TraderState, rules: &TraderRules) {
+    snapshot_equity_at(state, rules, Utc::now());
+}
+
+pub fn snapshot_equity_at(state: &mut TraderState, rules: &TraderRules, at: DateTime<Utc>) {
     let Some(ledger) = state.sim.as_mut() else {
         return;
     };
@@ -360,7 +384,7 @@ pub fn snapshot_equity(state: &mut TraderState, rules: &TraderRules) {
         .sum();
     let equity = ledger.cash_usd + positions_value;
     ledger.equity_snapshots.push(EquitySnapshot {
-        at: Utc::now(),
+        at,
         equity_usd: equity,
         cash_usd: ledger.cash_usd,
         positions_value_usd: positions_value,
@@ -460,14 +484,6 @@ pub fn reset_ledger(state: &mut TraderState, rules: &TraderRules) {
         closed_trades: vec![],
         equity_snapshots: vec![],
     });
-}
-
-fn extract_last(raw: &Value, symbol: &str) -> Option<f64> {
-    raw.get(symbol)
-        .and_then(|e| e.get("quote"))
-        .or_else(|| raw.get("quote"))
-        .and_then(|q| q.get("lastPrice"))
-        .and_then(|v| v.as_f64())
 }
 
 #[cfg(test)]

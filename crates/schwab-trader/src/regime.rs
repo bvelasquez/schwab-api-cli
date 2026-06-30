@@ -1,13 +1,11 @@
 //! Market regime detection for profile selection (benchmark trend + vol).
 
 use anyhow::Result;
-use schwab_market_data::MarketDataApi;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::Arc;
 
+use crate::market_ctx::MarketCtx;
 use crate::rules::{RegimeConfig, TraderRules};
-use crate::technical::Candle;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -44,31 +42,16 @@ pub struct RegimeSnapshot {
     pub signals: Value,
 }
 
-pub async fn detect_regime(
-    market: &Arc<MarketDataApi>,
-    rules: &TraderRules,
-) -> Result<RegimeSnapshot> {
+pub async fn detect_regime(market: &MarketCtx, rules: &TraderRules) -> Result<RegimeSnapshot> {
     let cfg = &rules.adaptation.regime;
     if !rules.adaptation.enabled || !cfg.enabled {
         return Ok(neutral_snapshot(cfg, &rules.adaptation.default_profile));
     }
 
     let benchmark = cfg.benchmark_symbol.trim().to_uppercase();
-    let hist = market
-        .price_history()
-        .get(
-            &benchmark,
-            Some("year"),
-            Some(1),
-            Some("daily"),
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
+    let candles = market
+        .daily_candles_with_config(&benchmark, "year", 1, "daily")
         .await?;
-    let candles = parse_candles(&hist);
     let closes: Vec<f64> = candles.iter().map(|c| c.close).collect();
     let last = *closes.last().unwrap_or(&0.0);
     let sma_50 = sma(&closes, 50);
@@ -154,37 +137,13 @@ pub fn classify_regime(
     RegimeClass::Neutral
 }
 
-async fn fetch_vix(market: &Arc<MarketDataApi>, symbol: &str) -> Result<f64> {
-    let sym = symbol.trim().to_uppercase();
-    let raw = market.quotes().get_quote(&sym, Some("quote"), None).await?;
-    let quote = if let Some(entry) = raw.get(&sym) {
-        entry.get("quote").cloned().unwrap_or(json!({}))
+async fn fetch_vix(market: &MarketCtx, symbol: &str) -> Result<f64> {
+    let (last, _, _) = market.quote_last_bid_ask(symbol).await?;
+    if last > 0.0 {
+        Ok(last)
     } else {
-        raw.get("quote").cloned().unwrap_or(raw)
-    };
-    quote
-        .get("lastPrice")
-        .and_then(|v| v.as_f64())
-        .ok_or_else(|| anyhow::anyhow!("missing VIX lastPrice"))
-}
-
-fn parse_candles(history: &Value) -> Vec<Candle> {
-    history
-        .get("candles")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|c| {
-                    Some(Candle {
-                        close: c.get("close")?.as_f64()?,
-                        high: c.get("high")?.as_f64()?,
-                        low: c.get("low")?.as_f64()?,
-                        volume: c.get("volume")?.as_f64()?,
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+        anyhow::bail!("missing VIX lastPrice")
+    }
 }
 
 fn sma(values: &[f64], period: usize) -> Option<f64> {

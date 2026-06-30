@@ -89,10 +89,20 @@ pub enum Commands {
         #[command(subcommand)]
         command: SimCommands,
     },
+    /// Historical swing backtest (Schwab daily bars)
+    Backtest {
+        #[command(subcommand)]
+        command: BacktestCommands,
+    },
     /// Configured URL/API/RSS feeds for LLM context
     Sources {
         #[command(subcommand)]
         command: SourcesCommands,
+    },
+    /// Build and maintain rules watchlists from a candidate pool
+    Watchlist {
+        #[command(subcommand)]
+        command: WatchlistCommands,
     },
 }
 
@@ -174,6 +184,70 @@ pub enum SimCommands {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum BacktestCommands {
+    /// Download daily OHLCV from Schwab into a local cache
+    Prefetch {
+        #[arg(long)]
+        rules_file: PathBuf,
+        /// Start date YYYY-MM-DD (default: ~2 years before --to)
+        #[arg(long)]
+        from: Option<String>,
+        /// End date YYYY-MM-DD (default: yesterday)
+        #[arg(long)]
+        to: Option<String>,
+        /// Re-download even if cache covers the range
+        #[arg(long)]
+        force: bool,
+    },
+    /// Replay trading days through scan/entry/exit logic
+    Run {
+        #[arg(long)]
+        rules_file: PathBuf,
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+        /// Reset backtest state and journal before running
+        #[arg(long)]
+        fresh: bool,
+        /// Run LLM learn loop (in-memory rule patches; requires OPENROUTER_API_KEY)
+        #[arg(long)]
+        learn: bool,
+        /// Disable LLM learn even when llm.enabled (default: learn on when llm + adaptation enabled)
+        #[arg(long)]
+        no_learn: bool,
+        /// Entry fill: close (same day) or next_open
+        #[arg(long, default_value = "close")]
+        fill_at: String,
+    },
+    /// Full analysis report from backtest journal + ledger
+    Report {
+        #[arg(long)]
+        rules_file: PathBuf,
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Generate cron job + wrapper script for nightly cache prefetch
+    Cron {
+        #[arg(long)]
+        rules_file: PathBuf,
+        /// Crontab schedule (default: 06:15 Mon–Fri server local time)
+        #[arg(long)]
+        schedule: Option<String>,
+        /// Write wrapper script only (default: true with --install)
+        #[arg(long)]
+        write_script: bool,
+        /// Append line to user crontab (also writes script)
+        #[arg(long)]
+        install: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum SourcesCommands {
     /// List configured feeds from rules YAML
     List {
@@ -186,5 +260,51 @@ pub enum SourcesCommands {
         rules_file: PathBuf,
         #[arg(long)]
         phase: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WatchlistCommands {
+    /// Show core, thematic, pool, and dynamic watchlist state
+    Show {
+        #[arg(long)]
+        rules_file: PathBuf,
+    },
+    /// Screen candidate pool with playbook filters; optionally write results
+    Build {
+        #[arg(long)]
+        rules_file: PathBuf,
+        /// Write qualified symbols into rules YAML
+        #[arg(long)]
+        write: bool,
+        /// thematic (default): replace thematic; core: append to core; both
+        #[arg(long, default_value = "thematic")]
+        target: String,
+        #[arg(long)]
+        top_n: Option<u32>,
+        #[arg(long)]
+        min_score: Option<f64>,
+    },
+    /// Candidate pool file utilities
+    Pool {
+        #[command(subcommand)]
+        command: WatchlistPoolCommands,
+    },
+    /// Generate weekly refresh cron + wrapper script
+    Cron {
+        #[arg(long)]
+        rules_file: PathBuf,
+        #[arg(long)]
+        schedule: Option<String>,
+        #[arg(long)]
+        install: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum WatchlistPoolCommands {
+    /// Quote-check every symbol in a pool file
+    Validate {
+        pool: PathBuf,
     },
 }

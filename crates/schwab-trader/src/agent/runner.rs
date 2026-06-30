@@ -24,6 +24,7 @@ use crate::commands::scan_cmd::run_scan_inner;
 use crate::config::TraderRuntime;
 use crate::entry::{attempt_entry, EntryStatus};
 use crate::journal;
+use crate::market_ctx::MarketCtx;
 use crate::learn::{
     adaptation_allowed, apply_rule_patches, build_learn_context, should_run_learn,
 };
@@ -121,6 +122,7 @@ async fn run_tick(
     llm_client: Option<&OpenRouterClient>,
 ) -> Result<TickOutcome> {
     state.reset_trades_day(&rules.schedule.timezone);
+    let market_ctx = MarketCtx::for_rules(market.clone(), rules_path, rules);
 
     let transition =
         schedule::resolve_session(rules, state.last_session.as_deref());
@@ -139,7 +141,7 @@ async fn run_tick(
                 state,
                 api,
                 account_hash,
-                market,
+                &market_ctx,
                 llm_client,
                 &transition,
             )
@@ -153,7 +155,7 @@ async fn run_tick(
                 state,
                 api,
                 account_hash,
-                market,
+                &market_ctx,
                 llm_client,
                 &transition,
             )
@@ -167,7 +169,7 @@ async fn run_tick(
                 state,
                 api,
                 account_hash,
-                market,
+                &market_ctx,
                 llm_client,
                 &transition,
             )
@@ -214,7 +216,7 @@ async fn tick_overnight(
     state: &mut TraderState,
     api: &Arc<schwab_api::TraderApi>,
     account_hash: &str,
-    market: &Arc<schwab_market_data::MarketDataApi>,
+    market: &MarketCtx,
     llm_client: Option<&OpenRouterClient>,
     transition: &schedule::SessionTransition,
 ) -> Result<Value> {
@@ -309,7 +311,7 @@ async fn tick_premarket(
     state: &mut TraderState,
     api: &Arc<schwab_api::TraderApi>,
     account_hash: &str,
-    market: &Arc<schwab_market_data::MarketDataApi>,
+    market: &MarketCtx,
     llm_client: Option<&OpenRouterClient>,
     transition: &schedule::SessionTransition,
 ) -> Result<Value> {
@@ -399,7 +401,7 @@ async fn tick_regular(
     state: &mut TraderState,
     api: &Arc<schwab_api::TraderApi>,
     account_hash: &str,
-    market: &Arc<schwab_market_data::MarketDataApi>,
+    market: &MarketCtx,
     llm_client: Option<&OpenRouterClient>,
     transition: &schedule::SessionTransition,
 ) -> Result<Value> {
@@ -441,7 +443,7 @@ async fn tick_regular(
         snapshot_equity(state, &tick_rules);
     }
 
-    let scan = run_scan_inner(market, &tick_rules, state).await?;
+    let mut scan = run_scan_inner(market, &tick_rules, state).await?;
     let capital = compute_capital_check(
         api,
         &tick_rules,
@@ -464,6 +466,7 @@ async fn tick_regular(
     let mut llm_summary = None;
     let mut monitor_adjustments = Vec::<Value>::new();
     let mut llm_phase: Option<&str> = None;
+    let mut web_picks_added = 0u32;
 
     if let Some(client) = llm_client {
         if let Some((phase, model, use_web)) =
@@ -495,7 +498,7 @@ async fn tick_regular(
             .await;
             match client.review(&tick_rules.llm, phase, model, &context, use_web).await {
                 Ok(review) => {
-                    apply_web_picks(state, &tick_rules, &review);
+                    web_picks_added = apply_web_picks(state, &tick_rules, &review);
                     if apply_llm_profile_selection(state, rules, &review) {
                         tick_rules = effective_rules(rules, state);
                     }
@@ -527,6 +530,10 @@ async fn tick_regular(
                 }
             }
         }
+    }
+
+    if web_picks_added > 0 {
+        scan = run_scan_inner(market, &tick_rules, state).await?;
     }
 
     let mut entry_attempts = Vec::new();
@@ -569,6 +576,7 @@ async fn tick_regular(
                     None,
                     true,
                     "agent",
+                    None,
                 )
                 .await?;
 
@@ -599,9 +607,9 @@ async fn tick_regular(
     }
 
     let mut learn_result = None;
-    if rules.llm.enabled && should_run_learn(rules, state) {
+    if rules.llm.enabled && should_run_learn(rules, state, false) {
         if let Some(client) = llm_client {
-            let learn_ctx = build_learn_context(rules, state, rules_path)?;
+            let learn_ctx = build_learn_context(rules, state, rules_path, false)?;
             let learn_ctx = llm_context_with_feeds(rules, "learn", learn_ctx).await;
             match client
                 .review(
@@ -616,7 +624,7 @@ async fn tick_regular(
                 Ok(review) => {
                     let mut applied = Vec::new();
                     if !review.rule_patches.is_empty() {
-                        if adaptation_allowed(runtime.dry_run, runtime.simulate, rules) {
+                        if adaptation_allowed(runtime.dry_run, runtime.simulate, rules, false) {
                             match apply_rule_patches(rules, &review.rule_patches) {
                                 Ok(p) => {
                                     applied = p;
@@ -691,6 +699,7 @@ async fn tick_regular(
         "simulate": runtime.simulate,
         "playbook_style": tick_rules.playbook.style,
         "effective_playbook": crate::learn::adaptable_playbook_snapshot(&tick_rules),
+        "market_cache": market.cache_status(),
         "state_path": state_path(rules_path),
     });
 
@@ -755,13 +764,14 @@ fn resolve_regular_llm_phase<'a>(
     None
 }
 
-fn apply_web_picks(state: &mut TraderState, rules: &TraderRules, review: &TraderLlmReview) {
+fn apply_web_picks(state: &mut TraderState, rules: &TraderRules, review: &TraderLlmReview) -> u32 {
     if !rules.watchlists.dynamic || !rules.sources.web.enabled {
-        return;
+        return 0;
     }
     state.reset_web_picks_day(&rules.schedule.timezone);
     let budget = rules.sources.web.pick_budget_per_day;
     let max_dynamic = rules.watchlists.max_dynamic_symbols as usize;
+    let mut added = 0u32;
 
     for candidate in &review.candidates {
         if state.web_picks_today >= budget {
@@ -783,6 +793,7 @@ fn apply_web_picks(state: &mut TraderState, rules: &TraderRules, review: &Trader
         }
         state.dynamic_watchlist.push(sym);
         state.web_picks_today += 1;
+        added += 1;
     }
 
     if !review.candidates.is_empty() {
@@ -791,6 +802,7 @@ fn apply_web_picks(state: &mut TraderState, rules: &TraderRules, review: &Trader
             "web_insights": review.web_insights,
         }));
     }
+    added
 }
 
 async fn notify_rule_adaptation(rules: &TraderRules, patch_count: usize) {

@@ -10,7 +10,8 @@ fn trader_help_lists_subcommands() {
         .success()
         .stdout(predicate::str::contains("agent"))
         .stdout(predicate::str::contains("capital"))
-        .stdout(predicate::str::contains("watch"));
+        .stdout(predicate::str::contains("watch"))
+        .stdout(predicate::str::contains("watchlist"));
 }
 
 #[test]

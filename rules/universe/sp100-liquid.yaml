@@ -1,0 +1,44 @@
+version: 1
+label: sp100-liquid
+# Curated liquid US equities/ETFs for swing screening (refresh manually or via pool validate).
+symbols:
+  - AAPL
+  - MSFT
+  - AMZN
+  - GOOGL
+  - META
+  - NVDA
+  - AVGO
+  - ORCL
+  - AMD
+  - MU
+  - QCOM
+  - CRM
+  - NFLX
+  - COST
+  - WMT
+  - JPM
+  - GS
+  - BAC
+  - UNH
+  - LLY
+  - JNJ
+  - CAT
+  - GE
+  - RTX
+  - XOM
+  - CVX
+  - NKE
+  - BA
+  - PANW
+  - ASML
+  - TSLA
+  - QQQ
+  - IWM
+  - DIA
+  - SMH
+  - XLK
+  - XLF
+  - XLE
+  - XLV
+  - XLI

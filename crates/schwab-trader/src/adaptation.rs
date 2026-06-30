@@ -2,7 +2,6 @@
 
 use anyhow::Result;
 use schwab_api::TraderApi;
-use schwab_market_data::MarketDataApi;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -13,6 +12,7 @@ use crate::agent::llm::TraderLlmReview;
 use crate::agent::state::{save_state, TraderState};
 use crate::capital::exit_prices;
 use crate::config::TraderRuntime;
+use crate::market_ctx::MarketCtx;
 use crate::journal;
 use crate::orders::replace_oco_bracket;
 use crate::regime::RegimeSnapshot;
@@ -207,7 +207,7 @@ pub async fn apply_monitor_exit_adjustments(
     rules: &TraderRules,
     state: &mut TraderState,
     api: &Arc<TraderApi>,
-    market: &Arc<MarketDataApi>,
+    market: &MarketCtx,
     account_hash: &str,
     review: &TraderLlmReview,
 ) -> Result<Vec<Value>> {
