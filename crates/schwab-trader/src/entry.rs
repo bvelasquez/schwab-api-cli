@@ -21,7 +21,7 @@ use crate::market_ctx::MarketCtx;
 use crate::orders::place_oco_bracket_with_retry;
 use crate::rules::TraderRules;
 use crate::sim::record_sim_entry_at;
-use crate::technical::{fetch_technical_snapshot, TechnicalSnapshot};
+use crate::technical::{fetch_technical_snapshot, near_52w_high_size_scalar, TechnicalSnapshot};
 use schwab_cli::order_builder::{
     build_equity_order, parse_duration, parse_session, TradeOrderType, TradeSide,
 };
@@ -333,7 +333,8 @@ pub async fn attempt_entry(
         Some(rules_path),
     )
     .await?;
-    let (profit_limit, stop_price, stop_limit) = exit_prices(limit_price, rules);
+    let (profit_limit, stop_price, stop_limit) = exit_prices(limit_price, rules, snap.atr_14);
+    let size_scalar = near_52w_high_size_scalar(rules, &snap);
     let sizing = compute_position_sizing(
         rules,
         limit_price,
@@ -341,7 +342,8 @@ pub async fn attempt_entry(
         capital_preview.tradable_budget_usd,
         snap.atr_14,
     );
-    let quantity = quantity_override.unwrap_or(sizing.quantity);
+    let base_qty = sizing.quantity * size_scalar;
+    let quantity = quantity_override.unwrap_or(base_qty);
     log_position_sizing(
         &if quantity_override.is_some() {
             PositionSizing {
@@ -495,6 +497,7 @@ pub async fn attempt_entry(
             limit_price,
             &pos_id,
             fill_at,
+            snap.atr_14,
         )?;
         state.trades_today += 1;
         if backtest {
@@ -651,7 +654,7 @@ pub async fn attempt_entry(
     };
 
     let fill_started = std::time::Instant::now();
-    let (profit_limit, stop_px, stop_limit_px) = exit_prices(fill_price, rules);
+    let (profit_limit, stop_px, stop_limit_px) = exit_prices(fill_price, rules, snap.atr_14);
     let mut bracket_result = None;
     let mut oco_order_id = None;
 

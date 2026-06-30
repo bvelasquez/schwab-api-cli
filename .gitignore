@@ -28,13 +28,32 @@ safety.json
 plans/*.state.json
 plans/local/
 
-# Options agent runtime state (per rules file: agent-state-<rules-stem>.json)
+# Options agent runtime state (per rules file stem, e.g. options-pilot-9947.yaml)
 rules/agent-state-*.json
+rules/agent-sim-state-*.json
+rules/agent-journal-*.jsonl
+rules/agent-sim-journal-*.jsonl
 rules/agent-*.pid
 rules/agent-*.log
-# Equity trader runtime state (per rules file)
+rules/.eqo-market-hours-*.json
+
+# Equity trader runtime state (per rules file stem, e.g. trader-swing-9947.yaml)
 rules/trader-state-*.json
 rules/trader-journal-*.jsonl
+rules/trader-*.pid
+rules/trader-*.log
+
+# Backtest artifacts (regenerate: schwab-trader backtest prefetch / run)
+rules/.backtest-cache-*.json
+rules/trader-backtest-state-*.json
+rules/trader-backtest-journal-*.jsonl
+rules/prefetch-*.sh
+
+# Local rule tuning / comparison copies (committed examples: *-example.yaml, options-monthly-income.yaml)
+rules/trader-swing-p1-*.yaml
+rules/trader-swing-*-baseline.yaml
+rules/p1-sizing-results.json
+
 # Legacy shared paths (pre per-file state)
 rules/agent-state.json
 rules/agent.pid

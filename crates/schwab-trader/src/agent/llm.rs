@@ -206,7 +206,14 @@ fn build_system_prompt(
     } else {
         ""
     };
-    format!("{instructions}{patch_help}{profile_help}{feed_help}{heat_help}{history_help}\n{RESPONSE_JSON_SCHEMA}")
+    let session_help = if matches!(phase, "selection" | "web" | "monitor") {
+        "\n\nmarket_clock.regular_session_open and market_clock.now_eastern are authoritative for whether the US equity market is open. \
+         Ignore stale overnight_digest_snapshot commentary about market closure during regular hours. \
+         entry_block_reason lists why new entries are blocked (e.g. max_new_entries_per_day); respect it."
+    } else {
+        ""
+    };
+    format!("{instructions}{patch_help}{profile_help}{feed_help}{heat_help}{history_help}{session_help}\n{RESPONSE_JSON_SCHEMA}")
 }
 
 fn llm_review_json_schema() -> Value {

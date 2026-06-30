@@ -50,7 +50,7 @@ playbook:
     - 35.0
     - 68.0
     max_positions: 4
-    max_new_entries_per_day: 1
+    max_new_entries_per_day: 3
     position_size:
       method: atr_normalized
       risk_per_trade_pct: 0.75
@@ -60,6 +60,9 @@ playbook:
       atr_vol_scalar_max: 1.5
   exit:
     profit_target_pct: 8.0
+    profit_target_atr_cap:
+      enabled: true
+      atr_multiple: 2.5
     stop_loss_pct: 5.0
     use_oco_at_entry: true
     trailing:
@@ -87,6 +90,9 @@ playbook:
     - MU
     no_trade_before_earnings_days: 2
     min_rs_vs_benchmark_30d: -4.0
+    min_distance_from_52w_high_pct: 3.0
+    near_52w_high_soft_zone_pct: 6.0
+    near_52w_high_size_scalar: 0.5
   short:
     enabled: false
     min_avg_volume_20d: 2000000.0
@@ -201,7 +207,7 @@ technical:
 risk:
   max_portfolio_heat_pct: 8.0
   max_drawdown_halt_pct: 10.0
-  max_trades_per_day: 1
+  max_trades_per_day: 3
 execution:
   entry_order_type: limit
   entry_limit_basis: ask
@@ -329,10 +335,13 @@ adaptation:
     max_stop_distance_from_price_pct: 8.0
   profiles:
     elevated_vol:
-      description: Elevated vol — reduced size, moderate targets
+      description: Elevated vol — reduced size, ATR-capped targets
       overrides:
         exit:
-          profit_target_pct: 7.0
+          profit_target_pct: 6.0
+          profit_target_atr_cap:
+            enabled: true
+            atr_multiple: 2.25
           stop_loss_pct: 4.5
           time_stop_days: null
           time_stop_minutes: null
@@ -341,7 +350,7 @@ adaptation:
             trail_atr_multiple: 2.25
         entry:
           rsi_14_range: null
-          max_new_entries_per_day: 1
+          max_new_entries_per_day: null
           position_size:
             method: atr_normalized
             risk_per_trade_pct: 0.55
@@ -357,10 +366,13 @@ adaptation:
         entry: null
         intraday: null
     low_vol_trend:
-      description: Calm uptrend — let winners run, normal participation
+      description: Calm uptrend — let winners run, wider ATR cap
       overrides:
         exit:
-          profit_target_pct: 10.0
+          profit_target_pct: 9.0
+          profit_target_atr_cap:
+            enabled: true
+            atr_multiple: 3.0
           stop_loss_pct: 3.5
           time_stop_days: null
           time_stop_minutes: null
@@ -369,7 +381,7 @@ adaptation:
             trail_atr_multiple: 1.75
         entry:
           rsi_14_range: null
-          max_new_entries_per_day: 1
+          max_new_entries_per_day: null
           position_size:
             method: null
             risk_per_trade_pct: 0.9
@@ -379,10 +391,13 @@ adaptation:
             atr_vol_scalar_max: null
         intraday: null
     high_vol_chop:
-      description: High vol chop — defensive sizing, wider stops, no new entries
+      description: High vol chop — defensive sizing, tight ATR-capped targets
       overrides:
         exit:
-          profit_target_pct: 6.0
+          profit_target_pct: 5.0
+          profit_target_atr_cap:
+            enabled: true
+            atr_multiple: 2.0
           stop_loss_pct: 5.0
           time_stop_days: null
           time_stop_minutes: null
