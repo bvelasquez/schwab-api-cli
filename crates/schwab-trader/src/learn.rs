@@ -12,19 +12,13 @@ use crate::journal;
 use crate::rules::TraderRules;
 use crate::sim;
 
-const ADAPTABLE_PATHS: &[&str] = &[
+/// Narrow learn loop — exit tuning and RSI only (no sizing/method/entry caps).
+pub const LEARN_ADAPTABLE_PATHS: &[&str] = &[
     "playbook.exit.profit_target_pct",
     "playbook.exit.stop_loss_pct",
     "playbook.exit.trailing.trail_atr_multiple",
     "playbook.exit.trailing.activate_after_profit_pct",
-    "playbook.exit.time_stop_days",
-    "playbook.exit.time_stop_minutes",
     "playbook.entry.rsi_14_range",
-    "playbook.entry.position_size.risk_per_trade_pct",
-    "playbook.entry.position_size.method",
-    "playbook.entry.max_new_entries_per_day",
-    "playbook.intraday.min_relative_volume",
-    "playbook.intraday.momentum_rsi_min",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,31 +29,51 @@ pub struct AppliedPatch {
     pub reason: String,
 }
 
-pub fn should_run_learn(rules: &TraderRules, state: &TraderState) -> bool {
+pub fn should_run_learn(rules: &TraderRules, state: &TraderState, backtest: bool) -> bool {
     if !rules.llm.enabled || !rules.llm.allow_rule_adaptation {
         return false;
     }
-    if state.closed_trades_since_learn >= rules.llm.learn_min_closed_trades.max(1) {
-        return true;
+    let min_trades = if backtest {
+        rules
+            .llm
+            .backtest_learn_min_closed_trades
+            .max(rules.llm.learn_min_closed_trades)
+    } else {
+        rules.llm.learn_min_closed_trades.max(1)
+    };
+    if state.closed_trades_since_learn < min_trades {
+        return false;
     }
-    if rules.llm.learn_every_ticks > 0
-        && state.closed_trades_since_learn > 0
-        && state
+    let cooldown = if backtest {
+        rules
+            .llm
+            .backtest_learn_cooldown_ticks
+            .max(rules.llm.learn_cooldown_ticks)
+    } else {
+        rules.llm.learn_cooldown_ticks
+    };
+    if cooldown > 0 {
+        let since = state
             .tick_count
-            .saturating_sub(state.last_learn_tick.unwrap_or(0))
-            >= rules.llm.learn_every_ticks
-    {
-        return true;
+            .saturating_sub(state.last_learn_tick.unwrap_or(0));
+        if since < cooldown {
+            return false;
+        }
     }
-    false
+    true
 }
 
 pub fn build_learn_context(
     rules: &TraderRules,
     state: &TraderState,
     rules_path: &Path,
+    backtest: bool,
 ) -> Result<Value> {
-    let journal_events = journal::read_recent(rules_path, 80)?;
+    let journal_events = if backtest {
+        journal::read_all_backtest(rules_path)?
+    } else {
+        journal::read_recent(rules_path, 80)?
+    };
     let closed: Vec<Value> = journal_events
         .iter()
         .filter(|e| {
@@ -68,8 +82,13 @@ pub fn build_learn_context(
                 Some("sim_exit_filled") | Some("exit_filled")
             )
         })
-        .cloned()
+        .map(|e| e.clone())
         .collect();
+    let recent_closed: Vec<Value> = if backtest {
+        closed.into_iter().rev().take(80).collect::<Vec<_>>().into_iter().rev().collect()
+    } else {
+        closed
+    };
 
     Ok(json!({
         "phase": "learn",
@@ -77,7 +96,7 @@ pub fn build_learn_context(
         "adaptable_playbook": adaptable_playbook_snapshot(rules),
         "adaptation_bounds": rules.llm.adaptation_bounds,
         "immutable_fields": rules.llm.immutable_fields,
-        "allowed_patch_paths": ADAPTABLE_PATHS,
+        "allowed_patch_paths": LEARN_ADAPTABLE_PATHS,
         "profile_catalog": profile_catalog(rules),
         "active_profile": state.active_profile,
         "last_regime": state.last_regime,
@@ -86,11 +105,12 @@ pub fn build_learn_context(
             "value": "new scalar or [low, high] for rsi_14_range",
             "reason": "cite trade ids and metrics"
         },
-        "recent_closed_trades": closed,
+        "recent_closed_trades": recent_closed,
         "sim_stats": sim::compute_stats(state),
         "trades_today": state.trades_today,
         "tick_count": state.tick_count,
         "closed_trades_since_learn": state.closed_trades_since_learn,
+        "backtest": backtest,
     }))
 }
 
@@ -119,6 +139,14 @@ pub fn apply_rule_patches(
     rules: &mut TraderRules,
     patches: &[Value],
 ) -> Result<Vec<AppliedPatch>> {
+    apply_rule_patches_with_allowlist(rules, patches, LEARN_ADAPTABLE_PATHS)
+}
+
+pub fn apply_rule_patches_with_allowlist(
+    rules: &mut TraderRules,
+    patches: &[Value],
+    allowed_paths: &[&str],
+) -> Result<Vec<AppliedPatch>> {
     let mut applied = Vec::new();
     for patch in patches {
         let path = patch
@@ -135,7 +163,7 @@ pub fn apply_rule_patches(
         if rules.llm.immutable_fields.iter().any(|f| f == path) {
             continue;
         }
-        if !ADAPTABLE_PATHS.contains(&path) {
+        if !allowed_paths.contains(&path) {
             continue;
         }
 
@@ -344,11 +372,16 @@ fn bound_value(
     Ok(json!(v))
 }
 
-pub fn adaptation_allowed(runtime_dry_run: bool, runtime_simulate: bool, rules: &TraderRules) -> bool {
+pub fn adaptation_allowed(
+    runtime_dry_run: bool,
+    runtime_simulate: bool,
+    rules: &TraderRules,
+    backtest: bool,
+) -> bool {
     if runtime_dry_run {
         return false;
     }
-    if runtime_simulate {
+    if backtest || runtime_simulate {
         return rules
             .simulation
             .as_ref()
@@ -361,6 +394,41 @@ pub fn adaptation_allowed(runtime_dry_run: bool, runtime_simulate: bool, rules: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::state::TraderState;
+
+    #[test]
+    fn learn_throttle_requires_min_trades_and_cooldown() {
+        let mut rules = TraderRules::default();
+        rules.trader_id = "t".into();
+        rules.accounts = vec![crate::rules::TraderAccount {
+            hash: "a".into(),
+            label: None,
+            r#type: crate::rules::AccountType::Margin,
+            enabled: true,
+        }];
+        rules.llm.enabled = true;
+        rules.llm.allow_rule_adaptation = true;
+        rules.llm.learn_min_closed_trades = 3;
+        rules.llm.learn_cooldown_ticks = 10;
+
+        let mut state = TraderState::default();
+        state.closed_trades_since_learn = 2;
+        assert!(!should_run_learn(&rules, &state, false));
+
+        state.closed_trades_since_learn = 3;
+        state.tick_count = 5;
+        state.last_learn_tick = Some(0);
+        assert!(!should_run_learn(&rules, &state, false));
+
+        state.tick_count = 10;
+        assert!(should_run_learn(&rules, &state, false));
+
+        rules.llm.backtest_learn_min_closed_trades = 5;
+        rules.llm.backtest_learn_cooldown_ticks = 30;
+        state.closed_trades_since_learn = 4;
+        state.tick_count = 100;
+        assert!(!should_run_learn(&rules, &state, true));
+    }
 
     #[test]
     fn bounds_limit_profit_target_delta() {

@@ -5,19 +5,22 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use schwab_api::TraderApi;
-use schwab_market_data::MarketDataApi;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::agent::state::{position_id, save_state, PendingBuy, SwingPosition, TraderState, UnbracketedPosition};
+use crate::agent::state::{
+    position_id, position_id_for_date, save_backtest_state, save_state, PendingBuy, SwingPosition,
+    TraderState, UnbracketedPosition,
+};
 use crate::capital::{
     capital_check_to_json, compute_capital_check, exit_prices,
 };
 use crate::config::TraderRuntime;
 use crate::journal;
+use crate::market_ctx::MarketCtx;
 use crate::orders::place_oco_bracket_with_retry;
 use crate::rules::TraderRules;
-use crate::sim::record_sim_entry;
+use crate::sim::record_sim_entry_at;
 use crate::technical::{fetch_technical_snapshot, TechnicalSnapshot};
 use schwab_cli::order_builder::{
     build_equity_order, parse_duration, parse_session, TradeOrderType, TradeSide,
@@ -58,6 +61,8 @@ pub struct EntryAttempt {
     pub fill: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub order_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_context: Option<Value>,
 }
 
 pub fn compute_entry_quantity(
@@ -78,6 +83,16 @@ pub fn compute_entry_quantity_with_atr(
 ) -> f64 {
     compute_position_sizing(rules, entry_price, stop_price, tradable_budget, atr_14).quantity
 }
+
+fn round_quantity(qty: f64, fractional: bool) -> f64 {
+    if fractional {
+        (qty * 10_000.0).floor() / 10_000.0
+    } else {
+        qty.floor()
+    }
+}
+
+const MIN_FRACTIONAL_SHARES: f64 = 0.0001;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PositionSizing {
@@ -122,12 +137,13 @@ pub fn compute_position_sizing(
     }
 
     let stop_per_share = (entry_price - stop_price).max(0.01);
-    let qty_by_risk = (risk_budget / stop_per_share).floor();
+    let fractional = rules.fractional_shares_allowed();
+    let qty_by_risk = round_quantity(risk_budget / stop_per_share, fractional);
 
     let max_pct_size_usd = sleeve_cap * ps.max_position_pct / 100.0;
     let max_position_value = max_pct_size_usd.min(tradable_budget);
-    let qty_by_position_cap = (max_position_value / entry_price).floor();
-    let qty_by_budget = (tradable_budget / entry_price).floor();
+    let qty_by_position_cap = round_quantity(max_position_value / entry_price, fractional);
+    let qty_by_budget = round_quantity(tradable_budget / entry_price, fractional);
 
     let quantity = qty_by_risk
         .min(qty_by_position_cap)
@@ -222,40 +238,74 @@ pub async fn attempt_entry(
     rules: &TraderRules,
     state: &mut TraderState,
     api: &Arc<TraderApi>,
-    market: &Arc<MarketDataApi>,
+    market: &MarketCtx,
     account_hash: &str,
     symbol: &str,
     limit_price_override: Option<f64>,
     quantity_override: Option<f64>,
     bracket: bool,
     source: &str,
+    opened_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Result<EntryAttempt> {
     let symbol = symbol.trim().to_uppercase();
+    let replay = opened_at.is_some();
+    let active_profile = state.active_profile.clone();
 
-    state.reset_trades_day(&rules.schedule.timezone);
-    if let Some(reason) = state.entry_block_reason(rules) {
-        return Ok(skipped(&symbol, reason));
+    if let Some(at) = opened_at {
+        let day = at
+            .with_timezone(&crate::market_session::trading_tz(&rules.schedule.timezone))
+            .date_naive();
+        if state.trades_day != Some(day) {
+            state.trades_day = Some(day);
+            state.trades_today = 0;
+        }
+    } else {
+        state.reset_trades_day(&rules.schedule.timezone);
+    }
+
+    let block_reason = if replay {
+        state.entry_block_reason_replay(rules)
+    } else {
+        state.entry_block_reason(rules)
+    };
+    if let Some(reason) = block_reason {
+        return Ok(skip_entry(
+            &symbol,
+            &reason,
+            rules,
+            &active_profile,
+            replay,
+        ));
     }
 
     if rules.is_core_holding(&symbol) {
-        return Ok(skipped(&symbol, "core_holding"));
+        return Ok(skip_entry(&symbol, "core_holding", rules, &active_profile, replay));
     }
     if state.has_open_symbol(&symbol) {
-        return Ok(skipped(&symbol, "already_open"));
+        return Ok(skip_entry(&symbol, "already_open", rules, &active_profile, replay));
     }
     if rules.playbook.direction != "long" {
-        return Ok(skipped(&symbol, "v1 supports long entries only"));
+        return Ok(skip_entry(
+            &symbol,
+            "v1 supports long entries only",
+            rules,
+            &active_profile,
+            replay,
+        ));
     }
 
     if rules.is_blocked_symbol(&symbol) {
-        return Ok(skipped(&symbol, "blocked_symbol"));
+        return Ok(skip_entry(&symbol, "blocked_symbol", rules, &active_profile, replay));
     }
     if !state.unbracketed_positions.is_empty()
         && rules.execution.require_bracket_before_entry_resume
     {
-        return Ok(skipped(
+        return Ok(skip_entry(
             &symbol,
             "unbracketed position exists — entries halted",
+            rules,
+            &active_profile,
+            replay,
         ));
     }
 
@@ -263,7 +313,13 @@ pub async fn attempt_entry(
     let limit_price = limit_price_override
         .unwrap_or_else(|| resolve_entry_limit_price(&snap, rules));
     if limit_price <= 0.0 {
-        return Ok(skipped(&symbol, "could not resolve limit price"));
+        return Ok(skip_entry(
+            &symbol,
+            "could not resolve limit price",
+            rules,
+            &active_profile,
+            replay,
+        ));
     }
 
     let capital_preview = compute_capital_check(
@@ -297,13 +353,26 @@ pub async fn attempt_entry(
         },
         rules.playbook.entry.position_size.max_position_pct,
     );
-    if quantity < 1.0 {
-        return Ok(skipped(
+    let min_qty = if rules.fractional_shares_allowed() {
+        MIN_FRACTIONAL_SHARES
+    } else {
+        1.0
+    };
+    if quantity < min_qty {
+        return Ok(skip_entry(
             &symbol,
-            format!(
-                "quantity below 1 (budget ${:.2}, price ${limit_price:.2})",
+            &format!(
+                "quantity below {} (budget ${:.2}, price ${limit_price:.2})",
+                if min_qty < 1.0 {
+                    format!("{min_qty}")
+                } else {
+                    "1".into()
+                },
                 capital_preview.tradable_budget_usd
             ),
+            rules,
+            &active_profile,
+            replay,
         ));
     }
 
@@ -322,12 +391,15 @@ pub async fn attempt_entry(
     .await?;
 
     if !capital.passed {
-        return Ok(skipped(
+        return Ok(skip_entry(
             &symbol,
-            capital
+            &capital
                 .reject_reason
                 .clone()
                 .unwrap_or_else(|| "capital_check failed".into()),
+            rules,
+            &active_profile,
+            replay,
         ));
     }
 
@@ -354,21 +426,43 @@ pub async fn attempt_entry(
         "enabled": bracket && rules.playbook.exit.use_oco_at_entry,
     });
 
-    journal::append_event(
-        rules_path,
-        "entry_signal",
-        json!({
-            "source": source,
-            "symbol": symbol,
-            "quantity": quantity,
-            "limit_price": limit_price,
-            "position_sizing": sizing,
-            "capital_check": capital_check_to_json(&capital),
-            "bracket_preview": bracket_preview,
-            "dry_run": runtime.dry_run,
-            "simulate": runtime.simulate,
-        }),
-    )?;
+    let journal_at = opened_at.unwrap_or_else(chrono::Utc::now);
+    let backtest = opened_at.is_some();
+
+    if backtest {
+        journal::append_backtest_event(
+            rules_path,
+            journal_at,
+            "entry_signal",
+            json!({
+                "source": source,
+                "symbol": symbol,
+                "quantity": quantity,
+                "limit_price": limit_price,
+                "position_sizing": sizing,
+                "capital_check": capital_check_to_json(&capital),
+                "bracket_preview": bracket_preview,
+                "dry_run": runtime.dry_run,
+                "simulate": runtime.simulate,
+            }),
+        )?;
+    } else {
+        journal::append_event(
+            rules_path,
+            "entry_signal",
+            json!({
+                "source": source,
+                "symbol": symbol,
+                "quantity": quantity,
+                "limit_price": limit_price,
+                "position_sizing": sizing,
+                "capital_check": capital_check_to_json(&capital),
+                "bracket_preview": bracket_preview,
+                "dry_run": runtime.dry_run,
+                "simulate": runtime.simulate,
+            }),
+        )?;
+    }
 
     if runtime.dry_run {
         return Ok(EntryAttempt {
@@ -382,12 +476,17 @@ pub async fn attempt_entry(
             bracket: Some(bracket_preview),
             fill: None,
             order_id: None,
+            effective_context: None,
         });
     }
 
     if runtime.simulate {
-        let pos_id = position_id(&symbol, &rules.schedule.timezone);
-        record_sim_entry(
+        let fill_at = opened_at.unwrap_or_else(chrono::Utc::now);
+        let day = fill_at
+            .with_timezone(&crate::market_session::trading_tz(&rules.schedule.timezone))
+            .date_naive();
+        let pos_id = position_id_for_date(&symbol, &rules.schedule.timezone, day);
+        record_sim_entry_at(
             state,
             rules,
             account_hash,
@@ -395,27 +494,49 @@ pub async fn attempt_entry(
             quantity,
             limit_price,
             &pos_id,
+            fill_at,
         )?;
         state.trades_today += 1;
-        save_state(rules_path, state)?;
-
-        journal::append_event(
-            rules_path,
-            "sim_entry_filled",
-            json!({
-                "source": source,
-                "trade_id": pos_id,
-                "symbol": symbol,
-                "quantity": quantity,
-                "fill_price": limit_price,
-                "stop_price": stop_price,
-                "profit_limit": profit_limit,
-                "capital_check": capital_check_to_json(&capital),
-                "position_sizing": sizing,
-                "active_profile": state.active_profile,
-                "regime_class": state.last_regime.as_ref().and_then(|r| r.get("class")),
-            }),
-        )?;
+        if backtest {
+            save_backtest_state(rules_path, state)?;
+            journal::append_backtest_event(
+                rules_path,
+                fill_at,
+                "sim_entry_filled",
+                json!({
+                    "source": source,
+                    "trade_id": pos_id,
+                    "symbol": symbol,
+                    "quantity": quantity,
+                    "fill_price": limit_price,
+                    "stop_price": stop_price,
+                    "profit_limit": profit_limit,
+                    "capital_check": capital_check_to_json(&capital),
+                    "position_sizing": sizing,
+                    "active_profile": state.active_profile,
+                    "regime_class": state.last_regime.as_ref().and_then(|r| r.get("class")),
+                }),
+            )?;
+        } else {
+            save_state(rules_path, state)?;
+            journal::append_event(
+                rules_path,
+                "sim_entry_filled",
+                json!({
+                    "source": source,
+                    "trade_id": pos_id,
+                    "symbol": symbol,
+                    "quantity": quantity,
+                    "fill_price": limit_price,
+                    "stop_price": stop_price,
+                    "profit_limit": profit_limit,
+                    "capital_check": capital_check_to_json(&capital),
+                    "position_sizing": sizing,
+                    "active_profile": state.active_profile,
+                    "regime_class": state.last_regime.as_ref().and_then(|r| r.get("class")),
+                }),
+            )?;
+        }
 
         return Ok(EntryAttempt {
             status: EntryStatus::Simulated,
@@ -432,6 +553,7 @@ pub async fn attempt_entry(
                 "quantity": quantity,
             })),
             order_id: Some(format!("sim-{pos_id}")),
+            effective_context: None,
         });
     }
 
@@ -502,6 +624,7 @@ pub async fn attempt_entry(
             bracket: None,
             fill: Some(serde_json::to_value(&wait)?),
             order_id: Some(order_id),
+            effective_context: None,
         });
     }
 
@@ -631,7 +754,25 @@ pub async fn attempt_entry(
         bracket: bracket_result,
         fill: Some(serde_json::to_value(&wait)?),
         order_id: Some(order_id),
+        effective_context: None,
     })
+}
+
+fn skip_entry(
+    symbol: &str,
+    reason: impl Into<String>,
+    rules: &TraderRules,
+    active_profile: &Option<String>,
+    replay: bool,
+) -> EntryAttempt {
+    let mut attempt = skipped(symbol, reason);
+    if replay {
+        attempt.effective_context = Some(json!({
+            "active_profile": active_profile,
+            "playbook": crate::learn::adaptable_playbook_snapshot(rules),
+        }));
+    }
+    attempt
 }
 
 fn skipped(symbol: &str, reason: impl Into<String>) -> EntryAttempt {
@@ -646,6 +787,7 @@ fn skipped(symbol: &str, reason: impl Into<String>) -> EntryAttempt {
         bracket: None,
         fill: None,
         order_id: None,
+        effective_context: None,
     }
 }
 
@@ -706,6 +848,7 @@ mod tests {
             above_sma_20: None,
             above_sma_50: None,
             intraday: false,
+            history_features: None,
         };
         let mut rules_mid = rules;
         rules_mid.execution.entry_limit_basis = "mid".into();

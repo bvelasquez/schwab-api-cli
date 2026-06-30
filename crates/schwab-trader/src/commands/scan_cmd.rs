@@ -2,18 +2,20 @@ use std::path::Path;
 
 use anyhow::Result;
 use serde_json::{json, Value};
-use std::sync::Arc;
 
 use crate::agent::state::TraderState;
 use crate::config::TraderRuntime;
+use crate::market_ctx::MarketCtx;
 use crate::rules::TraderRules;
 use crate::technical::{
-    fetch_technical_snapshot, passes_entry_filters, technical_to_json, TechnicalSnapshot,
+    fetch_technical_snapshot_with_benchmark, passes_entry_filters, technical_to_json,
+    TechnicalSnapshot,
 };
 
 pub async fn run(runtime: &TraderRuntime, rules_path: &Path) -> Result<()> {
     let rules = TraderRules::load(rules_path)?;
     let market = runtime.build_market_api()?;
+    let market = MarketCtx::for_rules(market, rules_path, &rules);
     let state = crate::agent::state::load_state(rules_path, &rules.trader_id)?;
     let data = run_scan_inner(&market, &rules, &state).await?;
     runtime.emit(
@@ -24,7 +26,7 @@ pub async fn run(runtime: &TraderRuntime, rules_path: &Path) -> Result<()> {
 }
 
 pub async fn run_scan_inner(
-    market: &Arc<schwab_market_data::MarketDataApi>,
+    market: &MarketCtx,
     rules: &TraderRules,
     state: &TraderState,
 ) -> Result<Value> {
@@ -39,6 +41,21 @@ pub async fn run_scan_inner(
     let mut candidates = Vec::new();
     let mut rejected = Vec::new();
 
+    let bench_sym = rules.adaptation.regime.benchmark_symbol.trim().to_uppercase();
+    let benchmark_candles = if bench_sym.is_empty() {
+        Vec::new()
+    } else {
+        market
+            .daily_candles_with_config(&bench_sym, "year", 1, "daily")
+            .await
+            .unwrap_or_default()
+    };
+    let bench_ref = if benchmark_candles.is_empty() {
+        None
+    } else {
+        Some(benchmark_candles.as_slice())
+    };
+
     for symbol in symbols {
         if rules.is_core_holding(&symbol) {
             rejected.push(json!({ "symbol": symbol, "reason": "core_holding" }));
@@ -52,7 +69,14 @@ pub async fn run_scan_inner(
             rejected.push(json!({ "symbol": symbol, "reason": "already_open" }));
             continue;
         }
-        let snap = match fetch_technical_snapshot(market, rules, &symbol).await {
+        let snap = match fetch_technical_snapshot_with_benchmark(
+            market,
+            rules,
+            &symbol,
+            bench_ref,
+        )
+        .await
+        {
             Ok(s) => s,
             Err(err) => {
                 rejected.push(json!({ "symbol": symbol, "reason": err.to_string() }));
@@ -87,6 +111,9 @@ pub async fn run_scan_inner(
         "candidates": &candidates,
         "rejected": rejected,
         "candidate_count": candidates.len(),
+        "active_profile": state.active_profile,
+        "effective_playbook": crate::learn::adaptable_playbook_snapshot(rules),
+        "market_cache": market.cache_status(),
     }))
 }
 
@@ -106,7 +133,13 @@ pub fn candidate_score(snap: &TechnicalSnapshot) -> f64 {
         .spread_pct
         .map(|s| (1.0 - s / 2.0).max(0.0))
         .unwrap_or(0.0);
-    rsi_score * 0.4 + vol_score * 0.35 + spread_score * 0.25
+    let rs_score = snap
+        .history_features
+        .as_ref()
+        .and_then(|h| h.rs_vs_benchmark_30d_pct)
+        .map(|rs| ((rs / 15.0) + 0.5).clamp(0.0, 1.0))
+        .unwrap_or(0.5);
+    rsi_score * 0.35 + vol_score * 0.3 + spread_score * 0.2 + rs_score * 0.15
 }
 
 #[cfg(test)]
@@ -132,6 +165,7 @@ mod tests {
             above_sma_20: None,
             above_sma_50: None,
             intraday: false,
+            history_features: None,
         };
         let balanced = candidate_score(&snap);
         let extreme = candidate_score(&TechnicalSnapshot {

@@ -32,6 +32,24 @@ pub fn log_path(rules_path: &Path) -> PathBuf {
     rules_dir(rules_path).join(format!("trader-{}.log", rules_stem(rules_path)))
 }
 
+pub fn backtest_cache_path(rules_path: &Path) -> PathBuf {
+    rules_dir(rules_path).join(format!(".backtest-cache-{}.json", rules_stem(rules_path)))
+}
+
+pub fn backtest_state_path(rules_path: &Path) -> PathBuf {
+    rules_dir(rules_path).join(format!(
+        "trader-backtest-state-{}.json",
+        rules_stem(rules_path)
+    ))
+}
+
+pub fn backtest_journal_path(rules_path: &Path) -> PathBuf {
+    rules_dir(rules_path).join(format!(
+        "trader-backtest-journal-{}.jsonl",
+        rules_stem(rules_path)
+    ))
+}
+
 pub fn append_trader_log(rules_path: &Path, line: &str) -> std::io::Result<()> {
     use std::io::Write;
     let path = log_path(rules_path);

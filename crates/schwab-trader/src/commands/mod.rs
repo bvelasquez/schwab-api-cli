@@ -1,3 +1,4 @@
+pub mod backtest_cmd;
 pub mod rules_cmd;
 pub mod capital_cmd;
 pub mod scan_cmd;
@@ -7,3 +8,4 @@ pub mod agent_cmd;
 pub mod sim_cmd;
 pub mod sources_cmd;
 pub mod watch_cmd;
+pub mod watchlist_cmd;
