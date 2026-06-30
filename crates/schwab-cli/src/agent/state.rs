@@ -44,6 +44,9 @@ pub struct AgentState {
     pub last_auth_reminder_level: Option<String>,
     #[serde(default)]
     pub last_auth_reminder_at: Option<DateTime<Utc>>,
+    /// Paper-trading ledger when running with --simulate (separate state file).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sim: Option<crate::agent::sim::SimLedger>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +62,9 @@ pub struct TrackedPosition {
     /// Spread quantity (each leg at Schwab should match this count).
     #[serde(default = "default_one")]
     pub contracts: u32,
+    /// Strategy params for sim marks / vertical reconstruction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_params: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -264,6 +270,7 @@ mod tests {
                 entry_credit: Some(0.25),
                 max_loss_usd: 175.0,
                 contracts: 1,
+                entry_params: None,
             },
         );
         state.add_pending_order(PendingOrder {

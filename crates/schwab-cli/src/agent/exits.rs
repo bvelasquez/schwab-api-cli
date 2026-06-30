@@ -7,8 +7,9 @@ use serde_json::{json, Value};
 
 use crate::options::{
     days_to_expiry, group_option_legs, list_option_positions, position_group_id,
-    spread_contract_count, OptionPositionGroup, OptionPositionLeg,
+    spread_contract_count, OptionPositionGroup, OptionPositionLeg, VerticalParams,
 };
+use crate::options::symbology::{build_option_symbol, parse_expiry, parse_option_symbol};
 use crate::rules::{ExitRules, RulesConfig};
 
 use super::market_context::vertical_open_position_context;
@@ -545,6 +546,7 @@ pub async fn reconcile_open_positions(
                         entry_credit,
                         max_loss_usd: inferred_max_loss.unwrap_or(0.0),
                         contracts: live_contracts,
+                        entry_params: None,
                     },
                 );
             }
@@ -621,6 +623,47 @@ pub fn exit_rules_summary(rules: &ExitRules) -> Value {
     })
 }
 
+/// Build a minimal position group from sim tracked state (vertical spreads only).
+pub fn option_group_from_tracked(tracked: &TrackedPosition) -> Option<OptionPositionGroup> {
+    let params = tracked.entry_params.as_ref()?;
+    let v: VerticalParams = serde_json::from_value(params.clone()).ok()?;
+    let put_call = if v.spread_type.to_ascii_lowercase().contains("put") {
+        'P'
+    } else {
+        'C'
+    };
+    let expiry = parse_expiry(&v.expiry).ok()?;
+    let short_sym = build_option_symbol(&v.underlying, &v.expiry, put_call, v.short_strike).ok()?;
+    let long_sym = build_option_symbol(&v.underlying, &v.expiry, put_call, v.long_strike).ok()?;
+    let contracts = tracked.contracts.max(1) as f64;
+    let legs = vec![
+        OptionPositionLeg {
+            symbol: short_sym.clone(),
+            underlying: v.underlying.clone(),
+            quantity: -contracts,
+            market_value: 0.0,
+            average_price: tracked.entry_credit,
+            parsed: parse_option_symbol(&short_sym).ok(),
+        },
+        OptionPositionLeg {
+            symbol: long_sym.clone(),
+            underlying: v.underlying.clone(),
+            quantity: contracts,
+            market_value: 0.0,
+            average_price: None,
+            parsed: parse_option_symbol(&long_sym).ok(),
+        },
+    ];
+    Some(OptionPositionGroup {
+        id: tracked.position_id.clone(),
+        underlying: v.underlying,
+        expiry: expiry.format("%Y-%m-%d").to_string(),
+        strategy_hint: tracked.strategy.clone(),
+        legs,
+        net_market_value: 0.0,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -646,6 +689,7 @@ mod tests {
             execution: Default::default(),
             llm: Default::default(),
             notify: Default::default(),
+            simulation: None,
         };
         let mark = SpreadMark {
             entry_credit: 0.25,
