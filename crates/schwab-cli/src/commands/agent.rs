@@ -6,12 +6,13 @@ use anyhow::{Context, Result};
 use serde_json::json;
 
 use crate::agent::{
-    analysis_report, compute_stats, load_sim_agent_state, load_state, log_path, pid_path,
-    reset_sim, run_agent_loop, save_state, sim_journal_path, sim_state_path, spawn_background,
-    state_summary, stop_daemon,
+    analysis_report, compute_stats, load_agent_state, load_sim_agent_state, load_state, log_path,
+    pid_path, reset_sim, run_agent_loop, save_state, sim_journal_path, sim_state_path,
+    spawn_background, state_summary, stop_daemon,
 };
 use crate::cli::{AgentCommands, AgentSimCommands};
 use crate::config::RuntimeConfig;
+use crate::flatten::{build_agent_options_flatten_plan, execute_agent_options_flatten};
 use crate::output::{OutputFormat, ResponseEnvelope};
 use crate::rules::{rules_json_schema, RulesConfig};
 use crate::ui::context::DashboardContext;
@@ -104,6 +105,18 @@ pub async fn run(runtime: &RuntimeConfig, command: AgentCommands) -> Result<()> 
                 "agent stop",
                 json!({ "stopped": true, "rules": file }),
             ));
+        }
+        AgentCommands::CloseAll { file } => {
+            let rules = RulesConfig::load(&file)?;
+            let state = if runtime.simulate {
+                load_sim_agent_state(&file, &rules.agent_id)
+            } else {
+                load_agent_state(&file, &rules.agent_id)
+            };
+            let api = runtime.build_api()?;
+            let plan = build_agent_options_flatten_plan(&api, &rules, &state).await?;
+            let data = execute_agent_options_flatten(runtime, &api, &file, &rules, &plan).await?;
+            runtime.emit(ResponseEnvelope::ok("agent close-all", data));
         }
         AgentCommands::Sim { command } => run_sim(runtime, command).await?,
     }

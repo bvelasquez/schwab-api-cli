@@ -500,6 +500,17 @@ pub struct TelegramNotify {
     pub notify_on_rule_adaptation: bool,
 }
 
+impl TelegramNotify {
+    pub fn to_cli_config(&self) -> schwab_cli::rules::TelegramNotifyConfig {
+        schwab_cli::rules::TelegramNotifyConfig {
+            enabled: self.enabled,
+            notify_every_tick: self.notify_every_tick,
+            notify_on_actions: self.notify_on_actions,
+            ..Default::default()
+        }
+    }
+}
+
 impl Default for CapitalConfig {
     fn default() -> Self {
         Self {

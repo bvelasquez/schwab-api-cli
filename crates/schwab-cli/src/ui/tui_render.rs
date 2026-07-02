@@ -1,16 +1,17 @@
 //! Ratatui-native render helpers (no ANSI / unicode box panels).
 
-use chrono::Utc;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Gauge;
 
 use super::agent_health::{format_tick_error, SharedAgentHealth};
+use super::spread_live::{spread_monitor_lines, SpreadLiveSnapshot};
 use super::context::DashboardContext;
 use super::market_status::market_label;
 use super::watch::WatchAgentMode;
 use super::{ago_secs, format_duration_secs};
 use crate::auth_reminder::AuthReminderLevel;
+use crate::market_conditions::{market_conditions_lines, MarketConditionsSnapshot};
 
 fn format_position_summary(state: &crate::agent::state::AgentState) -> String {
     let spreads = state.open_positions.len();
@@ -271,6 +272,10 @@ pub fn agent_status_lines(
     lines
 }
 
+pub fn market_conditions_panel_lines(snapshot: &MarketConditionsSnapshot) -> Vec<Line<'static>> {
+    market_conditions_lines(snapshot)
+}
+
 pub fn rules_summary_lines(ctx: &DashboardContext) -> Vec<Line<'static>> {
     let rules = &ctx.rules;
     let mut lines = vec![
@@ -375,43 +380,11 @@ pub fn activity_lines(ctx: &DashboardContext) -> Vec<Line<'static>> {
         .collect()
 }
 
-pub fn position_lines(ctx: &DashboardContext) -> Vec<Line<'static>> {
-    if ctx.state.open_positions.is_empty() {
-        return vec![Line::from(Span::styled(
-            "(flat — no open positions)",
-            Style::default().fg(Color::DarkGray),
-        ))];
-    }
-    ctx.state
-        .open_positions
-        .values()
-        .map(|p| {
-            let contracts = if p.contracts > 1 {
-                format!(" ×{}", p.contracts)
-            } else {
-                String::new()
-            };
-            let credit = p
-                .entry_credit
-                .map(|c| format!(" · cr ${c:.2}"))
-                .unwrap_or_default();
-            let opened = ago_secs((Utc::now() - p.opened_at).num_seconds());
-            Line::from(vec![
-                Span::styled(
-                    format!("{}{} ", p.underlying, contracts),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(format!(
-                    "{} · exp {} · max loss ${:.0}{credit} · ",
-                    p.strategy, p.expiry, p.max_loss_usd
-                )),
-                Span::styled("holding", Style::default().fg(Color::Green)),
-                Span::styled(format!(" · {opened}"), Style::default().fg(Color::DarkGray)),
-            ])
-        })
-        .collect()
+pub fn position_lines(
+    ctx: &DashboardContext,
+    live: Option<&SpreadLiveSnapshot>,
+) -> Vec<Line<'static>> {
+    spread_monitor_lines(&ctx.rules, &ctx.state, live)
 }
 
 /// Compact latest LLM review for the overview panel.
@@ -716,11 +689,18 @@ pub fn rules_detail_lines(ctx: &DashboardContext) -> Vec<Line<'static>> {
         ));
         out.push(kv_line("web", llm.web_model.clone(), 14));
         out.push(kv_line(
-            "monitor every",
+            "LLM every",
             format!(
-                "{} ticks (~{}m)",
-                llm.review_every_ticks,
-                ctx.monitor_interval_minutes()
+                "{} ticks (~{}m){}",
+                llm.effective_llm_review_ticks(
+                    ctx.has_open_positions(),
+                    ctx.min_open_position_dte(),
+                    rules.exit_rules.dte_close,
+                ),
+                ctx.monitor_interval_minutes(),
+                llm.monitor_review_every_ticks
+                    .map(|n| format!("  (slow {n}t >{}DTE)", rules.exit_rules.dte_close))
+                    .unwrap_or_default()
             ),
             14,
         ));

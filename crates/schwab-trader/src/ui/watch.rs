@@ -21,8 +21,10 @@ use crate::ui::health::SharedAgentHealth;
 use crate::ui::live::WatchLiveSnapshot;
 use crate::ui::render::{
     candidate_lines, capital_lines, entry_attempt_lines, journal_lines, llm_lines, log_lines,
-    overview_agent_lines, position_lines, position_rules_context_lines, rules_summary,
+    market_conditions_panel_lines, overview_agent_lines, position_lines,
+    position_rules_context_lines, rules_summary,
 };
+use schwab_cli::market_conditions::MarketConditionsSnapshot;
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 
@@ -40,6 +42,7 @@ pub struct WatchConfig {
     pub simulate: bool,
     pub agent_health: Option<SharedAgentHealth>,
     pub live: Arc<RwLock<WatchLiveSnapshot>>,
+    pub market_conditions: Arc<std::sync::Mutex<MarketConditionsSnapshot>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -141,6 +144,7 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
                 config.dry_run,
                 config.simulate,
                 &health,
+                &config.market_conditions,
             );
         })?;
 
@@ -238,6 +242,7 @@ fn draw_ui(
     dry_run: bool,
     simulate: bool,
     health: &crate::ui::health::AgentHealth,
+    market_conditions: &Arc<std::sync::Mutex<MarketConditionsSnapshot>>,
 ) {
     let outer = Layout::default()
         .direction(Direction::Vertical)
@@ -266,7 +271,17 @@ fn draw_ui(
     f.render_widget(tabs, outer[1]);
 
     match tab {
-        WatchTab::Overview => render_overview(f, outer[2], ctx, agent_mode, dry_run, simulate, health, scroll),
+        WatchTab::Overview => render_overview(
+            f,
+            outer[2],
+            ctx,
+            agent_mode,
+            dry_run,
+            simulate,
+            health,
+            scroll,
+            market_conditions,
+        ),
         WatchTab::Positions => {
             let area = outer[2];
             let split = Layout::default()
@@ -361,10 +376,12 @@ fn render_overview(
     simulate: bool,
     health: &crate::ui::health::AgentHealth,
     scroll: &mut WatchUiState,
+    market_conditions: &Arc<std::sync::Mutex<MarketConditionsSnapshot>>,
 ) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(5),
             Constraint::Length(8),
             Constraint::Length(7),
             Constraint::Length(6),
@@ -372,10 +389,21 @@ fn render_overview(
         ])
         .split(area);
 
+    let conditions = market_conditions
+        .lock()
+        .ok()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    f.render_widget(
+        wrap_paragraph(market_conditions_panel_lines(&conditions))
+            .block(panel_block("Market")),
+        rows[0],
+    );
+
     let top = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(rows[0]);
+        .split(rows[1]);
 
     let agent_title = if simulate {
         "Agent (simulation)"
@@ -396,7 +424,7 @@ fn render_overview(
 
     f.render_widget(
         wrap_paragraph(capital_lines(ctx)).block(panel_block("Capital")),
-        rows[1],
+        rows[2],
     );
 
     f.render_widget(
@@ -415,12 +443,12 @@ fn render_overview(
         } else {
             "Live Positions (preview)"
         })),
-        rows[2],
+        rows[3],
     );
 
     render_scroll(
         f,
-        rows[3],
+        rows[4],
         log_lines(ctx),
         scroll.log_scroll.scroll,
         "Agent Log",

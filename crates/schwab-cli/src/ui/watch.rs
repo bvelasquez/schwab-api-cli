@@ -24,8 +24,11 @@ use super::context::DashboardContext;
 use super::market_status::MarketSnapshot;
 use super::tui_render::{
     activity_lines, agent_status_lines, daemon_hint, header_line, latest_llm_lines,
-    llm_history_lines, position_lines, risk_gauge, rules_detail_lines, rules_summary_lines,
+    llm_history_lines, market_conditions_panel_lines, position_lines, risk_gauge,
+    rules_detail_lines, rules_summary_lines,
 };
+use crate::market_conditions::MarketConditionsSnapshot;
+use crate::ui::spread_live::SpreadLiveSnapshot;
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 
@@ -45,7 +48,9 @@ pub struct WatchConfig {
     pub rules_path: PathBuf,
     pub agent_mode: WatchAgentMode,
     pub market_snapshot: Arc<Mutex<MarketSnapshot>>,
+    pub market_conditions: Arc<Mutex<MarketConditionsSnapshot>>,
     pub agent_health: Option<SharedAgentHealth>,
+    pub spread_snapshot: Arc<std::sync::RwLock<SpreadLiveSnapshot>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -106,7 +111,9 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
     let rules_path = &config.rules_path;
     let agent_mode = config.agent_mode;
     let market_snapshot = &config.market_snapshot;
+    let market_conditions = &config.market_conditions;
     let agent_health = config.agent_health.as_ref();
+    let spread_snapshot = &config.spread_snapshot;
 
     let mut tab = WatchTab::Overview;
     let mut ctx = DashboardContext::load_with_shared_snapshot(rules_path, market_snapshot)?;
@@ -124,6 +131,7 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
 
     loop {
         terminal.draw(|f| {
+            let live_spread = spread_snapshot.read().ok();
             draw_ui(
                 f,
                 f.area(),
@@ -133,6 +141,8 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
                 &mut state,
                 agent_mode,
                 agent_health,
+                live_spread.as_deref(),
+                market_conditions,
             );
         })?;
 
@@ -209,6 +219,8 @@ fn draw_ui(
     state: &mut WatchState,
     agent_mode: WatchAgentMode,
     agent_health: Option<&SharedAgentHealth>,
+    live_spread: Option<&SpreadLiveSnapshot>,
+    market_conditions: &Arc<Mutex<MarketConditionsSnapshot>>,
 ) {
     let outer = Layout::default()
         .direction(Direction::Vertical)
@@ -240,10 +252,17 @@ fn draw_ui(
     f.render_widget(tabs, outer[1]);
 
     match tab {
-        WatchTab::Overview => render_overview(f, outer[2], ctx, agent_mode, agent_health),
+        WatchTab::Overview => render_overview(
+            f,
+            outer[2],
+            ctx,
+            agent_mode,
+            agent_health,
+            market_conditions,
+        ),
         WatchTab::Rules => render_rules_tab(f, outer[2], ctx, state),
         WatchTab::Log => render_log_tab(f, outer[2], ctx, state),
-        WatchTab::Positions => render_positions_tab(f, outer[2], ctx),
+        WatchTab::Positions => render_positions_tab(f, outer[2], ctx, live_spread),
         WatchTab::Llm => render_llm_tab(f, outer[2], ctx, state),
     }
 
@@ -279,10 +298,12 @@ fn render_overview(
     ctx: &DashboardContext,
     agent_mode: WatchAgentMode,
     agent_health: Option<&SharedAgentHealth>,
+    market_conditions: &Arc<Mutex<MarketConditionsSnapshot>>,
 ) {
     let show_hint = matches!(agent_mode, WatchAgentMode::MonitorOnly) && !ctx.daemon.running;
     let main_constraints = if show_hint {
         vec![
+            Constraint::Length(5),
             Constraint::Length(9),
             Constraint::Length(8),
             Constraint::Min(4),
@@ -290,6 +311,7 @@ fn render_overview(
         ]
     } else {
         vec![
+            Constraint::Length(5),
             Constraint::Length(9),
             Constraint::Length(8),
             Constraint::Min(4),
@@ -301,10 +323,21 @@ fn render_overview(
         .constraints(main_constraints)
         .split(area);
 
+    let conditions = market_conditions
+        .lock()
+        .ok()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    f.render_widget(
+        wrap_paragraph(market_conditions_panel_lines(&conditions))
+            .block(panel_block("Market")),
+        rows[0],
+    );
+
     let top = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(rows[0]);
+        .split(rows[1]);
 
     f.render_widget(
         wrap_paragraph(agent_status_lines(ctx, agent_mode, agent_health))
@@ -328,16 +361,16 @@ fn render_overview(
 
     f.render_widget(
         wrap_paragraph(latest_llm_lines(ctx)).block(panel_block("Last LLM")),
-        rows[1],
+        rows[2],
     );
 
     f.render_widget(
         wrap_paragraph(activity_lines(ctx)).block(panel_block("Recent Activity")),
-        rows[2],
+        rows[3],
     );
 
     if show_hint {
-        f.render_widget(wrap_paragraph(daemon_hint(ctx)), rows[3]);
+        f.render_widget(wrap_paragraph(daemon_hint(ctx)), rows[4]);
     }
 }
 
@@ -416,7 +449,12 @@ fn render_log_tab(
     );
 }
 
-fn render_positions_tab(f: &mut ratatui::Frame, area: Rect, ctx: &DashboardContext) {
+fn render_positions_tab(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    ctx: &DashboardContext,
+    live_spread: Option<&SpreadLiveSnapshot>,
+) {
     let spreads = ctx.state.open_positions.len();
     let contracts = ctx.state.total_contracts();
     let title = if contracts > spreads as u32 {
@@ -425,7 +463,7 @@ fn render_positions_tab(f: &mut ratatui::Frame, area: Rect, ctx: &DashboardConte
         format!("Positions ({spreads})")
     };
     f.render_widget(
-        wrap_paragraph(position_lines(ctx)).block(panel_block(&title)),
+        wrap_paragraph(position_lines(ctx, live_spread)).block(panel_block(&title)),
         area,
     );
 }

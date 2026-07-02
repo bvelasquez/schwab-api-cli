@@ -74,11 +74,12 @@ impl RuntimeConfig {
         Ok(Arc::new(MarketDataApi::new(client)))
     }
 
-    /// Agent-mode runtime for order execution (used by `schwab-trader`).
+    /// Agent-mode runtime for order execution (shared with `schwab-trader`).
     pub fn for_agent_trading(
         output: OutputFormat,
         yes: bool,
         dry_run: bool,
+        simulate: bool,
         trust: bool,
         suppress_tick_output: bool,
         safety: SafetyContext,
@@ -89,7 +90,7 @@ impl RuntimeConfig {
             output,
             yes,
             dry_run,
-            simulate: false,
+            simulate,
             trust,
             suppress_tick_output,
             safety,

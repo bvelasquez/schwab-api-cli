@@ -44,6 +44,11 @@ pub struct AgentState {
     pub last_auth_reminder_level: Option<String>,
     #[serde(default)]
     pub last_auth_reminder_at: Option<DateTime<Utc>>,
+    /// Last LLM review pushed to Telegram (for digest dedup).
+    #[serde(default)]
+    pub last_telegram_llm_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub last_telegram_llm_digest_key: Option<String>,
     /// Paper-trading ledger when running with --simulate (separate state file).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sim: Option<crate::agent::sim::SimLedger>,

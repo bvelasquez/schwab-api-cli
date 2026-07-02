@@ -418,6 +418,13 @@ pub fn all_commands() -> Vec<CommandSpec> {
             requires_auth: false,
         },
         CommandSpec {
+            path: "agent close-all",
+            description: "Close all option spreads tracked in agent state (not whole account)",
+            http: Some("POST /accounts/{accountNumber}/orders"),
+            mutation: true,
+            requires_auth: true,
+        },
+        CommandSpec {
             path: "dashboard",
             description: "Rich terminal dashboard (agent, rules, positions)",
             http: None,
@@ -459,7 +466,7 @@ pub fn command_tree() -> Value {
         { "group": "plan", "commands": ["schema", "prompt", "validate", "show", "run"] },
         { "group": "market", "commands": ["info", "quotes", "quote", "history", "instrument", "instrument-by-cusip", "hours", "hours-for"] },
         { "group": "options", "commands": ["chain", "positions", "schema", "validate", "preview", "open", "close"] },
-        { "group": "agent", "commands": ["schema", "validate", "status", "run", "stop"] },
+        { "group": "agent", "commands": ["schema", "validate", "status", "run", "stop", "close-all"] },
         { "group": "dashboard", "commands": ["dashboard"] },
         { "group": "watch", "commands": ["watch"] },
         { "group": "rules", "commands": ["show", "list"] },

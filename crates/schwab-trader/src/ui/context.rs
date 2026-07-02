@@ -68,11 +68,32 @@ impl WatchContext {
         self.last_tick().and_then(|t| t.get("llm"))
     }
 
+    /// Best available LLM payload: current tick, else last stored summary.
+    pub fn resolved_llm(&self) -> Option<&serde_json::Value> {
+        if let Some(llm) = self.llm() {
+            if llm_entry_recommendation(llm).is_some() || llm.get("phase").is_some() {
+                return Some(llm);
+            }
+        }
+        self.state.last_llm_summary.as_ref()
+    }
+
     pub fn llm_phase(&self) -> Option<&str> {
         self.last_tick()
             .and_then(|t| t.get("llm_phase"))
             .and_then(|v| v.as_str())
             .or_else(|| self.llm().and_then(|l| l.get("phase")).and_then(|v| v.as_str()))
+            .or_else(|| {
+                self.state
+                    .last_llm_summary
+                    .as_ref()
+                    .and_then(|l| l.get("phase"))
+                    .and_then(|v| v.as_str())
+            })
+    }
+
+    pub fn llm_ran_this_tick(&self) -> bool {
+        self.llm().is_some()
     }
 
     pub fn session_label(&self) -> &str {
@@ -94,6 +115,18 @@ impl WatchContext {
             .and_then(|c| c.get("regular_session_open"))
             .and_then(|v| v.as_bool())
     }
+}
+
+/// Entry verdict from trader (`entry_recommendation`) or options-style (`new_entries.recommendation`).
+pub fn llm_entry_recommendation(llm: &serde_json::Value) -> Option<&str> {
+    llm.get("entry_recommendation")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            llm.pointer("/new_entries/recommendation")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        })
 }
 
 fn tail_file(path: &Path, max_lines: usize) -> Vec<String> {
@@ -140,4 +173,18 @@ pub fn header_line(
         ctx.state.tick_count,
         ctx.state.open_positions.len(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn reads_trader_and_options_entry_recommendation() {
+        let trader = json!({ "entry_recommendation": "defer" });
+        assert_eq!(llm_entry_recommendation(&trader), Some("defer"));
+        let options = json!({ "new_entries": { "recommendation": "skip" } });
+        assert_eq!(llm_entry_recommendation(&options), Some("skip"));
+    }
 }

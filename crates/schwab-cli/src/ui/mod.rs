@@ -5,6 +5,8 @@ pub mod discover;
 pub mod market_status;
 pub mod menu;
 pub mod rules_view;
+pub mod spread_feed;
+pub mod spread_live;
 pub mod tui_render;
 pub mod watch;
 

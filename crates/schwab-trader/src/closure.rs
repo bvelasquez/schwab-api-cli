@@ -445,6 +445,118 @@ async fn flatten_live_position(
     Ok(FlattenResult { fill_price })
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FlattenTarget {
+    pub symbol: String,
+    pub quantity: f64,
+    pub position_id: String,
+}
+
+pub fn list_flatten_targets_from_state(state: &TraderState) -> Vec<FlattenTarget> {
+    let mut out: Vec<FlattenTarget> = state
+        .open_positions
+        .values()
+        .map(|p| FlattenTarget {
+            symbol: p.symbol.clone(),
+            quantity: p.quantity,
+            position_id: p.position_id.clone(),
+        })
+        .collect();
+    out.sort_by(|a, b| a.symbol.cmp(&b.symbol));
+    out
+}
+
+pub async fn flatten_all_live_positions(
+    runtime: &TraderRuntime,
+    rules_path: &Path,
+    rules: &TraderRules,
+    state: &mut TraderState,
+    api: &Arc<TraderApi>,
+    market: &MarketCtx,
+    account_hash: &str,
+) -> Result<Value> {
+    let targets = list_flatten_targets_from_state(state);
+    if targets.is_empty() {
+        return Ok(json!({
+            "flattened": false,
+            "message": "no agent-managed swing positions to close",
+            "closes": [],
+        }));
+    }
+
+    let summary: Vec<String> = targets
+        .iter()
+        .map(|t| format!("{} x{:.2}", t.symbol, t.quantity))
+        .collect();
+    require_trading_approval(
+        &runtime.as_schwab_runtime(),
+        "trader close-all",
+        &format!(
+            "Close {} agent-managed swing position(s) for `{}` (NOT whole account): {}",
+            targets.len(),
+            rules.trader_id,
+            summary.join(", ")
+        ),
+    )?;
+
+    if runtime.dry_run || runtime.simulate {
+        return Ok(json!({
+            "dry_run": runtime.dry_run,
+            "simulate": runtime.simulate,
+            "trader_id": rules.trader_id,
+            "targets": targets,
+        }));
+    }
+
+    let mut closes = Vec::new();
+    for target in targets {
+        let pos_id = target.position_id.clone();
+        let Some(pos) = state.open_positions.get(&pos_id).cloned() else {
+            continue;
+        };
+        let (_, bid, _) = market.quote_last_bid_ask(&pos.symbol).await?;
+        let limit_price = bid.unwrap_or(0.01).max(0.01);
+
+        let attempt = flatten_live_position(
+            runtime,
+            api,
+            account_hash,
+            &pos,
+            limit_price,
+            "manual_close_all",
+        )
+        .await?;
+        state.open_positions.remove(&pos_id);
+        state.closed_trades_since_learn += 1;
+        journal::append_event(
+            rules_path,
+            "exit_filled",
+            json!({
+                "symbol": pos.symbol,
+                "exit_reason": "manual_close_all",
+                "fill_price": attempt.fill_price,
+                "quantity": pos.quantity,
+            }),
+        )?;
+        closes.push(json!({
+            "symbol": pos.symbol,
+            "quantity": pos.quantity,
+            "fill_price": attempt.fill_price,
+            "position_id": pos_id,
+        }));
+    }
+
+    if !closes.is_empty() {
+        save_state(rules_path, state)?;
+    }
+
+    Ok(json!({
+        "flattened": true,
+        "trader_id": rules.trader_id,
+        "closes": closes,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

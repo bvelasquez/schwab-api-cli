@@ -21,6 +21,20 @@ pub const LEARN_ADAPTABLE_PATHS: &[&str] = &[
     "playbook.entry.rsi_14_range",
 ];
 
+/// Drop placeholder `{}` entries the LLM sometimes emits when it has no real patches.
+pub fn valid_rule_patches(patches: &[Value]) -> Vec<Value> {
+    patches
+        .iter()
+        .filter(|p| {
+            p.get("path")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| !s.trim().is_empty())
+                && p.get("value").is_some()
+        })
+        .cloned()
+        .collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppliedPatch {
     pub path: String,
@@ -455,5 +469,20 @@ mod tests {
         .unwrap();
         assert_eq!(applied.len(), 1);
         assert!((rules.playbook.exit.profit_target_pct - 9.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn valid_rule_patches_drops_empty_placeholders() {
+        let raw = vec![
+            json!({}),
+            json!({"path": "playbook.exit.profit_target_pct", "value": 7.5}),
+            json!({"path": "", "value": 1.0}),
+        ];
+        let valid = valid_rule_patches(&raw);
+        assert_eq!(valid.len(), 1);
+        assert_eq!(
+            valid[0].get("path").and_then(|v| v.as_str()),
+            Some("playbook.exit.profit_target_pct")
+        );
     }
 }

@@ -58,6 +58,7 @@ impl TraderRuntime {
             self.output,
             self.yes,
             self.dry_run,
+            self.simulate,
             self.trust,
             self.suppress_tick_output,
             self.safety.clone(),

@@ -131,6 +131,11 @@ pub enum TradeCommands {
         #[arg(long, default_value = "true")]
         bracket: bool,
     },
+    /// Close all swing positions tracked in agent state (NOT whole account)
+    CloseAll {
+        #[arg(long)]
+        rules_file: PathBuf,
+    },
 }
 
 #[derive(Debug, Subcommand)]

@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::rules::{LlmConfig, LlmPhase};
+use crate::rules::{LlmConfig, LlmPhase, selection_market_context_guardrails};
 
 const OPENROUTER_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -327,7 +327,12 @@ pub fn build_system_prompt(config: &LlmConfig, phase: LlmPhase, use_web: bool) -
         LlmPhase::Monitor => config.prompts.effective_monitor_instructions(),
         LlmPhase::OvernightDigest => config.prompts.effective_overnight_instructions(),
     };
-    format!("{instructions}\n{RESPONSE_JSON_SCHEMA}")
+    let mut prompt = format!("{instructions}\n{RESPONSE_JSON_SCHEMA}");
+    if matches!(phase, LlmPhase::Selection) {
+        prompt.push_str("\n\n");
+        prompt.push_str(selection_market_context_guardrails());
+    }
+    prompt
 }
 
 pub fn build_user_message(config: &LlmConfig, phase: LlmPhase, context: &Value) -> Result<String> {
@@ -598,6 +603,21 @@ mod tests {
         });
         let err = parse_llm_review(LlmPhase::Selection, "test", true, raw).unwrap_err();
         assert!(err.to_string().contains("new_entries.recommendation"));
+    }
+
+    #[test]
+    fn selection_system_prompt_includes_chain_guardrails() {
+        let config = LlmConfig::default();
+        let prompt = build_system_prompt(&config, LlmPhase::Selection, false);
+        assert!(prompt.contains("CHAIN DATA GUARDRAILS"));
+        assert!(prompt.contains("FORBIDDEN"));
+    }
+
+    #[test]
+    fn monitor_system_prompt_omits_chain_guardrails() {
+        let config = LlmConfig::default();
+        let prompt = build_system_prompt(&config, LlmPhase::Monitor, false);
+        assert!(!prompt.contains("CHAIN DATA GUARDRAILS"));
     }
 
     #[test]

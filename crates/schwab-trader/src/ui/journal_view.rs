@@ -296,12 +296,33 @@ fn format_rule_patch(event_type: &str, p: &Value) -> Vec<Line<'static>> {
                 lines.extend(wrap_text(&format!("• {s}"), 72));
             } else if let Some(path) = patch.get("path").and_then(|v| v.as_str()) {
                 let val = patch.get("value").map(|v| v.to_string()).unwrap_or_default();
-                lines.push(Line::from(format!("  {path} = {val}")));
+                let reason = patch
+                    .get("reason")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let mut line = format!("  {path} = {val}");
+                if !reason.is_empty() {
+                    line.push_str(&format!(" — {reason}"));
+                }
+                lines.push(Line::from(line));
             }
         }
         if !lines.is_empty() {
+            if event_type == "rule_patch_proposed"
+                && p.get("live_auto_apply").and_then(|v| v.as_bool()) == Some(false)
+            {
+                lines.push(Line::from(
+                    "  (logged only — live_auto_apply is false; YAML not changed)",
+                ));
+            }
             return lines;
         }
+        if arr.is_empty() {
+            return vec![Line::from("No rule changes proposed.")];
+        }
+        return vec![Line::from(
+            "Learn cycle produced no valid rule patches (empty placeholders from LLM).",
+        )];
     }
     if event_type == "rule_auto_applied" {
         if let Some(applied) = p.get("applied").and_then(|v| v.as_array()) {

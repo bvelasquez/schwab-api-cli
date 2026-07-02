@@ -1,8 +1,13 @@
 use ratatui::text::{Line, Span};
 use ratatui::style::{Color, Modifier, Style};
 
-use crate::ui::context::WatchContext;
+use crate::ui::context::{llm_entry_recommendation, WatchContext};
 use crate::ui::health::AgentHealth;
+use schwab_cli::market_conditions::{market_conditions_lines, MarketConditionsSnapshot};
+
+pub fn market_conditions_panel_lines(snapshot: &MarketConditionsSnapshot) -> Vec<Line<'static>> {
+    market_conditions_lines(snapshot)
+}
 
 pub fn overview_agent_lines(ctx: &WatchContext, health: &AgentHealth, agent_mode: &str) -> Vec<Line<'static>> {
     let mut lines = vec![
@@ -195,8 +200,7 @@ pub fn entry_attempt_lines(ctx: &WatchContext) -> Vec<Line<'static>> {
 }
 
 pub fn llm_lines(ctx: &WatchContext) -> Vec<Line<'static>> {
-    let tick = ctx.last_tick();
-    let llm = ctx.llm().or(ctx.state.last_llm_summary.as_ref());
+    let llm = ctx.resolved_llm();
 
     let mut header = vec![
         Line::from(format!(
@@ -227,16 +231,24 @@ pub fn llm_lines(ctx: &WatchContext) -> Vec<Line<'static>> {
         ]));
     }
     if let Some(ts) = ctx.state.last_tick.as_ref() {
+        let llm_tag = if ctx.llm_ran_this_tick() {
+            "LLM reviewed this tick"
+        } else {
+            "no new LLM this tick"
+        };
         header.push(Line::from(format!(
-            "agent tick {}  │  review at {}",
+            "agent tick {}  │  {}  │  {}",
             ctx.state.tick_count,
-            ts.format("%H:%M:%S UTC")
+            ts.format("%H:%M:%S UTC"),
+            llm_tag
         )));
     }
     header.push(Line::from(""));
 
     let Some(llm) = llm else {
-        header.push(Line::from("(no LLM review on last tick — monitor runs every few ticks when entries are blocked)"));
+        header.push(Line::from(
+            "(no LLM review yet — monitor runs every few ticks when entries are blocked)",
+        ));
         return header;
     };
 
@@ -245,13 +257,25 @@ pub fn llm_lines(ctx: &WatchContext) -> Vec<Line<'static>> {
         return header;
     }
 
+    let rec = llm_entry_recommendation(llm).unwrap_or_else(|| {
+        if ctx.entry_block_reason().is_some() {
+            "n/a (entries blocked)"
+        } else {
+            "—"
+        }
+    });
+    let rec_style = match rec {
+        "proceed" => Style::default().fg(Color::Green),
+        "defer" | "skip" => Style::default().fg(Color::Yellow),
+        "n/a (entries blocked)" => Style::default().fg(Color::DarkGray),
+        _ => Style::default().fg(Color::Cyan),
+    };
+
     let mut lines = header;
-    lines.push(Line::from(format!(
-        "entry recommendation: {}",
-        llm.get("entry_recommendation")
-            .and_then(|v| v.as_str())
-            .unwrap_or("?")
-    )));
+    lines.push(Line::from(vec![
+        Span::raw("entry recommendation: "),
+        Span::styled(rec.to_string(), rec_style),
+    ]));
     lines.push(Line::from(""));
     lines.push(Line::from(
         llm.get("market_commentary")
@@ -269,10 +293,10 @@ pub fn llm_lines(ctx: &WatchContext) -> Vec<Line<'static>> {
             }
         }
     }
-    if tick.and_then(|t| t.get("llm")).is_none() && ctx.state.last_llm_summary.is_some() {
+    if !ctx.llm_ran_this_tick() && ctx.state.last_llm_summary.is_some() {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "(showing last stored review — no new LLM call this tick)",
+            "(showing last stored LLM review — monitor runs on a schedule, not every tick)",
             Style::default().fg(Color::DarkGray),
         )));
     }

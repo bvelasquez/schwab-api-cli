@@ -600,6 +600,8 @@ pub enum AgentCommands {
     },
     /// Stop a background agent started with `agent run --background`
     Stop { file: PathBuf },
+    /// Close all spreads tracked in agent state for this rules file (NOT whole account)
+    CloseAll { file: PathBuf },
     /// Paper-trading stats and ledger for --simulate runs
     Sim {
         #[command(subcommand)]

@@ -3,12 +3,14 @@ pub mod exits;
 pub mod format;
 pub mod llm;
 pub mod market_context;
+pub mod spread_analytics;
 pub mod journal;
 pub mod paths;
 pub mod sim;
 pub mod runner;
 pub mod schedule;
 pub mod state;
+pub mod telegram_format;
 
 pub use daemon::{daemon_status, spawn_background, stop_daemon, DaemonStatus};
 pub use paths::{
