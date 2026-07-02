@@ -103,9 +103,28 @@ impl DashboardContext {
     }
 
     pub fn monitor_interval_minutes(&self) -> u64 {
-        let secs = self.rules.llm.review_every_ticks.max(1)
-            * self.rules.schedule.tick_interval_seconds.max(1);
-        secs / 60
+        self.rules.llm.monitor_interval_minutes(
+            self.rules.schedule.tick_interval_seconds,
+            self.min_open_position_dte(),
+            self.rules.exit_rules.dte_close,
+        )
+    }
+
+    pub fn min_open_position_dte(&self) -> Option<i64> {
+        let today = chrono::Local::now().date_naive();
+        self.state
+            .open_positions
+            .values()
+            .filter_map(|p| {
+                chrono::NaiveDate::parse_from_str(&p.expiry, "%Y-%m-%d")
+                    .ok()
+                    .map(|exp| crate::options::days_to_expiry(exp, today))
+            })
+            .min()
+    }
+
+    pub fn has_open_positions(&self) -> bool {
+        !self.state.open_positions.is_empty()
     }
 
     /// Session the agent should be in right now (from market hours, not stale state file).

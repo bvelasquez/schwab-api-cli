@@ -81,6 +81,19 @@ pub fn render_rules_detail(ctx: &DashboardContext) -> String {
             "    delta {:.2}–{:.2}  ·  max {} pos  ·  {} contracts",
             v.short_delta_min, v.short_delta_max, v.max_open_positions, v.max_contracts_per_trade
         ));
+        let pop = v
+            .min_pop_pct
+            .map(|p| format!("POP≥{p:.0}%"))
+            .unwrap_or_else(|| "POP—".into());
+        let be = v
+            .min_distance_to_be_pct
+            .map(|p| format!("BE cushion≥{p:.0}%"))
+            .unwrap_or_else(|| "BE—".into());
+        let ctw = v
+            .min_credit_to_width_pct
+            .map(|p| format!("cr/width≥{p:.0}%"))
+            .unwrap_or_else(|| "cr/width≥12.5%".into());
+        entry_lines.push(format!("    filters: {pop}  ·  {be}  ·  {ctw}"));
     }
     if rules.strategies.iron_condor.enabled {
         let ic = &rules.entry_rules.iron_condor;
@@ -145,9 +158,15 @@ pub fn render_rules_detail(ctx: &DashboardContext) -> String {
             kv_line(
                 "monitor every",
                 &format!(
-                    "{} ticks (~{}m)",
-                    llm.review_every_ticks,
-                    ctx.monitor_interval_minutes()
+                    "{} ticks (~{}m){}",
+                    llm.effective_monitor_review_ticks(
+                        None,
+                        rules.exit_rules.dte_close,
+                    ),
+                    ctx.monitor_interval_minutes(),
+                    llm.monitor_review_every_ticks
+                        .map(|n| format!("  (slow cadence {n}t above {} DTE)", rules.exit_rules.dte_close))
+                        .unwrap_or_default()
                 ),
                 16,
             ),

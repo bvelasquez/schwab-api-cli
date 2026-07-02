@@ -267,7 +267,16 @@ fn llm_review_json_schema() -> Value {
             },
             "rule_patches": {
                 "type": "array",
-                "items": { "type": "object" }
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" },
+                        "value": {},
+                        "reason": { "type": "string" }
+                    },
+                    "required": ["path", "value"],
+                    "additionalProperties": false
+                }
             },
             "profile_selection": {
                 "type": "object",
@@ -510,11 +519,13 @@ fn parse_review(phase: &str, model: &str, raw: Value) -> TraderLlmReview {
                     .collect()
             })
             .unwrap_or_default(),
-        rule_patches: raw
-            .get("rule_patches")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default(),
+        rule_patches: crate::learn::valid_rule_patches(
+            &raw
+                .get("rule_patches")
+                .and_then(|v| v.as_array())
+                .map(|a| a.as_slice())
+                .unwrap_or(&[]),
+        ),
         profile_name: raw
             .get("profile_selection")
             .and_then(|v| v.get("profile"))

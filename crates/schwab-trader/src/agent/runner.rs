@@ -28,12 +28,14 @@ use crate::market_ctx::MarketCtx;
 use crate::learn::{
     adaptation_allowed, apply_rule_patches, build_learn_context, should_run_learn,
 };
+use crate::notify;
 use crate::reconcile::reconcile_tick;
 use crate::regime::detect_regime;
 use crate::risk::{monitoring_metrics, update_drawdown};
 use crate::rules::TraderRules;
 use crate::sim::{compute_stats, snapshot_equity};
 use crate::sources::{attach_feeds_to_context, fetch_feeds_for_phase};
+use schwab_cli::notify::TelegramNotifier;
 
 pub struct AgentRunOptions {
     pub once: bool,
@@ -64,6 +66,14 @@ pub async fn run_agent_loop(
         None
     };
 
+    let telegram = match notify::telegram_from_rules(&rules.notify) {
+        Ok(t) => t,
+        Err(err) => {
+            tracing::warn!("telegram notifications disabled: {err:#}");
+            None
+        }
+    };
+
     loop {
         state.tick_count += 1;
         state.last_tick = Some(Utc::now());
@@ -76,6 +86,7 @@ pub async fn run_agent_loop(
             &market,
             &mut state,
             llm_client.as_ref(),
+            telegram.as_ref(),
         )
         .await?;
         state.last_tick_result = Some(outcome.body.clone());
@@ -102,6 +113,15 @@ pub async fn run_agent_loop(
             }),
         ));
 
+        notify::notify_tick_summary(
+            telegram.as_ref(),
+            &rules,
+            &outcome.session,
+            state.open_positions.len(),
+            state.trades_today,
+        )
+        .await;
+
         if options.once {
             break;
         }
@@ -120,6 +140,7 @@ async fn run_tick(
     market: &Arc<schwab_market_data::MarketDataApi>,
     state: &mut TraderState,
     llm_client: Option<&OpenRouterClient>,
+    telegram: Option<&TelegramNotifier>,
 ) -> Result<TickOutcome> {
     state.reset_trades_day(&rules.schedule.timezone);
     let market_ctx = MarketCtx::for_rules(market.clone(), rules_path, rules);
@@ -131,7 +152,10 @@ async fn run_tick(
 
     let outcome = match session {
         AgentSession::Idle => {
-            tick_idle(runtime, rules_path, rules, state, api, account_hash, &transition).await?
+            tick_idle(
+                runtime, rules_path, rules, state, api, account_hash, &transition, telegram,
+            )
+            .await?
         }
         AgentSession::Overnight => {
             tick_overnight(
@@ -144,6 +168,7 @@ async fn run_tick(
                 &market_ctx,
                 llm_client,
                 &transition,
+                telegram,
             )
             .await?
         }
@@ -158,6 +183,7 @@ async fn run_tick(
                 &market_ctx,
                 llm_client,
                 &transition,
+                telegram,
             )
             .await?
         }
@@ -172,6 +198,7 @@ async fn run_tick(
                 &market_ctx,
                 llm_client,
                 &transition,
+                telegram,
             )
             .await?
         }
@@ -192,6 +219,7 @@ async fn tick_idle(
     api: &Arc<schwab_api::TraderApi>,
     account_hash: &str,
     transition: &schedule::SessionTransition,
+    _telegram: Option<&TelegramNotifier>,
 ) -> Result<Value> {
     let reconcile_report = reconcile_tick(
         runtime, rules_path, rules, state, api, account_hash,
@@ -219,6 +247,7 @@ async fn tick_overnight(
     market: &MarketCtx,
     llm_client: Option<&OpenRouterClient>,
     transition: &schedule::SessionTransition,
+    telegram: Option<&TelegramNotifier>,
 ) -> Result<Value> {
     let mut skipped = Vec::<String>::new();
     let reconcile_report = reconcile_tick(
@@ -283,6 +312,7 @@ async fn tick_overnight(
                 }));
                 llm_summary = Some(serde_json::to_value(&review)?);
                 state.last_llm_summary = llm_summary.clone();
+                notify::notify_llm_alerts(telegram, rules, &review).await;
             }
             Err(err) => {
                 skipped.push(format!("overnight digest failed: {err}"));
@@ -314,6 +344,7 @@ async fn tick_premarket(
     market: &MarketCtx,
     llm_client: Option<&OpenRouterClient>,
     transition: &schedule::SessionTransition,
+    telegram: Option<&TelegramNotifier>,
 ) -> Result<Value> {
     let mut skipped = Vec::<String>::new();
     let reconcile_report = reconcile_tick(
@@ -371,6 +402,7 @@ async fn tick_premarket(
                 }));
                 llm_summary = Some(serde_json::to_value(&review)?);
                 state.last_llm_summary = llm_summary.clone();
+                notify::notify_llm_alerts(telegram, rules, &review).await;
             }
             Err(err) => {
                 skipped.push(format!("premarket digest failed: {err}"));
@@ -404,20 +436,29 @@ async fn tick_regular(
     market: &MarketCtx,
     llm_client: Option<&OpenRouterClient>,
     transition: &schedule::SessionTransition,
+    telegram: Option<&TelegramNotifier>,
 ) -> Result<Value> {
     let at_open = transition.just_opened;
     state.regular_tick_count += 1;
     let profile_before = state.active_profile.clone();
+    let halted_before = state.trading_halted_reason.clone();
+    let prior_playbook = if at_open {
+        state.open_playbook.clone()
+    } else {
+        None
+    };
 
     if at_open {
         // Overnight digest text often says "market closed" — drop it at the open.
         state.open_playbook = None;
+        notify::notify_at_open(telegram, rules, prior_playbook.as_ref()).await;
     }
 
     let reconcile_report = reconcile_tick(
         runtime, rules_path, rules, state, api, account_hash,
     )
     .await?;
+    notify::notify_reconcile_report(telegram, rules, &reconcile_report).await;
 
     let drawdown = update_drawdown(state, rules);
 
@@ -444,6 +485,7 @@ async fn tick_regular(
         runtime, rules_path, &tick_rules, state, api, market, account_hash,
     )
     .await?;
+    notify::notify_closure_exits(telegram, rules, &closure_exits, runtime.simulate).await;
     if runtime.simulate {
         snapshot_equity(state, &tick_rules);
     }
@@ -531,6 +573,7 @@ async fn tick_regular(
                     state.last_llm_summary = llm_summary.clone();
                     state.last_llm_review_tick = Some(state.regular_tick_count);
                     state.llm_review_count += 1;
+                    notify::notify_llm_alerts(telegram, &tick_rules, &review).await;
                     llm_review = Some(review);
                 }
                 Err(err) => {
@@ -614,6 +657,10 @@ async fn tick_regular(
         }
     }
 
+    for attempt in &entry_attempts {
+        notify::notify_entry_attempt(telegram, rules, attempt).await;
+    }
+
     let mut learn_result = None;
     if rules.llm.enabled && should_run_learn(rules, state, false) {
         if let Some(client) = llm_client {
@@ -657,10 +704,11 @@ async fn tick_regular(
                                 "patches": review.rule_patches,
                                 "applied": applied,
                                 "dry_run": runtime.dry_run,
+                                "live_auto_apply": rules.adaptation.live_auto_apply,
                             }),
                         );
                         if !applied.is_empty() {
-                            notify_rule_adaptation(rules, applied.len()).await;
+                            notify::notify_rule_adaptation(telegram, rules, applied.len()).await;
                             state.closed_trades_since_learn = 0;
                             state.last_learn_tick = Some(state.tick_count);
                         }
@@ -677,6 +725,22 @@ async fn tick_regular(
                     learn_result = Some(json!({ "error": err.to_string() }));
                 }
             }
+        }
+    }
+
+    if state.active_profile != profile_before {
+        notify::notify_profile_change(
+            telegram,
+            rules,
+            &profile_before,
+            &state.active_profile,
+            &state.active_profile_reason,
+        )
+        .await;
+    }
+    if state.trading_halted_reason != halted_before {
+        if let Some(reason) = &state.trading_halted_reason {
+            notify::notify_trading_halted(telegram, rules, reason).await;
         }
     }
 
@@ -824,29 +888,4 @@ fn apply_web_picks(state: &mut TraderState, rules: &TraderRules, review: &Trader
         }));
     }
     added
-}
-
-async fn notify_rule_adaptation(rules: &TraderRules, patch_count: usize) {
-    if !rules.notify.telegram.notify_on_rule_adaptation {
-        return;
-    }
-    if std::env::var("TELEGRAM_BOT_TOKEN").is_err() || std::env::var("TELEGRAM_CHAT_ID").is_err()
-    {
-        return;
-    }
-    let url = format!(
-        "https://api.telegram.org/bot{}/sendMessage",
-        std::env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default()
-    );
-    let _ = reqwest::Client::new()
-        .post(&url)
-        .json(&json!({
-            "chat_id": std::env::var("TELEGRAM_CHAT_ID").unwrap_or_default(),
-            "text": format!(
-                "schwab-trader [{}]: {} rule patch(es) applied",
-                rules.trader_id, patch_count
-            ),
-        }))
-        .send()
-        .await;
 }

@@ -9,6 +9,8 @@ mod disclaimer;
 mod env_schema;
 mod human;
 mod instructions;
+mod market_conditions;
+mod flatten;
 mod market_hours;
 mod market_info;
 mod mode;

@@ -36,6 +36,9 @@ entry_rules:
     max_width: 5
     short_delta_min: 0.15
     short_delta_max: 0.30
+    min_pop_pct: 60
+    min_distance_to_be_pct: 3
+    min_credit_to_width_pct: 12.5
     max_open_positions: 3
     max_contracts_per_trade: 2
   iron_condor:

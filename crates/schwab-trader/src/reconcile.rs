@@ -382,6 +382,7 @@ async fn adopt_filled_buy(
         },
     );
     state.trades_today += 1;
+    report.adopted_positions.push(symbol.to_string());
     save_state(rules_path, state)?;
     Ok(())
 }

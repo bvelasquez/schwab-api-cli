@@ -13,7 +13,9 @@ use crate::ui::agent_health::{new_shared_health, SharedAgentHealth};
 use crate::ui::discover::{list_rules_files_display, resolve_rules_file};
 use crate::ui::market_status::{self, MarketSnapshot};
 use crate::ui::menu::{list_rules_files, show_dashboard, show_rules};
+use crate::ui::spread_feed::{new_spread_snapshot, spawn_spread_mark_feed};
 use crate::ui::watch::{run_watch_tui, WatchAgentMode, WatchConfig};
+use crate::market_conditions::{spawn_market_conditions_feed, MarketConditionsSnapshot};
 
 pub async fn run_dashboard(runtime: &RuntimeConfig, file: Option<PathBuf>) -> Result<()> {
     show_dashboard(runtime, file).await
@@ -52,8 +54,16 @@ pub async fn run_watch(
         )?;
     }
 
-    let mut agent_runtime = runtime.clone();
-    agent_runtime.suppress_tick_output = true;
+    let agent_runtime = RuntimeConfig::for_agent_trading(
+        runtime.output,
+        runtime.yes,
+        runtime.dry_run,
+        runtime.simulate,
+        runtime.trust,
+        true,
+        runtime.safety.clone(),
+        runtime.sink.clone(),
+    );
 
     let market_snapshot = Arc::new(Mutex::new(MarketSnapshot::default()));
     market_status::refresh_market_snapshot(runtime, &market_snapshot).await;
@@ -67,6 +77,15 @@ pub async fn run_watch(
             market_status::refresh_market_snapshot(&refresh_runtime, &snapshot_for_refresh).await;
         }
     });
+
+    let market_conditions = Arc::new(Mutex::new(MarketConditionsSnapshot::default()));
+    if let Ok(market_api) = runtime.build_market_api() {
+        if let Ok(mut guard) = market_conditions.lock() {
+            crate::market_conditions::refresh_market_conditions(&market_api, &mut guard).await;
+        }
+        let _conditions_feed =
+            spawn_market_conditions_feed(market_api, market_conditions.clone());
+    }
 
     let agent_health: Option<SharedAgentHealth> = if will_spawn_agent {
         Some(new_shared_health())
@@ -97,11 +116,27 @@ pub async fn run_watch(
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     }
 
+    let spread_snapshot = new_spread_snapshot();
+    if let (Ok(market), Ok(trader)) = (
+        runtime.build_market_api(),
+        runtime.build_api(),
+    ) {
+        let _spread_feed = spawn_spread_mark_feed(
+            rules_path.clone(),
+            runtime.simulate,
+            spread_snapshot.clone(),
+            market,
+            trader,
+        );
+    }
+
     let watch_config = WatchConfig {
         rules_path: rules_path.clone(),
         agent_mode,
         market_snapshot,
+        market_conditions,
         agent_health,
+        spread_snapshot,
     };
 
     let watch_result = tokio::task::spawn_blocking(move || run_watch_tui(&watch_config))

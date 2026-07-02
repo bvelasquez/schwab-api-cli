@@ -13,6 +13,7 @@ use crate::options::symbology::{build_option_symbol, parse_expiry, parse_option_
 use crate::rules::{ExitRules, RulesConfig};
 
 use super::market_context::vertical_open_position_context;
+use super::spread_analytics::{analytics_from_json, SpreadAnalytics};
 use super::state::{AgentState, TrackedPosition};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +78,8 @@ pub fn infer_entry_credit_from_legs(legs: &[OptionPositionLeg]) -> Option<f64> {
 #[derive(Debug, Clone)]
 pub struct PositionMonitorResult {
     pub exit: Option<ExitEvaluation>,
+    pub mark: Option<SpreadMark>,
+    pub analytics: Option<SpreadAnalytics>,
     pub snapshot: Value,
 }
 
@@ -110,7 +113,7 @@ pub async fn evaluate_position_monitor(
 
     let chain_result = fetch_vertical_chain_snapshot(market, group).await;
 
-    let (exit, mark_opt, market_context, chain_error) = match chain_result {
+    let (exit, mark_opt, analytics, market_context, chain_error) = match chain_result {
         Ok(chain_snap) => {
             let profit_pct = entry_credit
                 .filter(|c| *c > f64::EPSILON)
@@ -133,6 +136,7 @@ pub async fn evaluate_position_monitor(
                         .map(|p| p.expiry)
                 })
                 .unwrap_or(today);
+            let contracts = spread_contract_count(group).max(1);
             let ctx = vertical_open_position_context(
                 &chain_snap.chain,
                 &group.underlying,
@@ -146,8 +150,10 @@ pub async fn evaluate_position_monitor(
                 Some(chain_snap.debit_to_close),
                 profit_pct,
                 dte,
+                contracts,
             );
-            (exit, Some(mark), Some(ctx), None)
+            let analytics = analytics_from_json(ctx.get("analytics").unwrap_or(&json!({})));
+            (exit, Some(mark), analytics, Some(ctx), None)
         }
         Err(e) => {
             let exit = if let Some(credit) = entry_credit.filter(|c| *c > 0.0) {
@@ -155,7 +161,7 @@ pub async fn evaluate_position_monitor(
             } else {
                 evaluate_dte_only(group, rules, today)?
             };
-            (exit, None, None, Some(e.to_string()))
+            (exit, None, None, None, Some(e.to_string()))
         }
     };
 
@@ -168,10 +174,15 @@ pub async fn evaluate_position_monitor(
         chain_error.as_deref(),
         &rules.exit_rules,
     );
-    Ok(PositionMonitorResult { exit, snapshot })
+    Ok(PositionMonitorResult {
+        exit,
+        mark: mark_opt,
+        analytics,
+        snapshot,
+    })
 }
 
-fn evaluate_exit_from_mark(
+pub fn evaluate_exit_from_mark(
     rules: &RulesConfig,
     entry_credit: Option<f64>,
     mark: &SpreadMark,
@@ -621,6 +632,65 @@ pub fn exit_rules_summary(rules: &ExitRules) -> Value {
         "stop_loss_pct": rules.stop_loss_pct,
         "dte_close": rules.dte_close,
     })
+}
+
+/// Per-share debit thresholds for a credit spread (target = lower debit, stop = higher debit).
+pub fn spread_exit_thresholds(entry_credit: f64, exit_rules: &ExitRules) -> (f64, f64) {
+    let target_debit = entry_credit * (1.0 - exit_rules.profit_target_pct / 100.0);
+    let stop_debit = entry_credit * (exit_rules.stop_loss_pct / 100.0);
+    (target_debit, stop_debit)
+}
+
+/// Debit to close per spread share from Schwab leg `net_market_value` (portfolio fallback).
+pub fn debit_to_close_from_group(group: &OptionPositionGroup) -> Option<f64> {
+    let contracts = spread_contract_count(group) as f64;
+    if contracts <= 0.0 {
+        return None;
+    }
+    let debit = (-group.net_market_value).max(0.0) / (contracts * 100.0);
+    Some(debit)
+}
+
+pub fn mark_from_net_market_value(
+    group: &OptionPositionGroup,
+    entry_credit: f64,
+    today: NaiveDate,
+) -> Option<SpreadMark> {
+    let debit = debit_to_close_from_group(group)?;
+    let dte = group
+        .legs
+        .first()
+        .and_then(|l| l.parsed.as_ref())
+        .map(|p| days_to_expiry(p.expiry, today))
+        .unwrap_or(0);
+    let profit_pct = if entry_credit > f64::EPSILON {
+        ((entry_credit - debit) / entry_credit) * 100.0
+    } else {
+        0.0
+    };
+    Some(SpreadMark {
+        entry_credit,
+        debit_to_close: debit,
+        profit_pct,
+        dte,
+        source: "portfolio".into(),
+    })
+}
+
+/// Live Schwab option groups keyed by stable position id.
+pub async fn load_live_position_groups(
+    trader: &schwab_api::TraderApi,
+    rules: &RulesConfig,
+) -> Result<std::collections::HashMap<String, OptionPositionGroup>> {
+    let mut map = std::collections::HashMap::new();
+    for account in rules.enabled_accounts() {
+        let legs = list_option_positions(trader, Some(&account.hash)).await?;
+        for group in group_option_legs(&legs) {
+            let key = stable_position_key(&account.hash, &group);
+            map.insert(key, group);
+        }
+    }
+    Ok(map)
 }
 
 /// Build a minimal position group from sim tracked state (vertical spreads only).

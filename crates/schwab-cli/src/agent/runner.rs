@@ -23,7 +23,7 @@ use crate::order_status::{
     is_failure_status, is_terminal_status, order_status, wait_for_order, wait_result_json,
     WaitCondition, WaitOptions,
 };
-use crate::rules::{LlmPhase, RulesConfig};
+use crate::rules::{LlmPhase, RulesConfig, VerticalEntryRules};
 use crate::safety::{execute_trading_order, require_trading_approval};
 
 use super::exits::{
@@ -32,14 +32,18 @@ use super::exits::{
 };
 use super::llm::OpenRouterClient;
 use super::market_context::{market_context_summary_for_llm, vertical_entry_market_context};
+use super::spread_analytics::{analytics_from_json, entry_analytics_pass};
 use super::paths::{active_state_path, load_agent_state, load_sim_agent_state};
 use super::sim::{ensure_ledger, record_sim_entry, record_sim_exit};
 use super::schedule::{self, AgentSession};
 use super::state::{save_state, AgentState, PendingOrder, PendingOrderAction, TrackedPosition};
+use super::telegram_format::{
+    format_action_telegram, format_llm_review_telegram, format_market_open_telegram,
+    format_overnight_telegram, record_llm_telegram_sent, should_send_llm_telegram,
+};
 use crate::ui::agent_health::{is_fatal_auth_error, SharedAgentHealth};
 
 const TICK_ERROR_BACKOFF_SECS: u64 = 60;
-const MIN_CREDIT_TO_WIDTH_PCT: f64 = 12.5;
 const MAX_ENTRY_QUOTE_WIDTH_RATIO: f64 = 1.0;
 const EXIT_LIMIT_SLIPPAGE: f64 = 0.05;
 
@@ -388,6 +392,10 @@ pub async fn tick_once(
             "new entries paused — blocked_events active: {}",
             rules.risk.blocked_events.join(", ")
         ));
+    } else if !any_entry_slots_available(rules, state) {
+        result
+            .skipped
+            .push("entry scan skipped — all enabled accounts at max_open_positions".into());
     } else {
         for account in rules.enabled_accounts() {
             for underlying in &rules.watchlist {
@@ -501,8 +509,20 @@ pub async fn tick_once(
                         }
                     }
 
-                    if !review.risk_alerts.is_empty() || !review.market_commentary.is_empty() {
-                        notify_llm(telegram, &review.market_commentary, &review.risk_alerts).await;
+                    let notify = should_send_llm_telegram(
+                        &review,
+                        &rules.notify.telegram,
+                        state,
+                        Utc::now(),
+                    );
+                    if notify {
+                        notify_llm(
+                            telegram,
+                            &review,
+                            &result.monitored_positions,
+                            state,
+                        )
+                        .await;
                     }
                 }
                 Err(e) => {
@@ -616,12 +636,30 @@ pub async fn tick_once(
     Ok(result)
 }
 
-fn should_run_monitor_review(rules: &RulesConfig, state: &AgentState) -> bool {
+fn should_run_llm_review(rules: &RulesConfig, state: &AgentState, has_positions: bool) -> bool {
+    let every = rules.llm.effective_llm_review_ticks(
+        has_positions,
+        min_open_position_dte(state),
+        rules.exit_rules.dte_close,
+    );
     schedule::should_run_monitor_review(
         state.regular_tick_count,
         state.last_llm_review_tick,
-        rules.llm.review_every_ticks,
+        every,
     )
+}
+
+fn min_open_position_dte(state: &AgentState) -> Option<i64> {
+    let today = Local::now().date_naive();
+    state
+        .open_positions
+        .values()
+        .filter_map(|p| {
+            chrono::NaiveDate::parse_from_str(&p.expiry, "%Y-%m-%d")
+                .ok()
+                .map(|exp| days_to_expiry(exp, today))
+        })
+        .min()
 }
 
 async fn tick_overnight(
@@ -700,12 +738,12 @@ async fn tick_overnight(
             state.record_action("overnight_digest", review_json);
 
             let should_notify = if rules.schedule.overnight.alert_on_risk_only {
-                !review.risk_alerts.is_empty()
+                !review.risk_alerts.is_empty() || is_llm_urgent_for_overnight(&review)
             } else {
-                !review.risk_alerts.is_empty() || !review.market_commentary.is_empty()
+                should_send_llm_telegram(&review, &rules.notify.telegram, state, Utc::now())
             };
             if should_notify {
-                notify_overnight_alert(telegram, &review).await;
+                notify_overnight_alert(telegram, &review, state).await;
             }
         }
         Err(e) => result
@@ -919,37 +957,32 @@ async fn notify_at_open(telegram: Option<&TelegramNotifier>, playbook: Option<&V
     if !tg.wants_actions() {
         return;
     }
-    let body = if let Some(pb) = playbook {
-        let commentary = pb
-            .get("market_commentary")
-            .and_then(|v| v.as_str())
-            .unwrap_or("(no overnight playbook)");
-        format!("Market open — running full evaluation.\n\nOvernight playbook:\n{commentary}")
-    } else {
-        "Market open — running full evaluation.".into()
-    };
+    let body = format_market_open_telegram(playbook);
     let _ = tg.send(&body).await;
 }
 
 async fn notify_overnight_alert(
     telegram: Option<&TelegramNotifier>,
     review: &super::llm::LlmReview,
+    state: &mut AgentState,
 ) {
     let Some(tg) = telegram else { return };
     if !tg.wants_actions() {
         return;
     }
-    let alerts = if review.risk_alerts.is_empty() {
-        String::new()
-    } else {
-        format!("\nAlerts: {}", review.risk_alerts.join("; "))
-    };
+    let now = Utc::now();
     let _ = tg
-        .send(&format!(
-            "OVERNIGHT DIGEST\n{}{}",
-            review.market_commentary, alerts
-        ))
+        .send(&format_overnight_telegram(review))
         .await;
+    record_llm_telegram_sent(state, review, now);
+}
+
+fn is_llm_urgent_for_overnight(review: &super::llm::LlmReview) -> bool {
+    super::telegram_format::is_llm_urgent(review)
+        || review
+            .position_reviews
+            .iter()
+            .any(|p| p.urgency.eq_ignore_ascii_case("high"))
 }
 
 async fn fetch_option_market_status(market: &MarketDataApi) -> Result<(bool, Option<Value>)> {
@@ -968,13 +1001,35 @@ fn resolve_llm_phase(
     if !rules.llm.enabled {
         return None;
     }
+    if !has_candidates && !has_positions {
+        return None;
+    }
+    if !should_run_llm_review(rules, state, has_positions) {
+        return None;
+    }
     if has_candidates {
         return Some(LlmPhase::Selection);
     }
-    if has_positions && should_run_monitor_review(rules, state) {
-        return Some(LlmPhase::Monitor);
+    Some(LlmPhase::Monitor)
+}
+
+fn any_entry_slots_available(rules: &RulesConfig, state: &AgentState) -> bool {
+    let pending = state.pending_entry_count();
+    for account in rules.enabled_accounts() {
+        if rules.strategies.vertical.enabled
+            && state.count_open_for_strategy(&account.hash, StrategyKind::Vertical) + pending
+                < rules.entry_rules.vertical.max_open_positions
+        {
+            return true;
+        }
+        if rules.strategies.iron_condor.enabled
+            && state.count_open_for_strategy(&account.hash, StrategyKind::IronCondor) + pending
+                < rules.entry_rules.iron_condor.max_open_positions
+        {
+            return true;
+        }
     }
-    None
+    false
 }
 
 /// Every Nth LLM review uses web_model during selection phase.
@@ -1012,26 +1067,27 @@ async fn notify_action(telegram: Option<&TelegramNotifier>, kind: &str, detail: 
     if !tg.wants_actions() {
         return;
     }
-    let msg = format!(
-        "{kind}\n```\n{}\n```",
-        serde_json::to_string_pretty(detail).unwrap_or_default()
-    );
+    let Some(msg) = format_action_telegram(kind, detail) else {
+        return;
+    };
     let _ = tg.send(&msg).await;
 }
 
-async fn notify_llm(telegram: Option<&TelegramNotifier>, commentary: &str, alerts: &[String]) {
+async fn notify_llm(
+    telegram: Option<&TelegramNotifier>,
+    review: &super::llm::LlmReview,
+    monitored: &[Value],
+    state: &mut AgentState,
+) {
     let Some(tg) = telegram else { return };
     if !tg.wants_actions() {
         return;
     }
-    let alerts_text = if alerts.is_empty() {
-        String::new()
-    } else {
-        format!("\nAlerts: {}", alerts.join("; "))
-    };
+    let now = Utc::now();
     let _ = tg
-        .send(&format!("LLM review\n{commentary}{alerts_text}"))
+        .send(&format_llm_review_telegram(review, monitored))
         .await;
+    record_llm_telegram_sent(state, review, now);
 }
 
 async fn evaluate_vertical_entry(
@@ -1081,8 +1137,28 @@ async fn evaluate_vertical_entry(
         return Ok(None);
     }
     let width = (short_strike - long_strike).abs();
-    if !entry_quality_ok(&put_map, short_strike, long_strike, width, credit) {
+    if !entry_quality_ok(&put_map, short_strike, long_strike, width, credit, entry) {
         return Ok(None);
+    }
+
+    let market_context = vertical_entry_market_context(
+        &chain,
+        underlying,
+        expiry,
+        today,
+        &put_map,
+        short_strike,
+        long_strike,
+        width,
+        credit,
+        entry.max_contracts_per_trade as f64,
+    );
+
+    let analytics = analytics_from_json(market_context.get("analytics").unwrap_or(&json!({})));
+    if let Some(ref a) = analytics {
+        if !entry_analytics_pass(entry, a) {
+            return Ok(None);
+        }
     }
 
     let candidate_id = candidate_position_id(
@@ -1111,19 +1187,6 @@ async fn evaluate_vertical_entry(
         duration: None,
         session: None,
     };
-
-    let market_context = vertical_entry_market_context(
-        &chain,
-        underlying,
-        expiry,
-        today,
-        &put_map,
-        short_strike,
-        long_strike,
-        width,
-        credit,
-        entry.max_contracts_per_trade as f64,
-    );
 
     Ok(Some(json!({
         "type": "entry",
@@ -1354,12 +1417,14 @@ fn entry_quality_ok(
     long_strike: f64,
     width: f64,
     credit: f64,
+    entry: &VerticalEntryRules,
 ) -> bool {
     if width <= f64::EPSILON || credit <= f64::EPSILON {
         return false;
     }
+    let min_ctw = entry.min_credit_to_width_pct.unwrap_or(12.5);
     let credit_to_width_pct = (credit / width) * 100.0;
-    if credit_to_width_pct < MIN_CREDIT_TO_WIDTH_PCT {
+    if credit_to_width_pct < min_ctw {
         return false;
     }
     let short_quote_width = quote_width(strike_map, short_strike).unwrap_or(f64::INFINITY);
@@ -1788,4 +1853,140 @@ fn close_limit_from_group_mark(group: &crate::options::OptionPositionGroup) -> O
         return None;
     }
     Some((group.net_market_value.abs() / contracts / 100.0 + EXIT_LIMIT_SLIPPAGE).max(0.01))
+}
+
+#[cfg(test)]
+mod llm_schedule_tests {
+    use super::*;
+    use crate::agent::llm::LlmReview;
+    use crate::agent::state::{AgentState, TrackedPosition};
+    use crate::rules::{
+        AccountType, EntryRules, ExecutionConfig, ExitRules, LlmConfig, NotifyConfig, RiskConfig,
+        RulesAccount, RulesConfig, ScheduleConfig, StrategiesToggle, StrategyEnabled,
+        VerticalEntryRules,
+    };
+
+    fn test_rules(max_open: u32) -> RulesConfig {
+        RulesConfig {
+            version: 1,
+            agent_id: "test".into(),
+            accounts: vec![RulesAccount {
+                hash: "ACC".into(),
+                label: Some("test".into()),
+                r#type: AccountType::Ira,
+                enabled: true,
+            }],
+            schedule: ScheduleConfig {
+                tick_interval_seconds: 120,
+                ..Default::default()
+            },
+            strategies: StrategiesToggle {
+                vertical: StrategyEnabled { enabled: true },
+                iron_condor: StrategyEnabled { enabled: false },
+            },
+            watchlist: vec!["IWM".into()],
+            entry_rules: EntryRules {
+                vertical: VerticalEntryRules {
+                    max_open_positions: max_open,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            exit_rules: ExitRules {
+                dte_close: 21,
+                ..Default::default()
+            },
+            risk: RiskConfig::default(),
+            execution: ExecutionConfig::default(),
+            llm: LlmConfig {
+                enabled: true,
+                review_every_ticks: 15,
+                monitor_review_every_ticks: Some(30),
+                ..Default::default()
+            },
+            notify: NotifyConfig::default(),
+            simulation: None,
+        }
+    }
+
+    fn state_with_open_position() -> AgentState {
+        let mut state = AgentState::default();
+        state.open_positions.insert(
+            "pos".into(),
+            TrackedPosition {
+                position_id: "pos".into(),
+                account_hash: "ACC".into(),
+                underlying: "IWM".into(),
+                expiry: "2026-07-31".into(),
+                strategy: "vertical".into(),
+                opened_at: chrono::Utc::now(),
+                entry_credit: Some(0.30),
+                max_loss_usd: 170.0,
+                contracts: 1,
+                entry_params: None,
+            },
+        );
+        state
+    }
+
+    #[test]
+    fn selection_llm_is_throttled_when_candidates_exist() {
+        let rules = test_rules(2);
+        let mut state = state_with_open_position();
+        state.regular_tick_count = 100;
+        state.last_llm_review_tick = Some(95);
+
+        assert!(resolve_llm_phase(&rules, &state, true, true).is_none());
+
+        state.regular_tick_count = 125;
+        assert!(matches!(
+            resolve_llm_phase(&rules, &state, true, true),
+            Some(LlmPhase::Selection)
+        ));
+    }
+
+    #[test]
+    fn monitor_runs_when_no_candidates_and_due() {
+        let rules = test_rules(2);
+        let mut state = state_with_open_position();
+        state.regular_tick_count = 125;
+        state.last_llm_review_tick = Some(95);
+
+        assert!(matches!(
+            resolve_llm_phase(&rules, &state, false, true),
+            Some(LlmPhase::Monitor)
+        ));
+    }
+
+    #[test]
+    fn entry_scan_skipped_when_all_accounts_at_capacity() {
+        let rules = test_rules(1);
+        let state = state_with_open_position();
+        assert!(!any_entry_slots_available(&rules, &state));
+    }
+
+    #[test]
+    fn selection_telegram_only_on_proceed_or_urgent_close() {
+        use crate::agent::telegram_format::is_llm_urgent;
+
+        let defer = LlmReview {
+            phase: "selection".into(),
+            model: "test".into(),
+            used_web: false,
+            raw: serde_json::json!({}),
+            market_commentary: "ok".into(),
+            web_insights: vec![],
+            position_reviews: vec![],
+            entry_recommendation: "defer".into(),
+            entry_reasoning: "wait".into(),
+            risk_alerts: vec!["noise".into()],
+        };
+        assert!(!is_llm_urgent(&defer));
+
+        let proceed = LlmReview {
+            entry_recommendation: "proceed".into(),
+            ..defer.clone()
+        };
+        assert!(is_llm_urgent(&proceed));
+    }
 }

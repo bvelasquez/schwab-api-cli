@@ -8,7 +8,9 @@ use crate::rules::TraderRules;
 use crate::ui::health::new_shared_health;
 use crate::ui::live_feed::{new_live_snapshot, spawn_live_quote_feed};
 use crate::ui::{run_watch_tui, WatchAgentMode, WatchConfig};
+use schwab_cli::market_conditions::{spawn_market_conditions_feed, MarketConditionsSnapshot};
 use schwab_cli::safety::require_trading_approval;
+use std::sync::{Arc, Mutex};
 
 pub async fn run(
     runtime: &TraderRuntime,
@@ -69,12 +71,20 @@ pub async fn run(
     }
 
     let live = new_live_snapshot();
+    let market_conditions = Arc::new(Mutex::new(MarketConditionsSnapshot::default()));
     let _quote_feed = match runtime.build_market_api() {
-        Ok(market) => Some(spawn_live_quote_feed(
-            rules_path.to_path_buf(),
-            live.clone(),
-            market,
-        )),
+        Ok(market) => {
+            if let Ok(mut guard) = market_conditions.lock() {
+                schwab_cli::market_conditions::refresh_market_conditions(&market, &mut guard).await;
+            }
+            let _conditions_feed =
+                spawn_market_conditions_feed(market.clone(), market_conditions.clone());
+            Some(spawn_live_quote_feed(
+                rules_path.to_path_buf(),
+                live.clone(),
+                market,
+            ))
+        }
         Err(err) => {
             if let Ok(mut g) = live.write() {
                 g.last_error = Some(format!("market API: {err:#}"));
@@ -90,6 +100,7 @@ pub async fn run(
         simulate: runtime.simulate,
         agent_health,
         live,
+        market_conditions,
     };
 
     let watch_result = tokio::task::spawn_blocking(move || run_watch_tui(&watch_config))
