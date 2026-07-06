@@ -1,7 +1,7 @@
 [package]
 name = "schwab-trader"
 description = "Equity swing trading agent CLI for Charles Schwab (short/medium-term stocks, post-fill OCO, LLM advisor)"
-version = "0.1.2"
+version = "0.1.3"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
@@ -29,7 +29,7 @@ clap.workspace = true
 directories.workspace = true
 dotenvy = "0.15"
 reqwest.workspace = true
-schwab-cli = { package = "schwab-api-cli", path = "../schwab-cli", version = "0.1.2" }
+schwab-cli = { package = "schwab-api-cli", path = "../schwab-cli", version = "0.1.3" }
 schwab-api-cli-core = { path = "../schwab-api", version = "0.1.1" }
 schwab-api-cli-market-data = { path = "../schwab-market-data", version = "0.1.1" }
 serde.workspace = true

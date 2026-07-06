@@ -55,5 +55,5 @@ Current minimum versions for the trader stack:
 |---------|--------|
 | `schwab-api-cli-core` ≥ 0.1.1 | `Tokens::obtained_at`, `refresh_expires_in_seconds()` |
 | `schwab-api-cli-market-data` ≥ 0.1.1 | depends on core 0.1.1 |
-| `schwab-api-cli` ≥ 0.1.2 | `RuntimeConfig::suppress_tick_output` |
-| `schwab-trader` ≥ 0.1.2 | depends on api-cli 0.1.2 |
+| `schwab-api-cli` ≥ 0.1.3 | spread analytics, live TUI, market conditions, telegram alerts |
+| `schwab-trader` ≥ 0.1.3 | depends on api-cli 0.1.3 |
