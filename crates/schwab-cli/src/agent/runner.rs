@@ -25,6 +25,7 @@ use crate::order_status::{
 };
 use crate::rules::{LlmPhase, RulesConfig, VerticalEntryRules};
 use crate::safety::{execute_trading_order, require_trading_approval};
+use crate::trade_audio::{self, TradeAudioEvent};
 
 use super::exits::{
     evaluate_position_monitor, exit_signal_json_for_account, find_tracked_position,
@@ -73,6 +74,8 @@ pub async fn run_agent_loop(
         load_agent_state(rules_path, &rules.agent_id)
     };
     state.agent_id = rules.agent_id.clone();
+
+    trade_audio::init(runtime.no_audio);
 
     if rules.execution.require_preview && !runtime.safety.require_preview_before_place {
         anyhow::bail!(
@@ -631,6 +634,8 @@ pub async fn tick_once(
                 }
             }
         }
+    } else if llm_veto_entries && !pending_entries.is_empty() && !runtime.dry_run {
+        trade_audio::speak(TradeAudioEvent::EntryDeferred);
     }
 
     Ok(result)
@@ -832,6 +837,7 @@ async fn poll_pending_orders(
                             "status": status,
                         }),
                     );
+                    trade_audio::speak(TradeAudioEvent::EntryOpened);
                 } else if is_failure_status(&status) || is_terminal_status(&status) {
                     state.remove_pending_order(&pending_order.order_id);
                     state.record_action(
@@ -862,6 +868,7 @@ async fn poll_pending_orders(
                                     },
                                 }),
                             );
+                            trade_audio::speak(TradeAudioEvent::EntryCancelled);
                         }
                         Err(e) => result.skipped.push(format!(
                             "stale entry order {} cancel failed: {e:#}",
@@ -882,6 +889,13 @@ async fn poll_pending_orders(
                             "status": status,
                         }),
                     );
+                    let reason = pending_order
+                        .detail
+                        .as_ref()
+                        .and_then(|d| d.pointer("/signal/reason"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    trade_audio::speak_exit_reason(reason);
                 } else if is_failure_status(&status) || is_terminal_status(&status) {
                     state.remove_pending_order(&pending_order.order_id);
                     state.record_action(
@@ -1063,6 +1077,7 @@ async fn notify_tick(
 }
 
 async fn notify_action(telegram: Option<&TelegramNotifier>, kind: &str, detail: &Value) {
+    trade_audio::speak_from_action(kind, detail);
     let Some(tg) = telegram else { return };
     if !tg.wants_actions() {
         return;

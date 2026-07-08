@@ -18,6 +18,8 @@ pub struct TraderRuntime {
     pub trust: bool,
     /// When true, agent ticks do not print JSON to stdout (watch TUI mode).
     pub suppress_tick_output: bool,
+    /// When true, skip spoken trade-event audio cues.
+    pub no_audio: bool,
     pub safety: SafetyContext,
     pub sink: OutputSink,
 }
@@ -36,6 +38,7 @@ impl TraderRuntime {
             simulate: cli.simulate,
             trust: cli.trust,
             suppress_tick_output: false,
+            no_audio: cli.no_audio,
             safety: SafetyContext::new(safety_cfg),
             sink: OutputSink::stdout(),
         })
@@ -61,6 +64,7 @@ impl TraderRuntime {
             self.simulate,
             self.trust,
             self.suppress_tick_output,
+            self.no_audio,
             self.safety.clone(),
             self.sink.clone(),
         )

@@ -4,6 +4,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use schwab_cli::notify::TelegramNotifier;
+use schwab_cli::trade_audio::{self, TradeAudioEvent};
 
 use crate::agent::llm::TraderLlmReview;
 use crate::reconcile::ReconcileReport;
@@ -18,14 +19,20 @@ pub async fn notify_entry_attempt(
     rules: &TraderRules,
     attempt: &Value,
 ) {
-    let Some(tg) = tg else { return };
-    if !tg.wants_actions() {
-        return;
-    }
     let status = attempt
         .get("status")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
+    match status {
+        "filled" | "simulated" => trade_audio::speak(TradeAudioEvent::EntryOpened),
+        "submitted" => trade_audio::speak(TradeAudioEvent::EntryWorking),
+        _ => {}
+    }
+
+    let Some(tg) = tg else { return };
+    if !tg.wants_actions() {
+        return;
+    }
     let inner = attempt.get("attempt").unwrap_or(attempt);
     let symbol = inner
         .get("symbol")
@@ -74,8 +81,20 @@ pub async fn notify_closure_exits(
     exits: &[Value],
     simulate: bool,
 ) {
+    if exits.is_empty() {
+        return;
+    }
+    for exit in exits {
+        let reason = exit
+            .get("exit_reason")
+            .or_else(|| exit.get("reason"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("exit");
+        trade_audio::speak_exit_reason(reason);
+    }
+
     let Some(tg) = tg else { return };
-    if !tg.wants_actions() || exits.is_empty() {
+    if !tg.wants_actions() {
         return;
     }
     for exit in exits {
@@ -109,6 +128,10 @@ pub async fn notify_reconcile_report(
     rules: &TraderRules,
     report: &ReconcileReport,
 ) {
+    for _sym in &report.oco_filled {
+        trade_audio::speak(TradeAudioEvent::ExitBracket);
+    }
+
     let Some(tg) = tg else { return };
     if !tg.wants_actions() {
         return;
@@ -122,6 +145,7 @@ pub async fn notify_reconcile_report(
             .await;
     }
     for sym in &report.oco_filled {
+        let _ = sym;
         let _ = tg
             .send(&format!(
                 "schwab-trader [{}]\nOCO EXIT\n{sym} (stop or target filled)",
@@ -162,6 +186,7 @@ pub async fn notify_trading_halted(
     rules: &TraderRules,
     reason: &str,
 ) {
+    trade_audio::speak(TradeAudioEvent::AlertHalted);
     let Some(tg) = tg else { return };
     if !tg.wants_actions() {
         return;
@@ -233,16 +258,18 @@ pub async fn notify_llm_alerts(
     rules: &TraderRules,
     review: &TraderLlmReview,
 ) {
-    let Some(tg) = tg else { return };
-    if !tg.wants_actions() {
-        return;
-    }
     let urgent_positions = review
         .positions
         .iter()
         .filter(|p| p.urgency.eq_ignore_ascii_case("high"))
         .count();
     if review.risk_alerts.is_empty() && urgent_positions == 0 {
+        return;
+    }
+    trade_audio::speak(TradeAudioEvent::AlertRisk);
+
+    let Some(tg) = tg else { return };
+    if !tg.wants_actions() {
         return;
     }
     let alerts = if review.risk_alerts.is_empty() {

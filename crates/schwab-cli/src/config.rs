@@ -22,6 +22,8 @@ pub struct RuntimeConfig {
     pub trust: bool,
     /// When true, agent ticks do not print to stdout (watch TUI mode).
     pub suppress_tick_output: bool,
+    /// When true, skip spoken trade-event audio cues.
+    pub no_audio: bool,
     pub safety: SafetyContext,
     pub sink: OutputSink,
 }
@@ -41,6 +43,7 @@ impl RuntimeConfig {
             simulate: cli.simulate,
             trust: cli.trust,
             suppress_tick_output: false,
+            no_audio: cli.no_audio,
             safety: SafetyContext::new(safety_cfg),
             sink: OutputSink::stdout(),
         })
@@ -82,6 +85,7 @@ impl RuntimeConfig {
         simulate: bool,
         trust: bool,
         suppress_tick_output: bool,
+        no_audio: bool,
         safety: SafetyContext,
         sink: OutputSink,
     ) -> Self {
@@ -93,6 +97,7 @@ impl RuntimeConfig {
             simulate,
             trust,
             suppress_tick_output,
+            no_audio,
             safety,
             sink,
         }
