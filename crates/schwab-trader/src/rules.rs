@@ -1328,11 +1328,11 @@ mod tests {
 
     #[test]
     fn example_rules_parse() {
-        let swing = Path::new("../../rules/trader-swing.yaml");
+        let swing = Path::new("../../rules/trader-rules.example.yaml");
         if swing.is_file() {
-            TraderRules::load(swing).expect("swing rules should parse");
+            TraderRules::load(swing).expect("trader example rules should parse");
         }
-        let intraday = Path::new("../../rules/trader-intraday-<swing-account>.yaml");
+        let intraday = Path::new("../../rules/my-intraday-trader.yaml");
         if intraday.is_file() {
             let r = TraderRules::load(intraday).expect("intraday rules should parse");
             assert!(r.is_intraday());

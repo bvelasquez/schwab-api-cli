@@ -36,10 +36,10 @@ Prefer `--dry-run` or `--simulate` until you understand every flag and rules fil
 schwab auth login
 
 # Validate rules
-schwab-trader rules validate rules/trader-swing.yaml --json
+schwab-trader rules validate rules/trader-rules.example.yaml --json
 
 # Paper trading one tick
-schwab-trader agent run rules/trader-swing.yaml --simulate --once --json
+schwab-trader agent run rules/my-trader.yaml --simulate --once --json
 ```
 
 ## Documentation

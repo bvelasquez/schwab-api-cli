@@ -87,8 +87,8 @@ First **regular** tick after overnight:
 ## Run
 
 ```bash
-schwab agent validate rules/options-pilot.yaml
-schwab agent run rules/options-pilot.yaml --trust --yes
+schwab agent validate rules/my-options.yaml
+schwab agent run rules/my-options.yaml --trust --yes
 ```
 
 Overnight ticks show `overnight` session in console; regular ticks show `regular`.
