@@ -49,10 +49,15 @@ rules/trader-backtest-state-*.json
 rules/trader-backtest-journal-*.jsonl
 rules/prefetch-*.sh
 
-# Local rule tuning / comparison copies (committed examples: *-example.yaml, options-monthly-income.yaml)
+# Local rule tuning / comparison copies (committed examples: *-example.yaml)
 rules/trader-swing-p1-*.yaml
 rules/trader-swing-*-baseline.yaml
 rules/p1-sizing-results.json
+
+# Personal agent rules (account-specific hashes — copy from *-example.yaml locally)
+rules/*-8709.yaml
+rules/*-9947.yaml
+rules/options-monthly-income.yaml
 
 # Legacy shared paths (pre per-file state)
 rules/agent-state.json
