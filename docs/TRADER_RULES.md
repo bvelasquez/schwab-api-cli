@@ -33,19 +33,19 @@ flowchart TB
 | Component | Location |
 |-----------|----------|
 | CLI binary | `schwab-trader` (`crates/schwab-trader`) |
-| Swing rules | `rules/trader-swing-9947.yaml` |
-| Intraday rules | `rules/trader-intraday-9947.yaml` |
-| Runtime state | `rules/trader-state-<rules-stem>.json` (e.g. `trader-state-trader-swing-9947.json`) |
+| Swing rules | `rules/my-trader.yaml` (copy from `trader-rules.example.yaml`) |
+| Intraday rules | `rules/my-intraday-trader.yaml` (local copy) |
+| Runtime state | `rules/trader-state-<rules-stem>.json` (e.g. `trader-state-my-trader.json`) |
 | Journal | `rules/trader-journal-<rules-stem>.jsonl` |
 | Options overlap | Reads options agent state for loss reserve (`capital.options_risk.rules_file`) |
 
-Path stems derive from the rules **filename** (`trader-swing-9947.yaml` → stem `trader-swing-9947`).
+Path stems derive from the rules **filename** (`my-trader.yaml` → stem `my-trader`).
 
 ## Locked decisions (v1)
 
 | Topic | Choice |
 |-------|--------|
-| Account | Beneficiary 9947 — dedicated equity sleeve |
+| Account | Your brokerage account — copy `trader-rules.example.yaml` locally |
 | Horizon | Swing (2–30 days) and intraday playbooks |
 | Direction | Long default; shorts schema-only until enabled |
 | Capital | Fixed sleeve cap + % of free cash after options reserve |
@@ -469,17 +469,17 @@ One JSON object per line: `{ "ts", "type", "payload" }`.
 
 ```bash
 # Quick ROI + exit reason breakdown
-schwab-trader sim stats --rules-file rules/trader-swing-9947.yaml --json
+schwab-trader sim stats --rules-file rules/my-trader.yaml --json
 
 # Full report: ledger + journal + adaptations + equity curve
-schwab-trader sim report --rules-file rules/trader-swing-9947.yaml --json
+schwab-trader sim report --rules-file rules/my-trader.yaml --json
 
 # Export for offline analysis
-schwab-trader sim report --rules-file rules/trader-swing-9947.yaml \
+schwab-trader sim report --rules-file rules/my-trader.yaml \
   --output rules/sim-week-report.json
 
 # Journal event counts
-schwab-trader journal stats --rules-file rules/trader-swing-9947.yaml --json
+schwab-trader journal stats --rules-file rules/my-trader.yaml --json
 ```
 
 `sim report` includes: `ledger_stats`, `closed_trades_ledger`, `equity_curve`, `trade_journal`, `profile_timeline`, `regime_timeline`, `adaptations`, `event_counts`.
@@ -501,8 +501,8 @@ All wall-clock times use **`America/New_York`**. Rules validation rejects other 
 
 | Style | Rules file | Holds | Closure |
 |-------|------------|-------|---------|
-| **Swing** | `trader-swing-9947.yaml` | 2–30 days | Optional overnight |
-| **Intraday** | `trader-intraday-9947.yaml` | Same session | Flatten by 15:55 ET; no entries after 15:30 ET |
+| **Swing** | `my-trader.yaml` | 2–30 days | Optional overnight |
+| **Intraday** | `my-intraday-trader.yaml` | Same session | Flatten by 15:55 ET; no entries after 15:30 ET |
 
 Intraday uses minute-bar analytics (relative volume, SMA 9/20) and `time_stop_minutes`. OCO duration should be `DAY`, not `GTC`.
 
@@ -562,27 +562,27 @@ Configure URLs, JSON APIs, and RSS feeds. Prefetched before LLM calls as `source
 | `auth.token_env` | Secret from environment (never in YAML) |
 
 ```bash
-schwab-trader sources list --rules-file rules/trader-swing-9947.yaml --json
-schwab-trader sources test --rules-file rules/trader-swing-9947.yaml --json
+schwab-trader sources list --rules-file rules/my-trader.yaml --json
+schwab-trader sources test --rules-file rules/my-trader.yaml --json
 ```
 
 ## Quick start
 
 ```bash
 schwab auth login
-schwab-trader rules validate rules/trader-swing-9947.yaml --json
-schwab-trader capital show --rules-file rules/trader-swing-9947.yaml --json
+schwab-trader rules validate rules/my-trader.yaml --json
+schwab-trader capital show --rules-file rules/my-trader.yaml --json
 
 # Dry-run one tick
-schwab-trader agent run rules/trader-swing-9947.yaml --dry-run --once --json
+schwab-trader agent run rules/my-trader.yaml --dry-run --once --json
 
 # Paper trading week
-schwab-trader watch --rules-file rules/trader-swing-9947.yaml --simulate
-schwab-trader sim report --rules-file rules/trader-swing-9947.yaml --json
+schwab-trader watch --rules-file rules/my-trader.yaml --simulate
+schwab-trader sim report --rules-file rules/my-trader.yaml --json
 
 # Live (requires disclaimer + --trust --yes)
 schwab disclaimer accept --yes
-schwab-trader watch --rules-file rules/trader-swing-9947.yaml --trust --yes
+schwab-trader watch --rules-file rules/my-trader.yaml --trust --yes
 ```
 
 ## Implementation map
@@ -606,7 +606,7 @@ schwab-trader watch --rules-file rules/trader-swing-9947.yaml --trust --yes
 - [x] Realistic sim exits (stop/target/trailing from live quotes)
 - [x] `sim report` + per-tick journal logging
 - [x] Monitor OCO adjust (live)
-- [x] Intraday playbook (`trader-intraday-9947.yaml`)
+- [x] Intraday playbook (local `my-intraday-trader.yaml`)
 - [ ] `allow_llm_exits` execution (prompt/schema only today)
 - [ ] Full watch TUI polish
 - [ ] Short selling in production (schema only)

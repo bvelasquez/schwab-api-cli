@@ -573,7 +573,7 @@ mod tests {
     #[test]
     fn format_skipped_only_tick() {
         let data = json!({
-            "agent_id": "options-pilot-8709",
+            "agent_id": "options-example",
             "dry_run": true,
             "signals": [],
             "actions": [],
@@ -590,7 +590,7 @@ mod tests {
             "llm_review": null
         });
         let out = format_tick_data(&data);
-        assert!(out.contains("options-pilot-8709"));
+        assert!(out.contains("options-example"));
         assert!(out.contains("Monitoring 1 open position"));
         assert!(out.contains("IWM"));
         assert!(out.contains("max_trades_per_day"));
@@ -600,7 +600,7 @@ mod tests {
     #[test]
     fn format_entry_signal_with_context() {
         let data = json!({
-            "agent_id": "options-pilot-8709",
+            "agent_id": "options-example",
             "dry_run": false,
             "monitored_positions": [],
             "signals": [{

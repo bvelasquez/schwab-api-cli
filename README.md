@@ -333,12 +333,12 @@ Details: [docs/AGENT_SCHEDULE.md](docs/AGENT_SCHEDULE.md).
 
 | File | Purpose |
 |------|---------|
-| [rules/options-rules.example.yaml](rules/options-rules.example.yaml) | Template with all fields documented |
-| [rules/options-pilot-8709.yaml](rules/options-pilot-8709.yaml) | IRA pilot — $2-wide IWM/SPY spreads, LLM + Telegram |
-| [rules/options-pilot-9947.yaml](rules/options-pilot-9947.yaml) | Conservative pilot — $2-wide spreads, SPY/IWM, account 9947 |
-| [rules/options-monthly-income.yaml](rules/options-monthly-income.yaml) | “Selling Puts for Monthly Income” — put credit spreads, ~30 DTE, PDF-aligned prompts |
+| [rules/options-rules.example.yaml](rules/options-rules.example.yaml) | Options agent template — copy and set your account `hashValue` |
+| [rules/trader-rules.example.yaml](rules/trader-rules.example.yaml) | Equity swing trader template |
 
-Run **one live agent per account** unless you intend overlapping logic. Each rules file gets its own `agent-state.json`, `agent.pid`, and `agent.log` in `rules/`.
+Copy a template to a local file (e.g. `rules/my-options.yaml`). **Do not commit** account hashes or personal prompts. See [rules/README.md](rules/README.md).
+
+Run **one live agent per account** unless you intend overlapping logic. Each rules file gets its own state under `rules/` (gitignored at runtime).
 
 ### Quick start (options agent)
 
@@ -352,18 +352,18 @@ schwab safety show --json
 # TELEGRAM_BOT_TOKEN=...
 # TELEGRAM_CHAT_ID=...
 
-# 3. Validate rules
-schwab agent validate rules/options-pilot-9947.yaml --json
+# 3. Validate rules (use your local copy of the example template)
+schwab agent validate rules/my-options.yaml --json
 
 # 4. Dry-run one tick (no orders)
-schwab agent run rules/options-pilot-9947.yaml --dry-run --once --json
+schwab agent run rules/my-options.yaml --dry-run --once --json
 
 # 5. Foreground live loop
-schwab agent run rules/options-pilot-9947.yaml --trust --yes --json
+schwab agent run rules/my-options.yaml --trust --yes --json
 
 # 6. Background daemon (survives terminal close)
-schwab agent run rules/options-pilot-9947.yaml --background --trust --yes --json
-schwab agent stop rules/options-pilot-9947.yaml --json
+schwab agent run rules/my-options.yaml --background --trust --yes --json
+schwab agent stop rules/my-options.yaml --json
 ```
 
 ### Agent commands
@@ -568,14 +568,12 @@ schwab-api-cli/
 │   ├── OPTIONS_RULES.md         # Options agent reference
 │   └── AGENT_SCHEDULE.md        # Regular / overnight sessions
 ├── plans/                   # Example trade plans + TRADE_PLAN.md
-├── rules/                   # Options agent rules + runtime state
+├── rules/                   # Example rules templates + gitignored runtime state
 │   ├── options-rules.example.yaml
-│   ├── options-pilot-8709.yaml
-│   ├── options-pilot-9947.yaml
-│   ├── options-monthly-income.yaml
-│   ├── agent-state.json     # written at runtime
-│   ├── agent.pid            # background daemon PID
-│   └── agent.log            # background daemon log
+│   ├── trader-rules.example.yaml
+│   ├── agent-state-*.json   # written at runtime (gitignored)
+│   ├── agent-*.pid          # background daemon PID (gitignored)
+│   └── agent-*.log          # background daemon log (gitignored)
 ├── safety.json.example
 ├── .env.example
 └── README.md

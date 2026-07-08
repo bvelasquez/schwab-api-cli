@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-/// Stable filename stem from the rules YAML path (e.g. `options-pilot-8709`).
+/// Stable filename stem from the rules YAML path (e.g. `options-rules.example`).
 pub fn rules_runtime_stem(rules_path: &Path) -> String {
     rules_path
         .file_stem()
@@ -118,25 +118,25 @@ mod tests {
 
     #[test]
     fn runtime_paths_derive_from_rules_filename() {
-        let rules = Path::new("rules/options-pilot-8709.yaml");
+        let rules = Path::new("rules/options-rules.example.yaml");
         assert_eq!(
             default_state_path(rules),
-            Path::new("rules/agent-state-options-pilot-8709.json")
+            Path::new("rules/agent-state-options-rules.example.json")
         );
         assert_eq!(
             pid_path(rules),
-            Path::new("rules/agent-options-pilot-8709.pid")
+            Path::new("rules/agent-options-rules.example.pid")
         );
         assert_eq!(
             log_path(rules),
-            Path::new("rules/agent-options-pilot-8709.log")
+            Path::new("rules/agent-options-rules.example.log")
         );
     }
 
     #[test]
     fn distinct_rules_files_get_distinct_state_paths() {
-        let a = default_state_path(Path::new("rules/options-pilot-8709.yaml"));
-        let b = default_state_path(Path::new("rules/options-pilot-9947.yaml"));
+        let a = default_state_path(Path::new("rules/options-rules.example.yaml"));
+        let b = default_state_path(Path::new("rules/my-options.yaml"));
         assert_ne!(a, b);
     }
 }

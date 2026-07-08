@@ -175,7 +175,7 @@ The LLM **does not replace** mechanical exits unless `allow_llm_exits: true` (of
 | Field | Type | Rules |
 |-------|------|-------|
 | `version` | integer | Must be `1` |
-| `agent_id` | string | Stable id, e.g. `ira-8709-pilot` |
+| `agent_id` | string | Stable id, e.g. `my-options-pilot` |
 | `accounts` | array | At least one enabled account with `hash` |
 | `watchlist` | array | Underlying tickers to scan, e.g. `SPY`, `IWM` |
 
@@ -187,7 +187,7 @@ agent_id: my-strategy-id
 
 accounts:
   - hash: "<hash-from-schwab-accounts-numbers>"
-    label: "IRA (...8709)"
+    label: "IRA (example)"
     type: ira                    # margin | ira | cash
     enabled: true
 
@@ -406,8 +406,7 @@ One live agent per account per strategy unless you intend overlapping logic.
 | File | Purpose |
 |------|---------|
 | [rules/options-rules.example.yaml](../rules/options-rules.example.yaml) | All fields, commented |
-| [rules/options-pilot-8709.yaml](../rules/options-pilot-8709.yaml) | IRA pilot — IWM/SPY, LLM + Telegram |
-| [rules/options-pilot-9947.yaml](../rules/options-pilot-9947.yaml) | Conservative pilot |
+| [rules/options-rules.example.yaml](../rules/options-rules.example.yaml) | Public template — copy locally and set account hash |
 | [rules/options-monthly-income.yaml](../rules/options-monthly-income.yaml) | Monthly income PDF-aligned |
 
 ### LLM rules for options rules files

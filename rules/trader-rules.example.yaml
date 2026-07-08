@@ -1,0 +1,44 @@
+# Equity swing trader — public template.
+# Copy to rules/my-trader.yaml and set accounts[].hash from `schwab accounts numbers --json`.
+#
+# Validate: schwab-trader rules validate rules/trader-rules.example.yaml --json
+# Dry run:  schwab-trader agent run rules/my-trader.yaml --simulate --once --json
+
+version: 1
+trader_id: example-swing-v1
+
+accounts:
+  - hash: "<hash-from-schwab-accounts-numbers>"
+    label: "Example margin account"
+    type: margin
+    enabled: true
+
+capital:
+  fixed_sleeve_cap_usd: 4000.0
+  max_pct_of_free_cash: 80.0
+  min_cash_floor_usd: 500.0
+  core_holdings:
+    - SGOV
+    - JPST
+
+schedule:
+  tick_interval_seconds: 90
+  market_hours_only: true
+  timezone: America/New_York
+
+playbook:
+  style: swing
+  direction: long
+
+watchlists:
+  core:
+    - SPY
+    - AAPL
+    - MSFT
+
+llm:
+  enabled: false
+
+notify:
+  telegram:
+    enabled: false

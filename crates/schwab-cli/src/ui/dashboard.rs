@@ -395,7 +395,7 @@ mod tests {
     #[test]
     fn dashboard_renders_for_project_rules() {
         let path =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../rules/options-pilot-8709.yaml");
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../rules/options-rules.example.yaml");
         if !path.exists() {
             return;
         }

@@ -59,6 +59,11 @@ rules/*-8709.yaml
 rules/*-9947.yaml
 rules/options-monthly-income.yaml
 
+# Personal project notes and launch scripts (not for the public repo)
+reminders.md
+option-start.sh
+trader-sim-start.sh
+
 # Legacy shared paths (pre per-file state)
 rules/agent-state.json
 rules/agent.pid

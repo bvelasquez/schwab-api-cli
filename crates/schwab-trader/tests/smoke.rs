@@ -18,13 +18,13 @@ fn trader_help_lists_subcommands() {
 fn trader_rules_validate_example() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../rules/trader-swing-9947.yaml"
+        "/../../rules/trader-rules.example.yaml"
     );
     Command::cargo_bin("schwab-trader")
         .unwrap()
         .args(["rules", "validate", path, "--json"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("swing-beneficiary-9947"))
+        .stdout(predicate::str::contains("example-swing-v1"))
         .stdout(predicate::str::contains("hints"));
 }

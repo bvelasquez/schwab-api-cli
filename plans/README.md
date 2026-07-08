@@ -10,14 +10,14 @@ schwab plan schema --json
 schwab plan prompt --json
 
 # Validate + dry-run (no orders sent)
-schwab plan validate plans/9947-sgov-to-jpst-rebalance.yaml
-schwab plan run plans/9947-sgov-to-jpst-rebalance.yaml --dry-run --json
+schwab plan validate plans/example-sgov-to-jpst-rebalance.yaml
+schwab plan run plans/example-sgov-to-jpst-rebalance.yaml --dry-run --json
 
 # Live (requires explicit trust)
-schwab plan run plans/9947-sgov-to-jpst-rebalance.yaml --trust --yes --json
+schwab plan run plans/example-sgov-to-jpst-rebalance.yaml --trust --yes --json
 
 # Resume from a step
-schwab plan run plans/9947-sgov-to-jpst-rebalance.yaml --from-step step-04-buy-jpst-1 --trust --yes
+schwab plan run plans/example-sgov-to-jpst-rebalance.yaml --from-step step-04-buy-jpst-1 --trust --yes
 ```
 
 ## LLM workflow

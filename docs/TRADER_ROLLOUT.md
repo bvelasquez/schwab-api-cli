@@ -1,19 +1,19 @@
 # Trader rollout checklist
 
-Use this before enabling live capital on account 9947.
+Use this before enabling live capital on a real account.
 
 ## Prerequisites
 
 - [ ] `schwab auth login` — shared token store
 - [ ] `safety.json` — `allow_conditional_orders: true` (required for OCO brackets)
-- [ ] `schwab-trader rules validate rules/trader-swing-9947.yaml --json` passes
+- [ ] `schwab-trader rules validate rules/my-trader.yaml --json` passes
 - [ ] `adaptation.live_auto_apply: false` in rules YAML (default)
 
 ## Phase 1 — Simulation soak (2+ weeks)
 
 ```bash
-schwab-trader agent run rules/trader-swing-9947.yaml --simulate --once --json
-schwab-trader sim stats --rules-file rules/trader-swing-9947.yaml --json
+schwab-trader agent run rules/my-trader.yaml --simulate --once --json
+schwab-trader sim stats --rules-file rules/my-trader.yaml --json
 ```
 
 Verify in tick output:
@@ -26,7 +26,7 @@ Verify in tick output:
 ## Phase 2 — Dry-run with exit evaluation (1 week)
 
 ```bash
-schwab-trader agent run rules/trader-swing-9947.yaml --dry-run --once --json
+schwab-trader agent run rules/my-trader.yaml --dry-run --once --json
 ```
 
 Dry-run now evaluates exits (`closure_exits` with `dry_run: true`) without placing orders.
@@ -38,7 +38,7 @@ Dry-run now evaluates exits (`closure_exits` with `dry_run: true`) without placi
 
 ```bash
 schwab disclaimer accept --yes
-schwab-trader agent run rules/trader-swing-9947.yaml --trust --yes --once --json
+schwab-trader agent run rules/my-trader.yaml --trust --yes --once --json
 ```
 
 3. Confirm `reconcile_report` matches broker after restart
@@ -47,7 +47,7 @@ schwab-trader agent run rules/trader-swing-9947.yaml --trust --yes --once --json
 ## Phase 4 — Full sleeve
 
 - Restore `fixed_sleeve_cap_usd: 4000`
-- Do **not** run swing + intraday agents simultaneously on 9947 (sibling sleeve guard reduces cap)
+- Do **not** run swing + intraday agents simultaneously on the same account (sibling sleeve guard reduces cap)
 - Enable `adaptation.live_auto_apply: true` only after 10+ closed sim/live trades with positive expectancy
 
 ## Monitoring alerts (tick JSON)
