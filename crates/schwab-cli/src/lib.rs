@@ -26,4 +26,5 @@ pub mod rules;
 pub mod safety;
 pub mod safety_config;
 pub mod tls;
+pub mod trade_audio;
 pub mod ui;

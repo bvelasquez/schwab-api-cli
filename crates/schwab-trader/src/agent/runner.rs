@@ -74,6 +74,8 @@ pub async fn run_agent_loop(
         }
     };
 
+    schwab_cli::trade_audio::init(runtime.no_audio);
+
     loop {
         state.tick_count += 1;
         state.last_tick = Some(Utc::now());
@@ -659,6 +661,13 @@ async fn tick_regular(
 
     for attempt in &entry_attempts {
         notify::notify_entry_attempt(telegram, rules, attempt).await;
+    }
+    if entry_attempts.iter().any(|a| {
+        a.get("reason")
+            .and_then(|v| v.as_str())
+            == Some("llm_veto_or_missing_review")
+    }) {
+        schwab_cli::trade_audio::speak(schwab_cli::trade_audio::TradeAudioEvent::EntryDeferred);
     }
 
     let mut learn_result = None;

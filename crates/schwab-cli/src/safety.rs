@@ -166,6 +166,7 @@ mod tests {
             simulate: false,
             trust,
             suppress_tick_output: false,
+            no_audio: true,
             safety: SafetyContext::new(SafetyConfig::default()),
             sink: OutputSink::stdout(),
         }

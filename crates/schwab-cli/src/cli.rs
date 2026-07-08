@@ -55,6 +55,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub trust: bool,
 
+    /// Disable spoken trade-event audio cues (agent/watch)
+    #[arg(long, global = true, env = "SCHWAB_NO_AUDIO")]
+    pub no_audio: bool,
+
     /// Emit full command tree as JSON (agent discovery)
     #[arg(long, global = true)]
     pub help_json: bool,

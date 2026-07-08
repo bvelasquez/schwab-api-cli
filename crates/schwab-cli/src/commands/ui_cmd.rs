@@ -61,6 +61,7 @@ pub async fn run_watch(
         runtime.simulate,
         runtime.trust,
         true,
+        runtime.no_audio,
         runtime.safety.clone(),
         runtime.sink.clone(),
     );

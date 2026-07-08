@@ -26,6 +26,7 @@ mod rules;
 mod safety;
 mod safety_config;
 mod tls;
+mod trade_audio;
 mod ui;
 
 use anyhow::Result;
