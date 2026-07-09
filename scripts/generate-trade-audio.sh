@@ -3,7 +3,7 @@
 set -euo pipefail
 
 VOICE_ID="${TRADE_AUDIO_VOICE_ID:-nHpjrnfJ7ggpW7rVHqsY}"
-OUT_DIR="$(cd "$(dirname "$0")/.." && pwd)/assets/trade-audio"
+OUT_DIR="$(cd "$(dirname "$0")/.." && pwd)/crates/schwab-cli/assets/trade-audio"
 
 mkdir -p "$OUT_DIR"
 
