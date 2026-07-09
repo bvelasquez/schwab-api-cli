@@ -223,6 +223,7 @@ mod tests {
             market_value_usd: 100.0,
             oco_order_id: None,
             exit_plan_version: 1,
+            ..Default::default()
         };
         let bar = StoredCandle {
             datetime_ms: 1_704_240_000_000,

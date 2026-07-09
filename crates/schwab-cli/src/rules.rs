@@ -206,11 +206,55 @@ impl Default for IronCondorEntryRules {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfitGivebackExit {
+    /// Exit when peak unrealized profit reached at least this %.
+    pub peak_profit_min_pct: f64,
+    /// Exit when current profit falls below this % after the peak threshold was met.
+    pub exit_if_below_pct: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThesisExitRules {
+    pub enabled: bool,
+    /// Skip thesis exits (not profit/stop/DTE) until the position has been open this long.
+    pub min_hold_minutes: Option<u32>,
+    /// Close when modeled spread POP falls below this (success probability deteriorated).
+    pub min_pop_pct_exit: Option<f64>,
+    /// Close when |short_delta| reaches this (strike no longer comfortably OTM).
+    pub max_short_delta_exit: Option<f64>,
+    /// Close when short leg is within this % OTM of spot (pin / chop risk).
+    pub min_short_otm_pct: Option<f64>,
+    /// Close when short strike sits inside the 1σ expected move toward ITM.
+    /// Prefer false for ~5% OTM credit spreads — distance < 1σ is normal at entry.
+    pub exit_short_inside_1sigma: bool,
+    /// After a thesis exit, skip same-underlying entry scan for this many minutes.
+    pub redeploy_cooldown_minutes: Option<u32>,
+    pub profit_giveback: Option<ProfitGivebackExit>,
+}
+
+impl Default for ThesisExitRules {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            min_hold_minutes: None,
+            min_pop_pct_exit: None,
+            max_short_delta_exit: None,
+            min_short_otm_pct: None,
+            exit_short_inside_1sigma: false,
+            redeploy_cooldown_minutes: None,
+            profit_giveback: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExitRules {
     pub profit_target_pct: f64,
     pub stop_loss_pct: f64,
     pub dte_close: u32,
+    pub thesis: ThesisExitRules,
 }
 
 impl Default for ExitRules {
@@ -219,6 +263,7 @@ impl Default for ExitRules {
             profit_target_pct: 50.0,
             stop_loss_pct: 200.0,
             dte_close: 21,
+            thesis: ThesisExitRules::default(),
         }
     }
 }

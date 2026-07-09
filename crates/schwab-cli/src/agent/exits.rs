@@ -125,7 +125,6 @@ pub async fn evaluate_position_monitor(
                 dte,
                 source: "chain".into(),
             };
-            let exit = evaluate_exit_from_mark(rules, entry_credit, &mark);
             let expiry_date = chrono::NaiveDate::parse_from_str(&group.expiry, "%Y-%m-%d")
                 .ok()
                 .or_else(|| {
@@ -153,6 +152,14 @@ pub async fn evaluate_position_monitor(
                 contracts,
             );
             let analytics = analytics_from_json(ctx.get("analytics").unwrap_or(&json!({})));
+            let exit = evaluate_all_exits(
+                rules,
+                entry_credit,
+                &mark,
+                analytics.as_ref(),
+                tracked.and_then(|p| p.peak_profit_pct),
+                tracked.map(|p| p.opened_at),
+            );
             (exit, Some(mark), analytics, Some(ctx), None)
         }
         Err(e) => {
@@ -211,6 +218,116 @@ pub fn evaluate_exit_from_mark(
     if mark.dte <= rules.exit_rules.dte_close as i64 {
         return Some(ExitEvaluation {
             reason: "dte_close".into(),
+            mark,
+        });
+    }
+
+    None
+}
+
+/// Primary + thesis deterioration exits (evaluated every tick when chain data is live).
+/// Profit target / stop / DTE always apply; thesis exits respect `min_hold_minutes`.
+pub fn evaluate_all_exits(
+    rules: &RulesConfig,
+    entry_credit: Option<f64>,
+    mark: &SpreadMark,
+    analytics: Option<&SpreadAnalytics>,
+    peak_profit_pct: Option<f64>,
+    opened_at: Option<chrono::DateTime<chrono::Utc>>,
+) -> Option<ExitEvaluation> {
+    if let Some(exit) = evaluate_exit_from_mark(rules, entry_credit, mark) {
+        return Some(exit);
+    }
+    let Some(analytics) = analytics else {
+        return None;
+    };
+    if thesis_min_hold_active(rules, opened_at) {
+        return None;
+    }
+    evaluate_thesis_exit(rules, entry_credit, mark, analytics, peak_profit_pct)
+}
+
+fn thesis_min_hold_active(
+    rules: &RulesConfig,
+    opened_at: Option<chrono::DateTime<chrono::Utc>>,
+) -> bool {
+    let Some(min_hold) = rules.exit_rules.thesis.min_hold_minutes.filter(|m| *m > 0) else {
+        return false;
+    };
+    let Some(opened) = opened_at else {
+        return false;
+    };
+    chrono::Utc::now()
+        .signed_duration_since(opened)
+        .num_minutes()
+        < min_hold as i64
+}
+
+/// True when live analytics already breach an enabled thesis exit gate (entry veto).
+/// Ignores profit_giveback (needs peak history) and min_hold.
+pub fn candidate_fails_thesis_gates(
+    rules: &RulesConfig,
+    analytics: &SpreadAnalytics,
+) -> Option<&'static str> {
+    let thesis = &rules.exit_rules.thesis;
+    if !thesis.enabled {
+        return None;
+    }
+    if let Some(min_pop) = thesis.min_pop_pct_exit {
+        if analytics.spread_pop_pct.is_some_and(|pop| pop < min_pop) {
+            return Some("thesis_pop_deterioration");
+        }
+    }
+    if let Some(max_delta) = thesis.max_short_delta_exit {
+        if analytics
+            .short_delta
+            .is_some_and(|delta| delta.abs() >= max_delta)
+        {
+            return Some("thesis_delta_breach");
+        }
+    }
+    if let Some(min_otm) = thesis.min_short_otm_pct {
+        if analytics.short_otm_pct.is_some_and(|otm| otm < min_otm) {
+            return Some("thesis_near_strike");
+        }
+    }
+    if thesis.exit_short_inside_1sigma && analytics.short_strike_inside_1sigma == Some(true) {
+        return Some("thesis_inside_1sigma");
+    }
+    None
+}
+
+pub fn evaluate_thesis_exit(
+    rules: &RulesConfig,
+    entry_credit: Option<f64>,
+    mark: &SpreadMark,
+    analytics: &SpreadAnalytics,
+    peak_profit_pct: Option<f64>,
+) -> Option<ExitEvaluation> {
+    let thesis = &rules.exit_rules.thesis;
+    if !thesis.enabled {
+        return None;
+    }
+    let entry_credit = entry_credit.filter(|c| *c > f64::EPSILON)?;
+    let mark = SpreadMark {
+        entry_credit,
+        ..mark.clone()
+    };
+
+    if let Some(gb) = &thesis.profit_giveback {
+        if let Some(peak) = peak_profit_pct {
+            if peak >= gb.peak_profit_min_pct && mark.profit_pct < gb.exit_if_below_pct {
+                return Some(ExitEvaluation {
+                    reason: "thesis_profit_giveback".into(),
+                    mark,
+                });
+            }
+        }
+    }
+
+    if let Some(reason) = candidate_fails_thesis_gates(rules, analytics) {
+        return Some(ExitEvaluation {
+            reason: reason.into(),
             mark,
         });
     }
@@ -383,7 +500,10 @@ pub fn monitor_snapshot_json(
             "current_debit_to_close": m.debit_to_close,
             "stop_triggered": m.debit_to_close >= stop_debit,
             "profit_target_triggered": m.profit_pct >= exit_rules.profit_target_pct,
-            "note": "Mechanical exits use debit_to_close from the chain, NOT net_market_value. If stop_triggered is false, do not alert that the stop was hit."
+            "thesis_exits_enabled": exit_rules.thesis.enabled,
+            "thesis_min_hold_minutes": exit_rules.thesis.min_hold_minutes,
+            "peak_profit_pct": tracked.and_then(|p| p.peak_profit_pct),
+            "note": "Mechanical exits use debit_to_close from the chain, NOT net_market_value. Thesis exits (POP/delta/OTM/giveback) run after min_hold when enabled."
         });
     }
 
@@ -558,6 +678,9 @@ pub async fn reconcile_open_positions(
                         max_loss_usd: inferred_max_loss.unwrap_or(0.0),
                         contracts: live_contracts,
                         entry_params: None,
+                        peak_profit_pct: None,
+                        entry_pop_pct: None,
+                        entry_short_delta: None,
                     },
                 );
             }
@@ -631,6 +754,7 @@ pub fn exit_rules_summary(rules: &ExitRules) -> Value {
         "profit_target_pct": rules.profit_target_pct,
         "stop_loss_pct": rules.stop_loss_pct,
         "dte_close": rules.dte_close,
+        "thesis": rules.thesis,
     })
 }
 
@@ -737,7 +861,7 @@ pub fn option_group_from_tracked(tracked: &TrackedPosition) -> Option<OptionPosi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rules::{ExitRules, RulesConfig};
+    use crate::rules::{ExitRules, RulesConfig, ThesisExitRules};
 
     #[test]
     fn evaluate_exit_from_mark_profit_target() {
@@ -745,6 +869,7 @@ mod tests {
             profit_target_pct: 50.0,
             stop_loss_pct: 200.0,
             dte_close: 21,
+            thesis: Default::default(),
         };
         let rules = RulesConfig {
             version: 1,
@@ -845,6 +970,156 @@ mod tests {
         };
         let max_loss = infer_max_loss_from_group(&group).unwrap();
         assert!((max_loss - 352.0).abs() < 0.01);
+    }
+
+    fn thesis_rules() -> RulesConfig {
+        RulesConfig {
+            version: 1,
+            agent_id: "t".into(),
+            accounts: vec![],
+            schedule: Default::default(),
+            strategies: Default::default(),
+            watchlist: vec![],
+            entry_rules: Default::default(),
+            exit_rules: ExitRules {
+                profit_target_pct: 50.0,
+                stop_loss_pct: 200.0,
+                dte_close: 21,
+                thesis: ThesisExitRules {
+                    enabled: true,
+                    ..Default::default()
+                },
+            },
+            risk: Default::default(),
+            execution: Default::default(),
+            llm: Default::default(),
+            notify: Default::default(),
+            simulation: None,
+        }
+    }
+
+    #[test]
+    fn thesis_profit_giveback_triggers() {
+        let mut rules = thesis_rules();
+        rules.exit_rules.thesis.profit_giveback = Some(crate::rules::ProfitGivebackExit {
+            peak_profit_min_pct: 20.0,
+            exit_if_below_pct: 8.0,
+        });
+        let mark = SpreadMark {
+            entry_credit: 0.30,
+            debit_to_close: 0.28,
+            profit_pct: 6.0,
+            dte: 28,
+            source: "test".into(),
+        };
+        let analytics = SpreadAnalytics::default();
+        let exit = evaluate_thesis_exit(&rules, Some(0.30), &mark, &analytics, Some(24.0));
+        assert_eq!(
+            exit.as_ref().map(|e| e.reason.as_str()),
+            Some("thesis_profit_giveback")
+        );
+    }
+
+    #[test]
+    fn thesis_pop_deterioration_triggers() {
+        let mut rules = thesis_rules();
+        rules.exit_rules.thesis.min_pop_pct_exit = Some(55.0);
+        let mark = SpreadMark {
+            entry_credit: 0.30,
+            debit_to_close: 0.25,
+            profit_pct: 10.0,
+            dte: 28,
+            source: "test".into(),
+        };
+        let analytics = SpreadAnalytics {
+            spread_pop_pct: Some(52.0),
+            ..Default::default()
+        };
+        let exit = evaluate_thesis_exit(&rules, Some(0.30), &mark, &analytics, None);
+        assert_eq!(
+            exit.as_ref().map(|e| e.reason.as_str()),
+            Some("thesis_pop_deterioration")
+        );
+    }
+
+    #[test]
+    fn thesis_min_hold_skips_thesis_but_not_profit_target() {
+        let mut rules = thesis_rules();
+        rules.exit_rules.thesis.min_hold_minutes = Some(30);
+        rules.exit_rules.thesis.min_pop_pct_exit = Some(55.0);
+        let mark = SpreadMark {
+            entry_credit: 0.30,
+            debit_to_close: 0.25,
+            profit_pct: 10.0,
+            dte: 28,
+            source: "test".into(),
+        };
+        let analytics = SpreadAnalytics {
+            spread_pop_pct: Some(52.0),
+            short_strike_inside_1sigma: Some(true),
+            ..Default::default()
+        };
+        let opened = chrono::Utc::now() - chrono::Duration::minutes(5);
+        let exit = evaluate_all_exits(
+            &rules,
+            Some(0.30),
+            &mark,
+            Some(&analytics),
+            None,
+            Some(opened),
+        );
+        assert!(exit.is_none(), "thesis should wait for min hold");
+
+        let profit_mark = SpreadMark {
+            profit_pct: 55.0,
+            debit_to_close: 0.135,
+            ..mark.clone()
+        };
+        let profit_exit = evaluate_all_exits(
+            &rules,
+            Some(0.30),
+            &profit_mark,
+            Some(&analytics),
+            None,
+            Some(opened),
+        );
+        assert_eq!(
+            profit_exit.as_ref().map(|e| e.reason.as_str()),
+            Some("profit_target")
+        );
+    }
+
+    #[test]
+    fn candidate_fails_thesis_gates_on_pop_and_1sigma() {
+        let mut rules = thesis_rules();
+        rules.exit_rules.thesis.min_pop_pct_exit = Some(55.0);
+        rules.exit_rules.thesis.exit_short_inside_1sigma = false;
+        let low_pop = SpreadAnalytics {
+            spread_pop_pct: Some(50.0),
+            short_otm_pct: Some(5.0),
+            short_delta: Some(-0.20),
+            short_strike_inside_1sigma: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(
+            candidate_fails_thesis_gates(&rules, &low_pop),
+            Some("thesis_pop_deterioration")
+        );
+
+        let healthy = SpreadAnalytics {
+            spread_pop_pct: Some(70.0),
+            short_otm_pct: Some(5.0),
+            short_delta: Some(-0.20),
+            short_strike_inside_1sigma: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(candidate_fails_thesis_gates(&rules, &healthy), None);
+
+        rules.exit_rules.thesis.exit_short_inside_1sigma = true;
+        assert_eq!(
+            candidate_fails_thesis_gates(&rules, &healthy),
+            Some("thesis_inside_1sigma")
+        );
     }
 
     #[test]

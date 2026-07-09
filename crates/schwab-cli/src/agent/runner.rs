@@ -28,8 +28,8 @@ use crate::safety::{execute_trading_order, require_trading_approval};
 use crate::trade_audio::{self, TradeAudioEvent};
 
 use super::exits::{
-    evaluate_position_monitor, exit_signal_json_for_account, find_tracked_position,
-    option_group_from_tracked, reconcile_open_positions, stable_position_key,
+    candidate_fails_thesis_gates, evaluate_position_monitor, exit_signal_json_for_account,
+    find_tracked_position, option_group_from_tracked, reconcile_open_positions, stable_position_key,
 };
 use super::llm::OpenRouterClient;
 use super::market_context::{market_context_summary_for_llm, vertical_entry_market_context};
@@ -37,7 +37,10 @@ use super::spread_analytics::{analytics_from_json, entry_analytics_pass};
 use super::paths::{active_state_path, load_agent_state, load_sim_agent_state};
 use super::sim::{ensure_ledger, record_sim_entry, record_sim_exit};
 use super::schedule::{self, AgentSession};
-use super::state::{save_state, AgentState, PendingOrder, PendingOrderAction, TrackedPosition};
+use super::state::{
+    is_thesis_exit_reason, save_state, update_peak_profit_pct, AgentState, PendingOrder,
+    PendingOrderAction, RedeploySignal, TrackedPosition,
+};
 use super::telegram_format::{
     format_action_telegram, format_llm_review_telegram, format_market_open_telegram,
     format_overnight_telegram, record_llm_telegram_sent, should_send_llm_telegram,
@@ -249,6 +252,7 @@ pub async fn tick_once(
     state.tick_count += 1;
 
     check_auth_reminder(state, telegram).await;
+    maybe_clear_stale_redeploy(state);
 
     let mut result = TickResult {
         session: "unknown".into(),
@@ -296,11 +300,23 @@ pub async fn tick_once(
                 result
                     .skipped
                     .push("market open — full evaluation (mechanical exits + live marks)".into());
-                notify_at_open(telegram, state.open_playbook.as_ref()).await;
             }
             state.regular_tick_count += 1;
         }
     }
+
+    let prior_open_playbook = if result.at_open {
+        let pb = state.open_playbook.take();
+        notify_at_open(
+            telegram,
+            pb.as_ref(),
+            state.open_positions.len(),
+        )
+        .await;
+        pb
+    } else {
+        None
+    };
 
     let entries_paused = state.trades_capacity_used() >= rules.risk.max_trades_per_day;
     let blocked_events_active = !rules.risk.blocked_events.is_empty();
@@ -309,21 +325,33 @@ pub async fn tick_once(
     if runtime.simulate {
         let position_ids: Vec<String> = state.open_positions.keys().cloned().collect();
         for position_id in position_ids {
-            let Some(tracked) = state.open_positions.get(&position_id) else {
+            let Some(tracked) = state.open_positions.get(&position_id).cloned() else {
                 continue;
             };
-            let Some(group) = option_group_from_tracked(tracked) else {
+            let Some(group) = option_group_from_tracked(&tracked) else {
                 result.skipped.push(format!(
                     "simulate exit skip {position_id}: missing entry_params"
                 ));
                 continue;
             };
             let monitor =
-                evaluate_position_monitor(market, &group, rules, today, Some(tracked)).await?;
+                evaluate_position_monitor(market, &group, rules, today, Some(&tracked)).await?;
+            if let Some(profit) = monitor.mark.as_ref().map(|m| m.profit_pct) {
+                if let Some(p) = state.open_positions.get_mut(&position_id) {
+                    update_peak_profit_pct(p, profit);
+                }
+            }
             if !group.legs.is_empty() {
                 result.monitored_positions.push(monitor.snapshot);
             }
             if let Some(eval) = monitor.exit {
+                if is_thesis_exit_reason(&eval.reason) {
+                    state.redeploy_signal = Some(RedeploySignal {
+                        at: Utc::now(),
+                        reason: eval.reason.clone(),
+                        underlying: Some(tracked.underlying.clone()),
+                    });
+                }
                 let exit = exit_signal_json_for_account(&tracked.account_hash, &group, &eval);
                 result.signals.push(exit.clone());
                 if !runtime.dry_run {
@@ -356,15 +384,27 @@ pub async fn tick_once(
             for group in &groups {
                 let tracked = find_tracked_position(state, &account.hash, group);
                 let monitor = evaluate_position_monitor(market, group, rules, today, tracked).await?;
+                let position_id = stable_position_key(&account.hash, group);
+                if let Some(profit) = monitor.mark.as_ref().map(|m| m.profit_pct) {
+                    if let Some(p) = state.open_positions.get_mut(&position_id) {
+                        update_peak_profit_pct(p, profit);
+                    }
+                }
 
                 if !group.legs.is_empty() {
                     result.monitored_positions.push(monitor.snapshot);
                 }
 
                 if let Some(eval) = monitor.exit {
+                    if is_thesis_exit_reason(&eval.reason) {
+                        state.redeploy_signal = Some(RedeploySignal {
+                            at: Utc::now(),
+                            reason: eval.reason.clone(),
+                            underlying: Some(group.underlying.clone()),
+                        });
+                    }
                     let exit = exit_signal_json_for_account(&account.hash, group, &eval);
                     result.signals.push(exit.clone());
-                    let position_id = stable_position_key(&account.hash, group);
                     if state.has_pending_position(&position_id) {
                         result
                             .skipped
@@ -400,8 +440,27 @@ pub async fn tick_once(
             .skipped
             .push("entry scan skipped — all enabled accounts at max_open_positions".into());
     } else {
+        let scan_watchlist = watchlist_for_scan(rules, state);
+        if let Some(sig) = &state.redeploy_signal {
+            if let Some(u) = &sig.underlying {
+                if redeploy_cooldown_active(rules, sig) {
+                    let remaining = rules
+                        .exit_rules
+                        .thesis
+                        .redeploy_cooldown_minutes
+                        .unwrap_or(0) as i64
+                        - Utc::now().signed_duration_since(sig.at).num_minutes();
+                    result.skipped.push(format!(
+                        "redeploy cooldown — skip {} for ~{}m after {}",
+                        u.to_uppercase(),
+                        remaining.max(0),
+                        sig.reason
+                    ));
+                }
+            }
+        }
         for account in rules.enabled_accounts() {
-            for underlying in &rules.watchlist {
+            for underlying in &scan_watchlist {
                 let sym = underlying.to_uppercase();
                 if !rules.risk.allowed_underlyings.is_empty()
                     && !rules
@@ -457,11 +516,25 @@ pub async fn tick_once(
     let mut llm_close_ids: Vec<String> = Vec::new();
     let has_candidates = !pending_entries.is_empty();
     let has_positions = !result.monitored_positions.is_empty();
+    let mechanical_alert =
+        mechanical_alert_from_monitored(&result.monitored_positions, rules.exit_rules.dte_close);
 
     if let Some(client) = llm_client {
-        if let Some(phase) = resolve_llm_phase(rules, state, has_candidates, has_positions) {
+        if let Some(phase) = resolve_llm_phase(
+            rules,
+            state,
+            has_candidates,
+            has_positions,
+            result.at_open,
+            mechanical_alert,
+        ) {
             let use_web =
                 should_use_web_research(rules, state) && matches!(phase, LlmPhase::Selection);
+
+            let open_playbook_for_llm = match phase {
+                LlmPhase::Monitor if result.at_open => prior_open_playbook.as_ref(),
+                _ => None,
+            };
 
             let context = json!({
                 "agent_id": rules.agent_id,
@@ -472,10 +545,12 @@ pub async fn tick_once(
                     LlmPhase::Monitor => "monitor",
                     LlmPhase::OvernightDigest => "overnight_digest",
                 },
+                "at_open": result.at_open,
+                "mechanical_alert": mechanical_alert,
                 "market": market_context_summary_for_llm(),
                 "exit_rules": super::exits::exit_rules_summary(&rules.exit_rules),
                 "open_positions": result.monitored_positions,
-                "open_playbook": state.open_playbook,
+                "open_playbook": open_playbook_for_llm,
                 "candidate_entries": pending_entries.iter().map(|(_, _, s)| s).collect::<Vec<_>>(),
                 "recent_signals": result.signals,
                 "watchlist": rules.watchlist,
@@ -952,7 +1027,7 @@ fn track_filled_entry_from_pending(state: &mut AgentState, detail: &Value, pendi
     state
         .open_positions
         .entry(pending.position_id.clone())
-        .or_insert(TrackedPosition {
+        .or_insert_with(|| TrackedPosition {
             position_id: pending.position_id.clone(),
             account_hash: pending.account_hash.clone(),
             underlying,
@@ -963,15 +1038,68 @@ fn track_filled_entry_from_pending(state: &mut AgentState, detail: &Value, pendi
             max_loss_usd: pending.reserved_risk_usd,
             contracts,
             entry_params: None,
+            peak_profit_pct: None,
+            entry_pop_pct: signal
+                .pointer("/market_context/spread_pop_pct")
+                .and_then(|v| v.as_f64()),
+            entry_short_delta: signal
+                .pointer("/market_context/short_delta")
+                .and_then(|v| v.as_f64())
+                .map(f64::abs),
         });
 }
 
-async fn notify_at_open(telegram: Option<&TelegramNotifier>, playbook: Option<&Value>) {
+fn watchlist_for_scan(rules: &RulesConfig, state: &AgentState) -> Vec<String> {
+    let mut wl = rules.watchlist.clone();
+    if let Some(sig) = &state.redeploy_signal {
+        if let Some(u) = &sig.underlying {
+            let key = u.to_uppercase();
+            if redeploy_cooldown_active(rules, sig) {
+                wl.retain(|s| !s.eq_ignore_ascii_case(&key));
+            } else {
+                wl.retain(|s| !s.eq_ignore_ascii_case(&key));
+                wl.insert(0, key);
+            }
+        }
+    }
+    wl
+}
+
+fn redeploy_cooldown_active(rules: &RulesConfig, sig: &RedeploySignal) -> bool {
+    let cooldown = rules
+        .exit_rules
+        .thesis
+        .redeploy_cooldown_minutes
+        .unwrap_or(0);
+    if cooldown == 0 {
+        return false;
+    }
+    Utc::now().signed_duration_since(sig.at).num_minutes() < cooldown as i64
+}
+
+fn maybe_clear_stale_redeploy(state: &mut AgentState) {
+    let Some(sig) = &state.redeploy_signal else {
+        return;
+    };
+    if Utc::now().signed_duration_since(sig.at).num_hours() >= 4 {
+        state.redeploy_signal = None;
+    }
+}
+
+fn clear_redeploy_after_entry(state: &mut AgentState) {
+    state.redeploy_signal = None;
+}
+
+async fn notify_at_open(
+    telegram: Option<&TelegramNotifier>,
+    playbook: Option<&Value>,
+    open_position_count: usize,
+) {
     let Some(tg) = telegram else { return };
     if !tg.wants_actions() {
         return;
     }
-    let body = format_market_open_telegram(playbook);
+    let body = format_market_open_telegram(playbook, open_position_count);
     let _ = tg.send(&body).await;
 }
 
@@ -1011,11 +1139,16 @@ fn resolve_llm_phase(
     state: &AgentState,
     has_candidates: bool,
     has_positions: bool,
+    at_open: bool,
+    mechanical_alert: bool,
 ) -> Option<LlmPhase> {
     if !rules.llm.enabled {
         return None;
     }
     if !has_candidates && !has_positions {
+        return None;
+    }
+    if at_open && !has_candidates && !mechanical_alert {
         return None;
     }
     if !should_run_llm_review(rules, state, has_positions) {
@@ -1025,6 +1158,31 @@ fn resolve_llm_phase(
         return Some(LlmPhase::Selection);
     }
     Some(LlmPhase::Monitor)
+}
+
+/// True when live marks show a mechanical exit threshold is near or breached.
+fn mechanical_alert_from_monitored(monitored_positions: &[Value], dte_close: u32) -> bool {
+    monitored_positions.iter().any(|pos| {
+        if let Some(rules) = pos.get("mechanical_rules") {
+            if rules
+                .get("stop_triggered")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                return true;
+            }
+            if rules
+                .get("profit_target_triggered")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                return true;
+            }
+        }
+        pos.get("dte")
+            .and_then(|v| v.as_i64())
+            .is_some_and(|dte| dte <= dte_close as i64)
+    })
 }
 
 fn any_entry_slots_available(rules: &RulesConfig, state: &AgentState) -> bool {
@@ -1172,6 +1330,9 @@ async fn evaluate_vertical_entry(
     let analytics = analytics_from_json(market_context.get("analytics").unwrap_or(&json!({})));
     if let Some(ref a) = analytics {
         if !entry_analytics_pass(entry, a) {
+            return Ok(None);
+        }
+        if candidate_fails_thesis_gates(rules, a).is_some() {
             return Ok(None);
         }
     }
@@ -1738,9 +1899,18 @@ async fn maybe_execute_entry(
                 max_loss_usd: margin,
                 contracts: order_contracts,
                 entry_params: None,
+                peak_profit_pct: None,
+                entry_pop_pct: signal
+                    .pointer("/market_context/spread_pop_pct")
+                    .and_then(|v| v.as_f64()),
+                entry_short_delta: signal
+                    .pointer("/market_context/short_delta")
+                    .and_then(|v| v.as_f64())
+                    .map(f64::abs),
             },
         );
     }
+    clear_redeploy_after_entry(state);
     state.record_action("entry", signal.clone());
 
     Ok(Some(json!({
@@ -1939,6 +2109,9 @@ mod llm_schedule_tests {
                 max_loss_usd: 170.0,
                 contracts: 1,
                 entry_params: None,
+                peak_profit_pct: None,
+                entry_pop_pct: None,
+                entry_short_delta: None,
             },
         );
         state
@@ -1951,11 +2124,11 @@ mod llm_schedule_tests {
         state.regular_tick_count = 100;
         state.last_llm_review_tick = Some(95);
 
-        assert!(resolve_llm_phase(&rules, &state, true, true).is_none());
+        assert!(resolve_llm_phase(&rules, &state, true, true, false, false).is_none());
 
         state.regular_tick_count = 125;
         assert!(matches!(
-            resolve_llm_phase(&rules, &state, true, true),
+            resolve_llm_phase(&rules, &state, true, true, false, false),
             Some(LlmPhase::Selection)
         ));
     }
@@ -1968,9 +2141,40 @@ mod llm_schedule_tests {
         state.last_llm_review_tick = Some(95);
 
         assert!(matches!(
-            resolve_llm_phase(&rules, &state, false, true),
+            resolve_llm_phase(&rules, &state, false, true, false, false),
             Some(LlmPhase::Monitor)
         ));
+    }
+
+    #[test]
+    fn monitor_skipped_at_open_without_candidates_or_mechanical_alert() {
+        let rules = test_rules(2);
+        let mut state = state_with_open_position();
+        state.regular_tick_count = 125;
+        state.last_llm_review_tick = Some(95);
+
+        assert!(resolve_llm_phase(&rules, &state, false, true, true, false).is_none());
+    }
+
+    #[test]
+    fn monitor_runs_at_open_when_mechanical_alert() {
+        let rules = test_rules(2);
+        let mut state = state_with_open_position();
+        state.regular_tick_count = 125;
+        state.last_llm_review_tick = Some(95);
+
+        assert!(matches!(
+            resolve_llm_phase(&rules, &state, false, true, true, true),
+            Some(LlmPhase::Monitor)
+        ));
+    }
+
+    #[test]
+    fn mechanical_alert_detects_stop_triggered() {
+        let monitored = vec![json!({
+            "mechanical_rules": { "stop_triggered": true }
+        })];
+        assert!(mechanical_alert_from_monitored(&monitored, 21));
     }
 
     #[test]
@@ -1978,6 +2182,28 @@ mod llm_schedule_tests {
         let rules = test_rules(1);
         let state = state_with_open_position();
         assert!(!any_entry_slots_available(&rules, &state));
+    }
+
+    #[test]
+    fn redeploy_cooldown_removes_underlying_from_scan() {
+        let mut rules = test_rules(2);
+        rules.exit_rules.thesis.redeploy_cooldown_minutes = Some(120);
+        let mut state = AgentState::default();
+        state.redeploy_signal = Some(RedeploySignal {
+            at: Utc::now(),
+            reason: "thesis_near_strike".into(),
+            underlying: Some("IWM".into()),
+        });
+        let wl = watchlist_for_scan(&rules, &state);
+        assert!(!wl.iter().any(|s| s.eq_ignore_ascii_case("IWM")));
+
+        state.redeploy_signal = Some(RedeploySignal {
+            at: Utc::now() - chrono::Duration::minutes(121),
+            reason: "thesis_near_strike".into(),
+            underlying: Some("IWM".into()),
+        });
+        let wl = watchlist_for_scan(&rules, &state);
+        assert_eq!(wl.first().map(String::as_str), Some("IWM"));
     }
 
     #[test]

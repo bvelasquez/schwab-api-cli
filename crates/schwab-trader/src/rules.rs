@@ -245,6 +245,41 @@ pub struct PositionSizeConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProfitGivebackExit {
+    pub peak_profit_min_pct: f64,
+    pub exit_if_below_pct: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThesisExitConfig {
+    pub enabled: bool,
+    pub profit_giveback: Option<ProfitGivebackExit>,
+    pub exit_if_below_sma: Vec<u32>,
+    /// Require peak unrealized profit before SMA-based thesis exit.
+    pub exit_if_below_sma_min_peak_profit_pct: f64,
+    /// Exit when RS vs benchmark falls below this (same scale as entry filter).
+    pub exit_on_rs_deterioration_below: Option<f64>,
+    /// Exit open winners when regime profile is in this list.
+    pub regime_exit_profiles: Vec<String>,
+    pub regime_exit_min_profit_pct: f64,
+}
+
+impl Default for ThesisExitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            profit_giveback: None,
+            exit_if_below_sma: Vec::new(),
+            exit_if_below_sma_min_peak_profit_pct: 5.0,
+            exit_on_rs_deterioration_below: None,
+            regime_exit_profiles: Vec::new(),
+            regime_exit_min_profit_pct: 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExitConfig {
     pub profit_target_pct: f64,
@@ -257,6 +292,7 @@ pub struct ExitConfig {
     /// Intraday max hold in minutes (0 = use closure rules only).
     pub time_stop_minutes: u32,
     pub tighten_on_earnings_within_days: u32,
+    pub thesis: ThesisExitConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -653,6 +689,7 @@ impl Default for ExitConfig {
             time_stop_days: 30,
             time_stop_minutes: 0,
             tighten_on_earnings_within_days: 3,
+            thesis: ThesisExitConfig::default(),
         }
     }
 }

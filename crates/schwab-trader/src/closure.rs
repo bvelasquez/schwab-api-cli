@@ -42,6 +42,7 @@ pub fn entry_block_reason(rules: &TraderRules) -> Option<String> {
 /// Manual flatten reasons (cancel OCO first). Stop/target are handled by broker OCO.
 pub fn is_manual_exit_reason(reason: &str) -> bool {
     matches!(reason, "time_stop" | "eod_flatten" | "overnight_flatten")
+        || crate::thesis_exit::is_thesis_exit_reason(reason)
 }
 
 /// True when a live Schwab OCO is working. Sim positions use `None` or `"simulated"`.
@@ -166,13 +167,28 @@ pub async fn process_closure_exits(
 
         if let Some(p) = state.open_positions.get_mut(&pos_id) {
             p.market_value_usd = p.quantity * last.max(pos.entry_price);
+            crate::thesis_exit::update_peak_profit_pct(p, last);
         }
 
-        let Some(reason) = exit_reason_for_position(rules, &pos, last) else {
+        let snap = fetch_technical_snapshot(market, rules, &symbol).await?;
+        let regime_class = state
+            .last_regime
+            .as_ref()
+            .and_then(|r| r.get("class"))
+            .and_then(|v| v.as_str());
+        let pos = state.open_positions.get(&pos_id).cloned().unwrap_or(pos);
+
+        let reason = crate::thesis_exit::thesis_exit_reason(rules, &pos, last, &snap, regime_class)
+            .map(str::to_string)
+            .or_else(|| {
+                exit_reason_for_position(rules, &pos, last).map(str::to_string)
+            });
+
+        let Some(reason) = reason else {
             continue;
         };
 
-        if !is_manual_exit_reason(reason) {
+        if !is_manual_exit_reason(&reason) {
             continue;
         }
 
@@ -184,12 +200,19 @@ pub async fn process_closure_exits(
             account_hash,
             &pos,
             exit_price,
-            reason,
+            &reason,
         )
         .await?;
 
         state.open_positions.remove(&pos_id);
         state.closed_trades_since_learn += 1;
+        if crate::thesis_exit::is_thesis_exit_reason(&reason) {
+            state.redeploy_signal = Some(crate::agent::state::RedeploySignal {
+                at: Utc::now(),
+                reason: reason.clone(),
+                underlying: Some(pos.symbol.clone()),
+            });
+        }
         exits.push(json!({
             "symbol": pos.symbol,
             "exit_reason": reason,
@@ -585,6 +608,7 @@ mod tests {
             market_value_usd: 1000.0,
             oco_order_id: Some("123".into()),
             exit_plan_version: 1,
+            ..Default::default()
         };
         assert!(exit_reason_for_position(&rules, &pos, 95.0).is_none());
         assert!(exit_reason_for_position(&rules, &pos, 110.0).is_none());
@@ -606,6 +630,7 @@ mod tests {
             market_value_usd: 1000.0,
             oco_order_id: None,
             exit_plan_version: 1,
+            ..Default::default()
         };
         // Opened today — min_days=2 should block time_stop
         assert!(exit_reason_for_position(&rules, &pos, 100.0).is_none());

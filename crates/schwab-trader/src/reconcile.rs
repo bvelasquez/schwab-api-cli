@@ -180,6 +180,8 @@ pub async fn reconcile_tick(
                 market_value_usd: live_pos.market_value,
                 oco_order_id: None,
                 exit_plan_version: 1,
+                peak_profit_pct: None,
+                entry_rs_vs_benchmark_30d: None,
             },
         );
         state.unbracketed_positions.insert(
@@ -379,6 +381,8 @@ async fn adopt_filled_buy(
             market_value_usd: filled_qty * entry_price,
             oco_order_id,
             exit_plan_version: 1,
+            peak_profit_pct: None,
+            entry_rs_vs_benchmark_30d: None,
         },
     );
     state.trades_today += 1;

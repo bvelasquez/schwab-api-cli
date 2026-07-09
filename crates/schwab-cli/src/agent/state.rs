@@ -52,6 +52,17 @@ pub struct AgentState {
     /// Paper-trading ledger when running with --simulate (separate state file).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sim: Option<crate::agent::sim::SimLedger>,
+    /// Set after a thesis-driven exit — prioritizes redeploy scan on this underlying.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redeploy_signal: Option<RedeploySignal>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedeploySignal {
+    pub at: DateTime<Utc>,
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub underlying: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +81,44 @@ pub struct TrackedPosition {
     /// Strategy params for sim marks / vertical reconstruction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry_params: Option<Value>,
+    /// Peak unrealized profit % observed while open (thesis giveback exits).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_profit_pct: Option<f64>,
+    /// POP % at entry (from chain analytics).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_pop_pct: Option<f64>,
+    /// |short_delta| at entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_short_delta: Option<f64>,
+}
+
+pub fn update_peak_profit_pct(position: &mut TrackedPosition, profit_pct: f64) {
+    let peak = position.peak_profit_pct.unwrap_or(profit_pct);
+    position.peak_profit_pct = Some(peak.max(profit_pct));
+}
+
+pub fn is_thesis_exit_reason(reason: &str) -> bool {
+    reason.starts_with("thesis_")
+}
+
+impl Default for TrackedPosition {
+    fn default() -> Self {
+        Self {
+            position_id: String::new(),
+            account_hash: String::new(),
+            underlying: String::new(),
+            expiry: String::new(),
+            strategy: String::new(),
+            opened_at: Utc::now(),
+            entry_credit: None,
+            max_loss_usd: 0.0,
+            contracts: 1,
+            entry_params: None,
+            peak_profit_pct: None,
+            entry_pop_pct: None,
+            entry_short_delta: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -276,6 +325,7 @@ mod tests {
                 max_loss_usd: 175.0,
                 contracts: 1,
                 entry_params: None,
+                ..Default::default()
             },
         );
         state.add_pending_order(PendingOrder {

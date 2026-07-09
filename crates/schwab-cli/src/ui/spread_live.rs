@@ -601,6 +601,7 @@ mod tests {
             max_loss_usd: 200.0,
             contracts: 2,
             entry_params: None,
+            ..Default::default()
         };
         let analytics = compute_vertical_analytics(VerticalAnalyticsInput {
             is_put_spread: true,
@@ -649,6 +650,7 @@ mod tests {
             max_loss_usd: 136.0,
             contracts: 2,
             entry_params: None,
+            ..Default::default()
         };
         let analytics = compute_vertical_analytics(VerticalAnalyticsInput {
             is_put_spread: true,

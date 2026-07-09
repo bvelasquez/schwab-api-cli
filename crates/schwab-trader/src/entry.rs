@@ -728,9 +728,15 @@ pub async fn attempt_entry(
             market_value_usd: filled_qty * fill_price,
             oco_order_id,
             exit_plan_version: 1,
+            peak_profit_pct: None,
+            entry_rs_vs_benchmark_30d: snap
+                .history_features
+                .as_ref()
+                .and_then(|h| h.rs_vs_benchmark_30d_pct),
         },
     );
     state.trades_today += 1;
+    state.redeploy_signal = None;
     save_state(rules_path, state)?;
 
     journal::append_event(
