@@ -70,6 +70,7 @@ fn oco_present_skips_quote_stop() {
         market_value_usd: 500.0,
         oco_order_id: Some("999".into()),
         exit_plan_version: 1,
+        ..Default::default()
     };
     assert!(exit_reason_for_position(&rules, &pos, 90.0).is_none());
 }

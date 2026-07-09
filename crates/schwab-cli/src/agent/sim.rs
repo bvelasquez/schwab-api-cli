@@ -256,6 +256,14 @@ pub fn record_sim_entry(
             max_loss_usd: margin,
             contracts,
             entry_params: Some(params.clone()),
+            peak_profit_pct: None,
+            entry_pop_pct: signal
+                .pointer("/market_context/spread_pop_pct")
+                .and_then(|v| v.as_f64()),
+            entry_short_delta: signal
+                .pointer("/market_context/short_delta")
+                .and_then(|v| v.as_f64())
+                .map(f64::abs),
         },
     );
 
@@ -356,8 +364,6 @@ pub fn analysis_report(state: &AgentState, rules: &RulesConfig) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn spread_pnl_from_credit_and_debit() {
         let pnl_per: f64 = (1.0 - 0.4) * 100.0;

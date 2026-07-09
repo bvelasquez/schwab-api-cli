@@ -442,6 +442,7 @@ async fn tick_regular(
 ) -> Result<Value> {
     let at_open = transition.just_opened;
     state.regular_tick_count += 1;
+    maybe_clear_stale_redeploy(state);
     let profile_before = state.active_profile.clone();
     let halted_before = state.trading_halted_reason.clone();
     let prior_playbook = if at_open {
@@ -453,7 +454,13 @@ async fn tick_regular(
     if at_open {
         // Overnight digest text often says "market closed" — drop it at the open.
         state.open_playbook = None;
-        notify::notify_at_open(telegram, rules, prior_playbook.as_ref()).await;
+        notify::notify_at_open(
+            telegram,
+            rules,
+            prior_playbook.as_ref(),
+            state.open_positions.len(),
+        )
+        .await;
     }
 
     let reconcile_report = reconcile_tick(
@@ -493,6 +500,7 @@ async fn tick_regular(
     }
 
     let mut scan = run_scan_inner(market, &tick_rules, state).await?;
+    prioritise_scan_for_redeploy(&mut scan, state.redeploy_signal.as_ref());
     let capital = compute_capital_check(
         api,
         &tick_rules,
@@ -510,6 +518,7 @@ async fn tick_regular(
         .and_then(|v| v.as_array())
         .is_some_and(|a| !a.is_empty());
     let has_positions = !state.open_positions.is_empty();
+    let mechanical_alert = !closure_exits.is_empty();
 
     let mut llm_review: Option<TraderLlmReview> = None;
     let mut llm_summary = None;
@@ -518,9 +527,14 @@ async fn tick_regular(
     let mut web_picks_added = 0u32;
 
     if let Some(client) = llm_client {
-        if let Some((phase, model, use_web)) =
-            resolve_regular_llm_phase(&tick_rules, state, has_candidates, has_positions)
-        {
+        if let Some((phase, model, use_web)) = resolve_regular_llm_phase(
+            &tick_rules,
+            state,
+            has_candidates,
+            has_positions,
+            at_open,
+            mechanical_alert,
+        ) {
             llm_phase = Some(phase);
             let context = llm_context_with_feeds(
                 &tick_rules,
@@ -530,6 +544,7 @@ async fn tick_regular(
                     "session": "regular",
                     "regular_tick": state.regular_tick_count,
                     "at_open": at_open,
+                    "mechanical_alert": mechanical_alert,
                     "market_clock": crate::market_session::market_clock_json(&tick_rules),
                     "playbook_style": tick_rules.playbook.style,
                     "adaptable_playbook": crate::learn::adaptable_playbook_snapshot(&tick_rules),
@@ -537,7 +552,11 @@ async fn tick_regular(
                     "active_profile": state.active_profile,
                     "active_profile_reason": state.active_profile_reason,
                     "regime": regime.to_json(),
-                    "overnight_digest_snapshot": state.open_playbook,
+                    "overnight_digest_snapshot": if at_open {
+                        prior_playbook.as_ref()
+                    } else {
+                        None
+                    },
                     "capital_check": capital_check_to_json(&capital),
                     "scan": scan,
                     "open_positions": state.open_positions,
@@ -587,6 +606,7 @@ async fn tick_regular(
 
     if web_picks_added > 0 {
         scan = run_scan_inner(market, &tick_rules, state).await?;
+        prioritise_scan_for_redeploy(&mut scan, state.redeploy_signal.as_ref());
     }
 
     let mut entry_attempts = Vec::new();
@@ -823,6 +843,8 @@ fn resolve_regular_llm_phase<'a>(
     state: &TraderState,
     has_candidates: bool,
     has_positions: bool,
+    at_open: bool,
+    mechanical_alert: bool,
 ) -> Option<(&'static str, &'a str, bool)> {
     if !rules.llm.enabled {
         return None;
@@ -845,6 +867,10 @@ fn resolve_regular_llm_phase<'a>(
         return Some((phase, model, use_web));
     }
 
+    if at_open && !mechanical_alert {
+        return None;
+    }
+
     if has_positions
         && should_run_monitor_review(
             state.regular_tick_count,
@@ -856,6 +882,34 @@ fn resolve_regular_llm_phase<'a>(
     }
 
     None
+}
+
+fn prioritise_scan_for_redeploy(scan: &mut Value, redeploy: Option<&crate::agent::state::RedeploySignal>) {
+    let Some(sig) = redeploy else { return };
+    let Some(sym) = sig.underlying.as_deref() else { return };
+    let Some(candidates) = scan.get_mut("candidates").and_then(|v| v.as_array_mut()) else {
+        return;
+    };
+    candidates.sort_by(|a, b| {
+        let a_pri = a
+            .get("symbol")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| s.eq_ignore_ascii_case(sym));
+        let b_pri = b
+            .get("symbol")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| s.eq_ignore_ascii_case(sym));
+        b_pri.cmp(&a_pri)
+    });
+}
+
+fn maybe_clear_stale_redeploy(state: &mut TraderState) {
+    let Some(sig) = &state.redeploy_signal else {
+        return;
+    };
+    if Utc::now().signed_duration_since(sig.at).num_hours() >= 4 {
+        state.redeploy_signal = None;
+    }
 }
 
 fn apply_web_picks(state: &mut TraderState, rules: &TraderRules, review: &TraderLlmReview) -> u32 {

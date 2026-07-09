@@ -76,6 +76,17 @@ pub struct TraderState {
     pub sizing_max_pct_binding_streak: u32,
     #[serde(default)]
     pub sizing_redundant_risk_warned: bool,
+    /// After a thesis exit — prioritize scan on this symbol for redeploy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redeploy_signal: Option<RedeploySignal>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedeploySignal {
+    pub at: DateTime<Utc>,
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub underlying: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,6 +105,10 @@ pub struct SwingPosition {
     pub oco_order_id: Option<String>,
     #[serde(default)]
     pub exit_plan_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_profit_pct: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_rs_vs_benchmark_30d: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,6 +129,27 @@ pub struct PendingBuy {
     pub symbol: String,
     pub estimated_cost_usd: f64,
     pub submitted_at: DateTime<Utc>,
+}
+
+impl Default for SwingPosition {
+    fn default() -> Self {
+        Self {
+            position_id: String::new(),
+            symbol: String::new(),
+            account_hash: String::new(),
+            quantity: 0.0,
+            entry_price: 0.0,
+            opened_at: Utc::now(),
+            stop_price: 0.0,
+            profit_limit: 0.0,
+            stop_risk_usd: 0.0,
+            market_value_usd: 0.0,
+            oco_order_id: None,
+            exit_plan_version: 1,
+            peak_profit_pct: None,
+            entry_rs_vs_benchmark_30d: None,
+        }
+    }
 }
 
 impl TraderState {

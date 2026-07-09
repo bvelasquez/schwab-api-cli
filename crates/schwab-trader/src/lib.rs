@@ -23,5 +23,6 @@ pub mod rules;
 pub mod sim;
 pub mod sources;
 pub mod technical;
+pub mod thesis_exit;
 pub mod ui;
 pub mod watchlist;

@@ -226,31 +226,45 @@ pub async fn notify_at_open(
     tg: Option<&TelegramNotifier>,
     rules: &TraderRules,
     playbook: Option<&Value>,
+    open_position_count: usize,
 ) {
     let Some(tg) = tg else { return };
     if !tg.wants_actions() {
         return;
     }
-    let Some(pb) = playbook else { return };
-    let commentary = pb
-        .get("market_commentary")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if commentary.is_empty() {
-        return;
+    if let Some(pb) = playbook {
+        let commentary = pb
+            .get("market_commentary")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if !commentary.is_empty() {
+            let preview: String = commentary.chars().take(400).collect();
+            let suffix = if commentary.chars().count() > 400 {
+                "…"
+            } else {
+                ""
+            };
+            let _ = tg
+                .send(&format!(
+                    "schwab-trader [{}]\nMARKET OPEN\n{preview}{suffix}",
+                    rules.trader_id
+                ))
+                .await;
+            return;
+        }
     }
-    let preview: String = commentary.chars().take(400).collect();
-    let suffix = if commentary.chars().count() > 400 {
-        "…"
-    } else {
-        ""
-    };
-    let _ = tg
-        .send(&format!(
-            "schwab-trader [{}]\nMARKET OPEN\n{preview}{suffix}",
+    let body = if open_position_count > 0 {
+        format!(
+            "schwab-trader [{}]\nMARKET OPEN\n{open_position_count} open position(s) — mechanical rules active.",
             rules.trader_id
-        ))
-        .await;
+        )
+    } else {
+        format!(
+            "schwab-trader [{}]\nMARKET OPEN\nFlat — scanning for entries.",
+            rules.trader_id
+        )
+    };
+    let _ = tg.send(&body).await;
 }
 
 pub async fn notify_llm_alerts(

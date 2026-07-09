@@ -120,9 +120,15 @@ pub fn format_overnight_telegram(review: &LlmReview) -> String {
     msg
 }
 
-pub fn format_market_open_telegram(playbook: Option<&Value>) -> String {
+pub fn format_market_open_telegram(playbook: Option<&Value>, open_position_count: usize) -> String {
     let Some(pb) = playbook else {
-        return "Market is open. Your agent is watching open positions.".into();
+        return if open_position_count > 0 {
+            format!(
+                "Market is open. Mechanical exits active on {open_position_count} open position(s)."
+            )
+        } else {
+            "Market is open. Scanning for entries.".into()
+        };
     };
     let mut out = "Market is open.\n\n".to_string();
     if let Some(positions) = pb.get("positions").and_then(|v| v.as_array()) {
@@ -175,6 +181,7 @@ pub fn format_action_telegram(kind: &str, detail: &Value) -> Option<String> {
             "profit_target" => "profit target hit",
             "stop_loss" => "stop loss hit",
             "dte_close" => "approaching expiration",
+            r if r.starts_with("thesis_") => "thesis deterioration (mechanical exit)",
             "llm_recommendation" => "advisor recommendation",
             other => other,
         };

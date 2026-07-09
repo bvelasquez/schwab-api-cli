@@ -161,6 +161,8 @@ pub fn record_sim_entry_at(
             // No broker OCO in sim — brackets evaluated from quotes each tick.
             oco_order_id: None,
             exit_plan_version: 1,
+            peak_profit_pct: None,
+            entry_rs_vs_benchmark_30d: None,
         },
     );
     Ok(())
@@ -279,17 +281,37 @@ pub async fn process_sim_exits(
 
         if let Some(p) = state.open_positions.get_mut(&pos_id) {
             p.market_value_usd = p.quantity * last;
+            crate::thesis_exit::update_peak_profit_pct(p, last);
         }
 
-        let hold_minutes = (Utc::now() - pos.opened_at).num_minutes().max(0) as u32;
-        let hold_days = (Utc::now() - pos.opened_at).num_days().max(0) as u32;
-        let exit_reason = exit_reason_for_position(rules, &pos, last);
+        let snap = crate::technical::fetch_technical_snapshot(market, rules, &symbol).await?;
+        let pos = state.open_positions.get(&pos_id).cloned().unwrap_or(pos);
+        let exit_reason = crate::thesis_exit::thesis_exit_reason(
+            rules,
+            &pos,
+            last,
+            &snap,
+            regime_class.as_deref(),
+        )
+        .map(str::to_string)
+        .or_else(|| exit_reason_for_position(rules, &pos, last).map(str::to_string));
 
         let Some(reason) = exit_reason else {
             continue;
         };
 
-        let exit_price = sim_fill_price(reason, &pos, last);
+        if crate::thesis_exit::is_thesis_exit_reason(&reason) {
+            state.redeploy_signal = Some(crate::agent::state::RedeploySignal {
+                at: Utc::now(),
+                reason: reason.clone(),
+                underlying: Some(pos.symbol.clone()),
+            });
+        }
+
+        let hold_minutes = (Utc::now() - pos.opened_at).num_minutes().max(0) as u32;
+        let hold_days = (Utc::now() - pos.opened_at).num_days().max(0) as u32;
+
+        let exit_price = sim_fill_price(&reason, &pos, last);
         let proceeds = pos.quantity * exit_price;
         let pnl = proceeds - (pos.quantity * pos.entry_price);
         let pnl_pct = if pos.entry_price > 0.0 {
@@ -522,6 +544,7 @@ mod tests {
             market_value_usd: 1000.0,
             oco_order_id: None,
             exit_plan_version: 1,
+            ..Default::default()
         };
         assert_eq!(
             exit_reason_for_position(&rules, &pos, 95.0),
@@ -548,6 +571,7 @@ mod tests {
             market_value_usd: 100.0,
             oco_order_id: None,
             exit_plan_version: 1,
+            ..Default::default()
         };
         assert!((sim_fill_price("stop_loss", &pos, 90.0) - 90.0).abs() < 0.01);
         assert!((sim_fill_price("profit_target", &pos, 110.0) - 110.0).abs() < 0.01);

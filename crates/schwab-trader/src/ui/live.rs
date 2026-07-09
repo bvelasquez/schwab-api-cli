@@ -400,6 +400,7 @@ mod tests {
             market_value_usd: 0.0,
             oco_order_id: Some("simulated".into()),
             exit_plan_version: 1,
+            ..Default::default()
         };
         let q = QuoteTick {
             symbol: "AMD".into(),
