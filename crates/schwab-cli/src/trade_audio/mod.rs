@@ -1,6 +1,7 @@
 //! Spoken trade-event cues — embedded MP3s played via macOS `afplay`.
 
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
@@ -49,22 +50,23 @@ const ALL_EVENTS: [TradeAudioEvent; 15] = [
 
 impl TradeAudioEvent {
     fn asset(self) -> (&'static str, &'static [u8]) {
+        // Packaged under crates/schwab-cli/assets so cargo publish includes them.
         match self {
-            Self::EntryOpened => ("entry_opened", include_bytes!("../../../../assets/trade-audio/entry_opened.mp3")),
-            Self::EntryWorking => ("entry_working", include_bytes!("../../../../assets/trade-audio/entry_working.mp3")),
-            Self::EntryDeferred => ("entry_deferred", include_bytes!("../../../../assets/trade-audio/entry_deferred.mp3")),
-            Self::EntryRejected => ("entry_rejected", include_bytes!("../../../../assets/trade-audio/entry_rejected.mp3")),
-            Self::EntryCancelled => ("entry_cancelled", include_bytes!("../../../../assets/trade-audio/entry_cancelled.mp3")),
-            Self::ExitProfit => ("exit_profit", include_bytes!("../../../../assets/trade-audio/exit_profit.mp3")),
-            Self::ExitStop => ("exit_stop", include_bytes!("../../../../assets/trade-audio/exit_stop.mp3")),
-            Self::ExitTime => ("exit_time", include_bytes!("../../../../assets/trade-audio/exit_time.mp3")),
-            Self::ExitEod => ("exit_eod", include_bytes!("../../../../assets/trade-audio/exit_eod.mp3")),
-            Self::ExitOvernight => ("exit_overnight", include_bytes!("../../../../assets/trade-audio/exit_overnight.mp3")),
-            Self::ExitDte => ("exit_dte", include_bytes!("../../../../assets/trade-audio/exit_dte.mp3")),
-            Self::ExitAdvisor => ("exit_advisor", include_bytes!("../../../../assets/trade-audio/exit_advisor.mp3")),
-            Self::ExitBracket => ("exit_bracket", include_bytes!("../../../../assets/trade-audio/exit_bracket.mp3")),
-            Self::AlertHalted => ("alert_halted", include_bytes!("../../../../assets/trade-audio/alert_halted.mp3")),
-            Self::AlertRisk => ("alert_risk", include_bytes!("../../../../assets/trade-audio/alert_risk.mp3")),
+            Self::EntryOpened => ("entry_opened", include_bytes!("../../assets/trade-audio/entry_opened.mp3")),
+            Self::EntryWorking => ("entry_working", include_bytes!("../../assets/trade-audio/entry_working.mp3")),
+            Self::EntryDeferred => ("entry_deferred", include_bytes!("../../assets/trade-audio/entry_deferred.mp3")),
+            Self::EntryRejected => ("entry_rejected", include_bytes!("../../assets/trade-audio/entry_rejected.mp3")),
+            Self::EntryCancelled => ("entry_cancelled", include_bytes!("../../assets/trade-audio/entry_cancelled.mp3")),
+            Self::ExitProfit => ("exit_profit", include_bytes!("../../assets/trade-audio/exit_profit.mp3")),
+            Self::ExitStop => ("exit_stop", include_bytes!("../../assets/trade-audio/exit_stop.mp3")),
+            Self::ExitTime => ("exit_time", include_bytes!("../../assets/trade-audio/exit_time.mp3")),
+            Self::ExitEod => ("exit_eod", include_bytes!("../../assets/trade-audio/exit_eod.mp3")),
+            Self::ExitOvernight => ("exit_overnight", include_bytes!("../../assets/trade-audio/exit_overnight.mp3")),
+            Self::ExitDte => ("exit_dte", include_bytes!("../../assets/trade-audio/exit_dte.mp3")),
+            Self::ExitAdvisor => ("exit_advisor", include_bytes!("../../assets/trade-audio/exit_advisor.mp3")),
+            Self::ExitBracket => ("exit_bracket", include_bytes!("../../assets/trade-audio/exit_bracket.mp3")),
+            Self::AlertHalted => ("alert_halted", include_bytes!("../../assets/trade-audio/alert_halted.mp3")),
+            Self::AlertRisk => ("alert_risk", include_bytes!("../../assets/trade-audio/alert_risk.mp3")),
         }
     }
 }

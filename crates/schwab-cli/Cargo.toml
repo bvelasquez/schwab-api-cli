@@ -11,7 +11,7 @@ repository.workspace = true
 readme = "README.md"
 keywords = ["schwab", "cli", "trading", "options", "brokerage"]
 categories = ["command-line-utilities", "finance"]
-include = ["src/**/*", "Cargo.toml", "README.md", "../../LICENSE"]
+include = ["src/**/*", "assets/**/*", "Cargo.toml", "README.md", "../../LICENSE"]
 
 [lib]
 name = "schwab_cli"
