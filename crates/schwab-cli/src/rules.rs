@@ -25,6 +25,9 @@ pub struct RulesConfig {
     pub exit_rules: ExitRules,
     #[serde(default)]
     pub risk: RiskConfig,
+    /// Regime-aware strategy selection (put credit / call credit / iron condor / pause).
+    #[serde(default)]
+    pub regime: OptionsRegimeConfig,
     #[serde(default)]
     pub execution: ExecutionConfig,
     #[serde(default)]
@@ -273,6 +276,8 @@ impl Default for ExitRules {
 pub struct RiskConfig {
     pub max_portfolio_risk_usd: f64,
     pub max_risk_per_trade_usd: f64,
+    /// Soft churn cap. Prefer `max_open_positions` + portfolio/trade risk as hard gates.
+    /// `0` = unlimited (no daily trade-count pause).
     pub max_trades_per_day: u32,
     pub allowed_underlyings: Vec<String>,
     pub blocked_events: Vec<String>,
@@ -286,6 +291,43 @@ impl Default for RiskConfig {
             max_trades_per_day: 3,
             allowed_underlyings: vec!["SPY".into(), "QQQ".into(), "IWM".into()],
             blocked_events: vec![],
+        }
+    }
+}
+
+/// Maps market regime → preferred options structure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OptionsRegimeConfig {
+    pub enabled: bool,
+    pub benchmark_symbol: String,
+    pub vix_symbol: String,
+    pub vix_low: f64,
+    pub vix_high: f64,
+    /// Pause all new entries when VIX is at or above this (hostile / crash regime).
+    pub pause_entries_vix_above: f64,
+    /// regime class → preferred strategy: `put_credit`, `call_credit`, `iron_condor`, `pause`.
+    #[serde(default)]
+    pub strategy_map: std::collections::HashMap<String, String>,
+}
+
+impl Default for OptionsRegimeConfig {
+    fn default() -> Self {
+        let mut strategy_map = std::collections::HashMap::new();
+        strategy_map.insert("low_vol_trend".into(), "put_credit".into());
+        strategy_map.insert("elevated_vol".into(), "put_credit".into());
+        strategy_map.insert("high_vol_chop".into(), "iron_condor".into());
+        strategy_map.insert("bearish_trend".into(), "call_credit".into());
+        strategy_map.insert("hostile".into(), "pause".into());
+        strategy_map.insert("neutral".into(), "put_credit".into());
+        Self {
+            enabled: false,
+            benchmark_symbol: "SPY".into(),
+            vix_symbol: "$VIX".into(),
+            vix_low: 14.0,
+            vix_high: 25.0,
+            pause_entries_vix_above: 30.0,
+            strategy_map,
         }
     }
 }
@@ -743,6 +785,7 @@ mod tests {
             entry_rules: EntryRules::default(),
             exit_rules: ExitRules::default(),
             risk: RiskConfig::default(),
+            regime: OptionsRegimeConfig::default(),
             execution: ExecutionConfig::default(),
             llm: LlmConfig::default(),
             notify: NotifyConfig::default(),

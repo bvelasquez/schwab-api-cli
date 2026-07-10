@@ -3,6 +3,7 @@ pub mod exits;
 pub mod format;
 pub mod llm;
 pub mod market_context;
+pub mod regime;
 pub mod spread_analytics;
 pub mod journal;
 pub mod paths;

@@ -14,12 +14,13 @@ pub fn vertical_entry_market_context(
     underlying: &str,
     expiry: NaiveDate,
     today: NaiveDate,
-    put_map: &Value,
+    strike_map: &Value,
     short_strike: f64,
     long_strike: f64,
     width: f64,
     credit: f64,
     contracts: f64,
+    is_put_spread: bool,
 ) -> Value {
     let underlying_quote = chain.get("underlying").cloned().unwrap_or(json!({}));
     let underlying_price = chain
@@ -30,11 +31,11 @@ pub fn vertical_entry_market_context(
         .unwrap_or(0.0);
 
     let dte = days_to_expiry(expiry, today);
-    let short_delta = strike_field(put_map, short_strike, "delta");
-    let long_delta = strike_field(put_map, long_strike, "delta");
-    let short_iv = strike_field(put_map, short_strike, "volatility");
-    let short_theta = strike_field(put_map, short_strike, "theta");
-    let long_theta = strike_field(put_map, long_strike, "theta");
+    let short_delta = strike_field(strike_map, short_strike, "delta");
+    let long_delta = strike_field(strike_map, long_strike, "delta");
+    let short_iv = strike_field(strike_map, short_strike, "volatility");
+    let short_theta = strike_field(strike_map, short_strike, "theta");
+    let long_theta = strike_field(strike_map, long_strike, "theta");
     let chain_iv = chain.get("volatility").and_then(|v| v.as_f64());
 
     let underlying_change_pct = underlying_quote
@@ -42,7 +43,7 @@ pub fn vertical_entry_market_context(
         .and_then(|v| v.as_f64());
 
     let analytics = compute_vertical_analytics(VerticalAnalyticsInput {
-        is_put_spread: true,
+        is_put_spread,
         underlying_price,
         short_strike,
         long_strike,
@@ -71,6 +72,7 @@ pub fn vertical_entry_market_context(
         "ivr_note": "Schwab chain provides current IV (chain_iv), not IV Rank",
         "expiry": expiry.to_string(),
         "dte": dte,
+        "spread_type": if is_put_spread { "put_credit" } else { "call_credit" },
         "short_strike": short_strike,
         "long_strike": long_strike,
         "width": width,
@@ -83,7 +85,7 @@ pub fn vertical_entry_market_context(
         "long_theta": long_theta,
         "net_theta_per_day_usd": analytics.net_theta_per_day_usd,
         "short_otm_pct": analytics.short_otm_pct,
-        "short_in_the_money": strike_bool(put_map, short_strike, "inTheMoney"),
+        "short_in_the_money": strike_bool(strike_map, short_strike, "inTheMoney"),
         "break_even_price": analytics.break_even_price,
         "distance_to_be_pct": analytics.distance_to_be_pct,
         "expected_move_1sigma_usd": analytics.expected_move_1sigma_usd,
@@ -281,6 +283,7 @@ mod tests {
             2.0,
             0.30,
             1.0,
+            true,
         );
         assert_eq!(ctx["underlying_price"], 298.0);
         assert_eq!(ctx["chain_iv"], 29.0);

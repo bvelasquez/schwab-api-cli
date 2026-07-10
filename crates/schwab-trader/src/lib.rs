@@ -20,6 +20,7 @@ pub mod orders;
 pub mod reconcile;
 pub mod risk;
 pub mod rules;
+pub mod shuffle;
 pub mod sim;
 pub mod sources;
 pub mod technical;

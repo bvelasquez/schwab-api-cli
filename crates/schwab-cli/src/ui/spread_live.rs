@@ -3,13 +3,12 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::style::Color;
 
 use crate::agent::exits::{
     evaluate_exit_from_mark, spread_exit_thresholds, SpreadMark,
 };
-use crate::agent::spread_analytics::{price_cushion_rail, spread_win_score, SpreadAnalytics};
+use crate::agent::spread_analytics::SpreadAnalytics;
 use crate::agent::state::{AgentState, TrackedPosition};
 use crate::rules::RulesConfig;
 
@@ -117,7 +116,8 @@ pub fn build_spread_monitor(
     }
 }
 
-/// Credit spread rail: stop debit (left, high) → target debit (right, low).
+/// Credit spread rail: stop debit (left, bad) → target debit (right, good).
+/// Matches the equity monitor: moving right is winning.
 pub fn spread_exit_rail(
     stop_debit: f64,
     entry_debit: f64,
@@ -126,14 +126,14 @@ pub fn spread_exit_rail(
     width: usize,
 ) -> String {
     let width = width.max(12);
-    let lo = target_debit.min(stop_debit);
-    let hi = stop_debit.max(target_debit);
-    let span = (hi - lo).max(0.0001);
+    let span = (stop_debit - target_debit).max(0.0001);
+    let max_idx = width.saturating_sub(1) as f64;
+    let debit_idx = |debit: f64| {
+        ((stop_debit - debit.clamp(target_debit, stop_debit)) / span * max_idx).round() as usize
+    };
     let mut chars: Vec<char> = vec!['·'; width];
-    let entry_idx =
-        ((entry_debit.clamp(lo, hi) - lo) / span * (width.saturating_sub(1) as f64)).round() as usize;
-    let current_idx =
-        ((current_debit.clamp(lo, hi) - lo) / span * (width.saturating_sub(1) as f64)).round() as usize;
+    let entry_idx = debit_idx(entry_debit);
+    let current_idx = debit_idx(current_debit);
     if entry_idx < width {
         chars[entry_idx] = '│';
     }
@@ -143,15 +143,18 @@ pub fn spread_exit_rail(
     chars.into_iter().collect()
 }
 
-pub fn pnl_style(profit_pct: f64) -> Style {
-    if profit_pct >= 25.0 {
-        Style::default().fg(Color::Green)
-    } else if profit_pct <= -25.0 {
-        Style::default().fg(Color::Red)
-    } else if profit_pct >= 0.0 {
-        Style::default().fg(Color::LightGreen)
+pub(crate) fn spread_rail_progress_labels(m: &SpreadMonitorView) -> String {
+    let above_stop = m.pct_cushion_from_stop;
+    if m.debit_to_close > m.entry_credit + f64::EPSILON {
+        let stop_span = (m.stop_debit - m.entry_credit).max(0.0001);
+        let toward_stop =
+            ((m.debit_to_close - m.entry_credit) / stop_span * 100.0).clamp(0.0, 200.0);
+        format!("  {toward_stop:.0}% toward stop  {above_stop:.0}% above stop")
     } else {
-        Style::default().fg(Color::Yellow)
+        format!(
+            "  {:.0}%→target  {above_stop:.0}% above stop",
+            m.pct_toward_target.max(0.0)
+        )
     }
 }
 
@@ -219,347 +222,20 @@ pub fn spread_health(m: &SpreadMonitorView) -> SpreadHealth {
     }
 }
 
-fn meter_spans(ratio: f64, width: usize, fill: Color) -> Vec<Span<'static>> {
-    let ratio = ratio.clamp(0.0, 1.0);
-    let filled = (ratio * width as f64).round() as usize;
-    let empty = width.saturating_sub(filled);
-    vec![
-        Span::styled("█".repeat(filled), Style::default().fg(fill)),
-        Span::styled("░".repeat(empty), Style::default().fg(Color::DarkGray)),
-    ]
-}
-
-fn spread_type_label(a: &SpreadAnalytics) -> &'static str {
-    if a.is_put_spread {
-        "put credit"
-    } else {
-        "call credit"
-    }
-}
-
-fn strike_line(a: &SpreadAnalytics) -> String {
-    let leg = if a.is_put_spread { "puts" } else { "calls" };
-    format!(
-        "{leg} ${:.0}/${:.0}  width ${:.0}",
-        a.short_strike, a.long_strike, a.width
-    )
-}
-
-fn spot_line(a: &SpreadAnalytics) -> String {
-    let chg = a
-        .underlying_change_pct
-        .map(|c| format!(" ({c:+.1}% today)"))
-        .unwrap_or_default();
-    let otm = a
-        .short_otm_pct
-        .map(|p| format!("  short {p:.1}% OTM"))
-        .unwrap_or_default();
-    let dist = a.distance_to_short_strike_usd.map(|d| {
-        if d >= 0.0 {
-            format!(" (${d:.0} above short)")
-        } else {
-            format!(" (${:.0} below short)", d.abs())
-        }
-    });
-    format!(
-        "spot ${:.2}{chg}{otm}{}",
-        a.underlying_price,
-        dist.unwrap_or_default()
-    )
-}
-
-fn health_banner_line(m: &SpreadMonitorView) -> Line<'static> {
-    let health = spread_health(m);
-    let win = m
-        .analytics
-        .as_ref()
-        .map(|a| spread_win_score(m.profit_pct, a, m.pct_cushion_from_stop))
-        .unwrap_or(50.0);
-    let win_color = if win >= 70.0 {
-        Color::Green
-    } else if win >= 45.0 {
-        Color::Yellow
-    } else {
-        Color::Red
-    };
-    let mut spans = vec![
-        Span::styled(
-            format!("{} {}  ", health.arrow, health.label),
-            Style::default()
-                .fg(health.color)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("win ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            format!("{win:.0}%"),
-            Style::default()
-                .fg(win_color)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" "),
-    ];
-    spans.extend(meter_spans(win / 100.0, 10, win_color));
-    spans.push(Span::styled(
-        format!("  {:+.1}% P&L", m.profit_pct),
-        pnl_style(m.profit_pct),
-    ));
-    Line::from(spans)
-}
-
-fn probability_line(_m: &SpreadMonitorView, a: &SpreadAnalytics) -> Line<'static> {
-    let pop = a.spread_pop_pct.unwrap_or(0.0);
-    let pop_color = if pop >= 70.0 {
-        Color::Green
-    } else if pop >= 50.0 {
-        Color::Yellow
-    } else {
-        Color::Red
-    };
-    let otm_expire = a
-        .approx_short_otm_prob_pct
-        .map(|p| format!("{p:.0}%"))
-        .unwrap_or_else(|| "—".into());
-    let touch_short = a
-        .short_delta
-        .map(|d| format!("{:.0}%", d.abs() * 100.0))
-        .unwrap_or_else(|| "—".into());
-    let mut spans = vec![
-        Span::styled("POP vs BE ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            format!("{pop:.0}%"),
-            Style::default().fg(pop_color).add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" "),
-    ];
-    spans.extend(meter_spans(pop / 100.0, 8, pop_color));
-    spans.push(Span::raw(format!(
-        "  short ~{otm_expire} expire OTM  ·  ~{touch_short} touch short"
-    )));
-    Line::from(spans)
-}
-
-fn fmt_opt_f(v: Option<f64>, decimals: usize) -> String {
-    v.map(|x| format!("{x:.prec$}", prec = decimals))
-        .unwrap_or_else(|| "—".into())
-}
-
-fn analytics_lines(m: &SpreadMonitorView) -> Vec<Line<'static>> {
-    let Some(a) = &m.analytics else {
-        return vec![Line::from(Span::styled(
-            "greeks: (waiting for chain refresh…)",
-            Style::default().fg(Color::DarkGray),
-        ))];
-    };
-
-    let mut lines = Vec::new();
-
-    lines.push(Line::from(vec![
-        Span::styled(strike_line(a), Style::default().fg(Color::Cyan)),
-        Span::raw(format!("  exp {}", m.expiry)),
-    ]));
-
-    lines.push(Line::from(Span::styled(
-        spot_line(a),
-        Style::default().fg(Color::White),
-    )));
-
-    lines.push(probability_line(m, a));
-
-    let delta_s = a
-        .short_delta
-        .map(|d| format!("{d:+.2}"))
-        .unwrap_or_else(|| "—".into());
-    let delta_l = a
-        .long_delta
-        .map(|d| format!("{d:+.2}"))
-        .unwrap_or_else(|| "—".into());
-    let iv = fmt_opt_f(a.chain_iv_pct, 1);
-    let theta = a
-        .net_theta_per_day_usd
-        .map(|t| format!("{:+.2}/d", t))
-        .unwrap_or_else(|| "—".into());
-
-    lines.push(Line::from(format!(
-        "δ short {delta_s}  long {delta_l}  IV {iv}%  θ {theta}"
-    )));
-
-    let be = fmt_opt_f(a.break_even_price, 2);
-    let be_cushion = a
-        .distance_to_be_pct
-        .map(|p| format!("{p:+.1}%"))
-        .unwrap_or_else(|| "—".into());
-    let ctw = a
-        .credit_to_width_pct
-        .map(|p| format!("{p:.0}%"))
-        .unwrap_or_else(|| "—".into());
-
-    lines.push(Line::from(format!(
-        "BE ${be}  cushion {be_cushion}  cr/width {ctw}"
-    )));
-
-    if let (Some(em), Some(em_pct)) = (a.expected_move_1sigma_usd, a.expected_move_1sigma_pct) {
-        let inside_style = if a.short_strike_inside_1sigma == Some(true) {
-            Style::default().fg(Color::Yellow)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-        let inside = a
-            .short_strike_inside_1sigma
-            .map(|b| if b { "short inside 1σ" } else { "short outside 1σ" })
-            .unwrap_or("");
-        lines.push(Line::from(vec![
-            Span::raw(format!("1σ move ±${em:.2} ({em_pct:.1}%)  ")),
-            Span::styled(inside, inside_style),
-        ]));
-    }
-
-    if let Some(be_px) = a.break_even_price {
-        let (rail, _) = price_cushion_rail(
-            be_px,
-            a.underlying_price,
-            a.short_strike,
-            a.is_put_spread,
-            28,
-        );
-        lines.push(Line::from(vec![
-            Span::styled("spot ", Style::default().fg(Color::DarkGray)),
-            Span::styled(rail, Style::default().fg(Color::Blue)),
-            Span::raw("  B=BE  S=short  ●=spot"),
-        ]));
-    }
-
-    lines
-}
-
-pub fn spread_monitor_lines(
+pub fn list_spread_monitors(
     rules: &RulesConfig,
     state: &AgentState,
     live: Option<&SpreadLiveSnapshot>,
-) -> Vec<Line<'static>> {
-    if state.open_positions.is_empty() {
-        return vec![Line::from(Span::styled(
-            "(flat — no open positions)",
-            Style::default().fg(Color::DarkGray),
-        ))];
-    }
-
+) -> Vec<SpreadMonitorView> {
     let mut positions: Vec<_> = state.open_positions.values().collect();
     positions.sort_by(|a, b| a.underlying.cmp(&b.underlying));
-
-    let mut lines = Vec::new();
-    for (i, pos) in positions.iter().enumerate() {
-        if i > 0 {
-            lines.push(Line::from(""));
-        }
-        let live_mark = live.and_then(|l| l.marks.get(&pos.position_id));
-        let m = build_spread_monitor(pos, live_mark, &rules.exit_rules);
-
-        let type_label = m
-            .analytics
-            .as_ref()
-            .map(spread_type_label)
-            .unwrap_or(m.strategy.as_str());
-
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("{} ", m.underlying),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(format!(
-                "×{}  {type_label}  {}d DTE",
-                m.contracts, m.dte
-            )),
-        ]));
-
-        lines.push(health_banner_line(&m));
-
-        let age = m
-            .mark_age_secs
-            .map(|s| format!("  mark {s}s ago"))
-            .unwrap_or_else(|| "  (no live mark)".into());
-
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("{:+.1}%  ${:+.2}", m.profit_pct, m.pnl_usd),
-                pnl_style(m.profit_pct),
-            ),
-            Span::raw(format!(
-                "  debit ${:.2}  cr ${:.2}  tgt ≤${:.2}{age}",
-                m.debit_to_close, m.entry_credit, m.target_debit
-            )),
-        ]));
-
-        lines.extend(analytics_lines(&m));
-
-        lines.push(Line::from(vec![
-            Span::styled("stop ", Style::default().fg(Color::Red)),
-            Span::raw(format!("${:.2}", m.stop_debit)),
-            Span::styled("  entry ", Style::default().fg(Color::DarkGray)),
-            Span::raw(format!("${:.2}", m.entry_credit)),
-            Span::styled("  target ", Style::default().fg(Color::Green)),
-            Span::raw(format!("${:.2}", m.target_debit)),
-        ]));
-
-        let rail = spread_exit_rail(
-            m.stop_debit,
-            m.entry_credit,
-            m.target_debit,
-            m.debit_to_close,
-            28,
-        );
-        let rail_style = if m.profit_pct >= 0.0 {
-            Style::default().fg(Color::Green)
-        } else {
-            Style::default().fg(Color::Yellow)
-        };
-        lines.push(Line::from(vec![
-            Span::styled("P/L  ", Style::default().fg(Color::DarkGray)),
-            Span::styled(rail, rail_style),
-            Span::raw(format!(
-                "  {:.0}%→target  {:.0}% from stop",
-                m.pct_toward_target, m.pct_cushion_from_stop
-            )),
-        ]));
-
-        let mut footer_spans = vec![
-            Span::styled(
-                format!("close ≤{} DTE", m.dte_close),
-                Style::default().fg(Color::DarkGray),
-            ),
-        ];
-        if let Some(reason) = &m.imminent_exit {
-            footer_spans.push(Span::raw("  │  "));
-            footer_spans.push(Span::styled(
-                format!("EXIT: {reason}"),
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            ));
-        } else if m.mark_source != "chain" && m.mark_source != "portfolio" {
-            footer_spans.push(Span::raw(format!("  │  mark: {}", m.mark_source)));
-        }
-        lines.push(Line::from(footer_spans));
-    }
-
-    if let Some(live) = live {
-        if let Some(at) = live.last_fetch {
-            let ago = (Utc::now() - at).num_seconds().max(0);
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                format!("chain refresh {ago}s ago"),
-                Style::default().fg(Color::DarkGray),
-            )));
-        }
-    }
-
-    if let Some(err) = live.and_then(|l| l.last_error.as_ref()) {
-        lines.push(Line::from(vec![
-            Span::styled("mark feed: ", Style::default().fg(Color::Red)),
-            Span::raw(err.clone()),
-        ]));
-    }
-
-    lines
+    positions
+        .into_iter()
+        .map(|pos| {
+            let live_mark = live.and_then(|l| l.marks.get(&pos.position_id));
+            build_spread_monitor(pos, live_mark, &rules.exit_rules)
+        })
+        .collect()
 }
 
 pub fn attach_exit_hint(mark: &mut SpreadPositionMark, rules: &RulesConfig, entry_credit: f64) {
@@ -576,8 +252,7 @@ pub fn attach_exit_hint(mark: &mut SpreadPositionMark, rules: &RulesConfig, entr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::spread_analytics::compute_vertical_analytics;
-    use crate::agent::spread_analytics::VerticalAnalyticsInput;
+    use crate::agent::spread_analytics::{compute_vertical_analytics, spread_win_score, VerticalAnalyticsInput};
     use crate::rules::ExitRules;
 
     #[test]
@@ -585,6 +260,60 @@ mod tests {
         let rail = spread_exit_rail(0.58, 0.29, 0.145, 0.20, 20);
         assert!(rail.contains('│'));
         assert!(rail.contains('●'));
+    }
+
+    #[test]
+    fn spread_rail_right_is_toward_target() {
+        let winning = spread_exit_rail(0.58, 0.29, 0.145, 0.20, 28);
+        let entry_win = winning.find('│').unwrap();
+        let mark_win = winning.find('●').unwrap();
+        assert!(
+            mark_win > entry_win,
+            "lower debit (winning) should sit right of entry"
+        );
+
+        let losing = spread_exit_rail(0.56, 0.28, 0.14, 0.46, 28);
+        let entry_lose = losing.find('│').unwrap();
+        let mark_lose = losing.find('●').unwrap();
+        assert!(
+            mark_lose < entry_lose,
+            "higher debit (losing) should sit left of entry toward stop"
+        );
+    }
+
+    #[test]
+    fn spread_rail_labels_show_toward_stop_when_losing() {
+        let exit_rules = ExitRules::default();
+        let tracked = TrackedPosition {
+            position_id: "IWM|2026-08-14".into(),
+            account_hash: "h".into(),
+            underlying: "IWM".into(),
+            expiry: "2026-08-14".into(),
+            strategy: "vertical".into(),
+            opened_at: Utc::now(),
+            entry_credit: Some(0.28),
+            max_loss_usd: 144.0,
+            contracts: 1,
+            entry_params: None,
+            ..Default::default()
+        };
+        let live = SpreadPositionMark {
+            mark: SpreadMark {
+                entry_credit: 0.28,
+                debit_to_close: 0.46,
+                profit_pct: -64.3,
+                dte: 35,
+                source: "test".into(),
+            },
+            analytics: None,
+            imminent_exit: None,
+            mark_age_secs: Some(0),
+        };
+        let m = build_spread_monitor(&tracked, Some(&live), &exit_rules);
+        let labels = spread_rail_progress_labels(&m);
+        assert!(labels.contains("toward stop"));
+        assert!(labels.contains("above stop"));
+        assert!(!labels.contains("→target"));
     }
 
     #[test]

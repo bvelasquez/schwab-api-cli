@@ -206,6 +206,13 @@ fn build_system_prompt(
     } else {
         ""
     };
+    let shuffle_help = if matches!(phase, "selection" | "web") {
+        "\n\nWhen entry_shuffle.enabled is true, use entry_shuffle context: prefer candidates from groups not in open_groups; \
+         defer symbols with recent stop_loss in recent_exits_by_symbol unless shuffle_overwhelming is true on that symbol. \
+         Multiple entries per day are allowed when they diversify across symbol_groups — do not approve correlated duplicates."
+    } else {
+        ""
+    };
     let session_help = if matches!(phase, "selection" | "web" | "monitor") {
         "\n\nmarket_clock.regular_session_open and market_clock.now_eastern are authoritative for whether the US equity market is open. \
          Ignore stale overnight_digest_snapshot commentary about market closure during regular hours. \
@@ -213,7 +220,7 @@ fn build_system_prompt(
     } else {
         ""
     };
-    format!("{instructions}{patch_help}{profile_help}{feed_help}{heat_help}{history_help}{session_help}\n{RESPONSE_JSON_SCHEMA}")
+    format!("{instructions}{patch_help}{profile_help}{feed_help}{heat_help}{history_help}{shuffle_help}{session_help}\n{RESPONSE_JSON_SCHEMA}")
 }
 
 fn llm_review_json_schema() -> Value {

@@ -58,12 +58,29 @@ exit_rules:
 risk:
   max_portfolio_risk_usd: 10000
   max_risk_per_trade_usd: 2000
-  max_trades_per_day: 3
+  # Soft churn cap (0 = unlimited). Prefer max_open_positions + $ risk as hard gates.
+  max_trades_per_day: 4
   allowed_underlyings:
     - SPY
     - QQQ
     - IWM
   blocked_events: []
+
+# Optional: map market regime → put_credit | call_credit | iron_condor | pause
+# regime:
+#   enabled: true
+#   benchmark_symbol: SPY
+#   vix_symbol: $VIX
+#   vix_low: 14.0
+#   vix_high: 25.0
+#   pause_entries_vix_above: 30.0
+#   strategy_map:
+#     low_vol_trend: put_credit
+#     elevated_vol: put_credit
+#     high_vol_chop: iron_condor
+#     bearish_trend: call_credit
+#     hostile: pause
+#     neutral: put_credit
 
 execution:
   order_type: limit

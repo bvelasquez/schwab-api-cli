@@ -7,6 +7,7 @@ use crate::agent::state::TraderState;
 use crate::config::TraderRuntime;
 use crate::market_ctx::MarketCtx;
 use crate::rules::TraderRules;
+use crate::shuffle::{apply_shuffle_to_scan, symbol_group_cap_reason};
 use crate::technical::{
     fetch_technical_snapshot_with_benchmark, passes_entry_filters, technical_to_json,
     TechnicalSnapshot,
@@ -17,7 +18,7 @@ pub async fn run(runtime: &TraderRuntime, rules_path: &Path) -> Result<()> {
     let market = runtime.build_market_api()?;
     let market = MarketCtx::for_rules(market, rules_path, &rules);
     let state = crate::agent::state::load_state(rules_path, &rules.trader_id)?;
-    let data = run_scan_inner(&market, &rules, &state).await?;
+    let data = run_scan_inner(&market, &rules, &state, Some(rules_path)).await?;
     runtime.emit(
         schwab_cli::output::ResponseEnvelope::ok("trader scan", data)
             .with_inputs(json!({ "rules_file": rules_path })),
@@ -29,6 +30,7 @@ pub async fn run_scan_inner(
     market: &MarketCtx,
     rules: &TraderRules,
     state: &TraderState,
+    rules_path: Option<&Path>,
 ) -> Result<Value> {
     let mut symbols = rules.all_watchlist_symbols();
     for s in &state.dynamic_watchlist {
@@ -69,6 +71,10 @@ pub async fn run_scan_inner(
             rejected.push(json!({ "symbol": symbol, "reason": "already_open" }));
             continue;
         }
+        if let Some(reason) = symbol_group_cap_reason(rules, state, &symbol) {
+            rejected.push(json!({ "symbol": symbol, "reason": reason }));
+            continue;
+        }
         let snap = match fetch_technical_snapshot_with_benchmark(
             market,
             rules,
@@ -107,6 +113,8 @@ pub async fn run_scan_inner(
         sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
     });
 
+    apply_shuffle_to_scan(rules, state, rules_path, &mut candidates);
+
     Ok(json!({
         "candidates": &candidates,
         "rejected": rejected,
@@ -114,6 +122,7 @@ pub async fn run_scan_inner(
         "active_profile": state.active_profile,
         "effective_playbook": crate::learn::adaptable_playbook_snapshot(rules),
         "market_cache": market.cache_status(),
+        "entry_shuffle_enabled": rules.playbook.filters.shuffle.enabled,
     }))
 }
 

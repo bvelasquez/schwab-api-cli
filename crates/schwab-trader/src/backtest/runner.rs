@@ -152,7 +152,7 @@ pub async fn run_backtest(
             process_backtest_exits(rules_path, &tick_rules, &mut state, &ctx, &cache, *day, as_of)
                 .await?;
 
-        let scan = run_scan_inner(&ctx, &tick_rules, &state).await?;
+        let scan = run_scan_inner(&ctx, &tick_rules, &state, Some(rules_path)).await?;
         let capital = compute_capital_check(
             &api,
             &tick_rules,

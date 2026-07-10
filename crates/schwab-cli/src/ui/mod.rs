@@ -1,12 +1,16 @@
+pub mod chart_markers;
 pub mod agent_health;
 pub mod context;
 pub mod dashboard;
 pub mod discover;
 pub mod market_status;
 pub mod menu;
+pub mod positions_panel;
 pub mod rules_view;
 pub mod spread_feed;
 pub mod spread_live;
+pub mod spread_payoff;
+pub mod theme;
 pub mod tui_render;
 pub mod watch;
 

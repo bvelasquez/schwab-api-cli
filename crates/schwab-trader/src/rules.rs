@@ -311,6 +311,40 @@ pub struct TrailingConfig {
     pub trail_atr_multiple: f64,
 }
 
+/// Correlated symbols — cap concurrent open positions per group.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SymbolGroupConfig {
+    pub name: String,
+    pub symbols: Vec<String>,
+    /// Max open positions from this group at once (0 = no cap).
+    pub max_open: u32,
+}
+
+/// Portfolio-aware candidate ranking: cooldown after stops, group diversification.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EntryShuffleConfig {
+    pub enabled: bool,
+    /// Block re-entry after stop_loss within this many calendar days (unless overwhelming).
+    pub re_entry_cooldown_days: u32,
+    /// Score penalty after a recent stop on the same symbol.
+    pub stop_loss_penalty: f64,
+    /// Extra penalty per additional stop on the symbol within lookback.
+    pub repeat_stop_penalty: f64,
+    /// Penalty when another symbol in the same group is already open.
+    pub same_group_open_penalty: f64,
+    /// Bonus when this group has no open positions but other groups do.
+    pub underrepresented_group_bonus: f64,
+    pub lookback_days: u32,
+    /// Adjusted score must exceed second place by this margin to bypass cooldown.
+    pub overwhelming_margin: f64,
+    /// Optional RS floor for overwhelming bypass (30d vs benchmark %).
+    #[serde(default)]
+    pub overwhelming_min_rs_vs_benchmark_30d: Option<f64>,
+    pub bypass_cooldown_on_overwhelming: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FilterConfig {
@@ -328,6 +362,10 @@ pub struct FilterConfig {
     /// Position size multiplier in the soft zone (e.g. 0.5).
     #[serde(default)]
     pub near_52w_high_size_scalar: Option<f64>,
+    #[serde(default)]
+    pub symbol_groups: Vec<SymbolGroupConfig>,
+    #[serde(default)]
+    pub shuffle: EntryShuffleConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -704,6 +742,33 @@ impl Default for TrailingConfig {
     }
 }
 
+impl Default for SymbolGroupConfig {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            symbols: vec![],
+            max_open: 1,
+        }
+    }
+}
+
+impl Default for EntryShuffleConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            re_entry_cooldown_days: 2,
+            stop_loss_penalty: 0.25,
+            repeat_stop_penalty: 0.1,
+            same_group_open_penalty: 0.2,
+            underrepresented_group_bonus: 0.08,
+            lookback_days: 7,
+            overwhelming_margin: 0.12,
+            overwhelming_min_rs_vs_benchmark_30d: Some(5.0),
+            bypass_cooldown_on_overwhelming: true,
+        }
+    }
+}
+
 impl Default for FilterConfig {
     fn default() -> Self {
         Self {
@@ -713,6 +778,8 @@ impl Default for FilterConfig {
             min_distance_from_52w_high_pct: None,
             near_52w_high_soft_zone_pct: None,
             near_52w_high_size_scalar: None,
+            symbol_groups: vec![],
+            shuffle: EntryShuffleConfig::default(),
         }
     }
 }
@@ -1311,6 +1378,32 @@ impl TraderRules {
             .blocked_symbols
             .iter()
             .any(|s| s.eq_ignore_ascii_case(&sym))
+    }
+
+    /// Named symbol group containing `symbol`, if configured.
+    pub fn symbol_group_name(&self, symbol: &str) -> Option<&str> {
+        let sym = symbol.trim().to_uppercase();
+        for group in &self.playbook.filters.symbol_groups {
+            if group
+                .symbols
+                .iter()
+                .any(|s| s.eq_ignore_ascii_case(&sym))
+            {
+                return Some(group.name.as_str());
+            }
+        }
+        None
+    }
+
+    /// `max_open` for a group name (0 = unlimited).
+    pub fn symbol_group_max_open(&self, group_name: &str) -> u32 {
+        self.playbook
+            .filters
+            .symbol_groups
+            .iter()
+            .find(|g| g.name.eq_ignore_ascii_case(group_name))
+            .map(|g| g.max_open)
+            .unwrap_or(0)
     }
 }
 

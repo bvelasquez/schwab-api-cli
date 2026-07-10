@@ -33,6 +33,7 @@ use crate::reconcile::reconcile_tick;
 use crate::regime::detect_regime;
 use crate::risk::{monitoring_metrics, update_drawdown};
 use crate::rules::TraderRules;
+use crate::shuffle::{build_entry_shuffle_context, entry_shuffle_block_from_scan};
 use crate::sim::{compute_stats, snapshot_equity};
 use crate::sources::{attach_feeds_to_context, fetch_feeds_for_phase};
 use schwab_cli::notify::TelegramNotifier;
@@ -354,7 +355,7 @@ async fn tick_premarket(
     )
     .await?;
 
-    let scan = run_scan_inner(market, rules, state).await?;
+    let scan = run_scan_inner(market, rules, state, Some(rules_path)).await?;
     skipped.push("premarket — no entries until regular session".into());
 
     let mut llm_summary = None;
@@ -499,7 +500,7 @@ async fn tick_regular(
         snapshot_equity(state, &tick_rules);
     }
 
-    let mut scan = run_scan_inner(market, &tick_rules, state).await?;
+    let mut scan = run_scan_inner(market, &tick_rules, state, Some(rules_path)).await?;
     prioritise_scan_for_redeploy(&mut scan, state.redeploy_signal.as_ref());
     let capital = compute_capital_check(
         api,
@@ -559,6 +560,7 @@ async fn tick_regular(
                     },
                     "capital_check": capital_check_to_json(&capital),
                     "scan": scan,
+                    "entry_shuffle": build_entry_shuffle_context(&tick_rules, state, Some(rules_path), &scan),
                     "open_positions": state.open_positions,
                     "sim_stats": compute_stats(state),
                     "closure_exits_this_tick": closure_exits,
@@ -605,7 +607,7 @@ async fn tick_regular(
     }
 
     if web_picks_added > 0 {
-        scan = run_scan_inner(market, &tick_rules, state).await?;
+        scan = run_scan_inner(market, &tick_rules, state, Some(rules_path)).await?;
         prioritise_scan_for_redeploy(&mut scan, state.redeploy_signal.as_ref());
     }
 
@@ -632,6 +634,17 @@ async fn tick_regular(
                         "status": "skipped",
                         "symbol": symbol,
                         "reason": "llm_veto_or_missing_review",
+                    }));
+                    continue;
+                }
+
+                if let Some(reason) =
+                    entry_shuffle_block_from_scan(&tick_rules, state, symbol, &scan, Some(rules_path))
+                {
+                    entry_attempts.push(json!({
+                        "status": "skipped",
+                        "symbol": symbol,
+                        "reason": reason,
                     }));
                     continue;
                 }

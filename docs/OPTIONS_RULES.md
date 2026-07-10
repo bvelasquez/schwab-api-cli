@@ -54,6 +54,28 @@ Exits run **before** entry scans each regular tick. Marks come from live option 
 
 Monitor LLM context includes `mechanical_rules.stop_triggered` — only treat a stop as hit when that field is `true`. See [LLM_SCHEMA_REFERENCE.md](LLM_SCHEMA_REFERENCE.md#field-reference--exit_rules-mechanical--authoritative).
 
+## Risk gates vs daily trade count
+
+Hard gates for new entries:
+
+- `entry_rules.*.max_open_positions`
+- `risk.max_portfolio_risk_usd` / `risk.max_risk_per_trade_usd`
+
+`risk.max_trades_per_day` is only a **soft churn cap** (redeploy after thesis exits, etc.). Set it to `0` for unlimited daily opens (still subject to open slots + $ risk).
+
+## Regime-aware structure (`regime`)
+
+When `regime.enabled: true`, the agent classifies SPY trend + VIX and scans **one** preferred structure:
+
+| Regime | Typical map |
+|--------|-------------|
+| `low_vol_trend` / `elevated_vol` / `neutral` | `put_credit` |
+| `bearish_trend` (below SMA50 and SMA200) | `call_credit` |
+| `high_vol_chop` | `iron_condor` |
+| `hostile` or VIX ≥ `pause_entries_vix_above` | pause new entries |
+
+Requires `strategies.iron_condor.enabled: true` for condor regimes. Vertical call credits use the same delta/width rules as puts.
+
 ## LLM advisor (two-model)
 
 When `llm.enabled: true`, the agent picks the model by phase:

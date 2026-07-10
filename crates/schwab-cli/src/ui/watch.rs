@@ -12,9 +12,9 @@ use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs,
+    Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs,
     Wrap,
 };
 use ratatui::Terminal;
@@ -22,13 +22,15 @@ use ratatui::Terminal;
 use super::agent_health::SharedAgentHealth;
 use super::context::DashboardContext;
 use super::market_status::MarketSnapshot;
+use super::positions_panel::{positions_content_height, render_positions_panel, CARD_HEIGHT};
+use super::theme::{self, footer_block, key_style};
 use super::tui_render::{
     activity_lines, agent_status_lines, daemon_hint, header_line, latest_llm_lines,
-    llm_history_lines, market_conditions_panel_lines, position_lines, risk_gauge,
+    llm_history_lines, market_conditions_panel_lines, risk_gauge,
     rules_detail_lines, rules_summary_lines,
 };
 use crate::market_conditions::MarketConditionsSnapshot;
-use crate::ui::spread_live::SpreadLiveSnapshot;
+use crate::ui::spread_live::{list_spread_monitors, SpreadLiveSnapshot};
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 
@@ -98,6 +100,7 @@ struct WatchState {
     rules_scroll: u16,
     log_scroll: u16,
     llm_scroll: u16,
+    positions_scroll: u16,
 }
 
 pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
@@ -127,6 +130,7 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
         rules_scroll: 0,
         log_scroll: 0,
         llm_scroll: 0,
+        positions_scroll: 0,
     };
 
     loop {
@@ -158,8 +162,12 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
                         KeyCode::Char('3') => tab = WatchTab::Log,
                         KeyCode::Char('4') => tab = WatchTab::Positions,
                         KeyCode::Char('5') => tab = WatchTab::Llm,
-                        KeyCode::Char('j') | KeyCode::Down => scroll_active_tab(tab, &mut state, 1),
-                        KeyCode::Char('k') | KeyCode::Up => scroll_active_tab(tab, &mut state, -1),
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            scroll_active_tab(tab, &mut state, 1, &ctx)
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            scroll_active_tab(tab, &mut state, -1, &ctx)
+                        }
                         KeyCode::Char('r') => {
                             match DashboardContext::load_with_shared_snapshot(
                                 rules_path,
@@ -195,11 +203,22 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
     Ok(())
 }
 
-fn scroll_active_tab(tab: WatchTab, state: &mut WatchState, delta: i16) {
+fn scroll_active_tab(tab: WatchTab, state: &mut WatchState, delta: i16, ctx: &DashboardContext) {
     let scroll = match tab {
         WatchTab::Rules => &mut state.rules_scroll,
         WatchTab::Log => &mut state.log_scroll,
         WatchTab::Llm => &mut state.llm_scroll,
+        WatchTab::Positions => {
+            let monitors = list_spread_monitors(&ctx.rules, &ctx.state, None);
+            let max = positions_content_height(&monitors).saturating_sub(CARD_HEIGHT);
+            let s = &mut state.positions_scroll;
+            if delta < 0 {
+                *s = s.saturating_sub(delta.unsigned_abs());
+            } else {
+                *s = (*s + delta as u16).min(max);
+            }
+            return;
+        }
         _ => return,
     };
     if delta < 0 {
@@ -225,55 +244,76 @@ fn draw_ui(
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(4),
-            Constraint::Length(1),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Min(6),
+            Constraint::Length(3),
         ])
         .split(area);
 
     f.render_widget(
-        wrap_paragraph(header_line(ctx, agent_mode, agent_health)),
+        wrap_paragraph(header_line(ctx, agent_mode, agent_health))
+            .block(theme::chrome_block("Schwab Options")),
         outer[0],
     );
 
     let titles: Vec<Line> = WatchTab::all()
         .iter()
-        .map(|t| Line::from(t.title()))
+        .enumerate()
+        .map(|(i, t)| {
+            Line::from(vec![
+                Span::styled(
+                    format!(" {} ", i + 1),
+                    Style::default().fg(theme::MUTED),
+                ),
+                Span::raw(t.title()),
+            ])
+        })
         .collect();
     let tabs = Tabs::new(titles)
-        .style(Style::default().fg(Color::DarkGray))
+        .style(Style::default().fg(theme::MUTED))
         .highlight_style(
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         )
-        .select(tab as usize);
-    f.render_widget(tabs, outer[1]);
+        .divider("│")
+        .select(tab as usize)
+        .padding(" ", " ");
+    f.render_widget(tabs.block(theme::footer_block()), outer[1]);
 
+    let content = outer[2];
     match tab {
         WatchTab::Overview => render_overview(
             f,
-            outer[2],
+            content,
             ctx,
             agent_mode,
             agent_health,
             market_conditions,
         ),
-        WatchTab::Rules => render_rules_tab(f, outer[2], ctx, state),
-        WatchTab::Log => render_log_tab(f, outer[2], ctx, state),
-        WatchTab::Positions => render_positions_tab(f, outer[2], ctx, live_spread),
-        WatchTab::Llm => render_llm_tab(f, outer[2], ctx, state),
+        WatchTab::Rules => render_rules_tab(f, content, ctx, state),
+        WatchTab::Log => render_log_tab(f, content, ctx, state),
+        WatchTab::Positions => render_positions_tab(f, content, ctx, live_spread, state),
+        WatchTab::Llm => render_llm_tab(f, content, ctx, state),
     }
 
     let footer = Line::from(vec![
-        ratatui::text::Span::styled(" Tab/1-5 ", Style::default().fg(Color::DarkGray)),
-        ratatui::text::Span::styled("j/k scroll ", Style::default().fg(Color::DarkGray)),
-        ratatui::text::Span::styled("r refresh ", Style::default().fg(Color::DarkGray)),
-        ratatui::text::Span::styled("q quit ", Style::default().fg(Color::DarkGray)),
-        ratatui::text::Span::styled(status_msg, Style::default().fg(Color::DarkGray)),
+        Span::styled(" Tab ", key_style()),
+        Span::styled("/1-5 switch  ", theme::label_style()),
+        Span::styled("j/k ", key_style()),
+        Span::styled("scroll  ", theme::label_style()),
+        Span::styled("r ", key_style()),
+        Span::styled("refresh  ", theme::label_style()),
+        Span::styled("q ", key_style()),
+        Span::styled("quit  ", theme::label_style()),
+        Span::styled("│ ", theme::label_style()),
+        Span::styled(status_msg, theme::label_style()),
     ]);
-    f.render_widget(wrap_paragraph(footer), outer[3]);
+    f.render_widget(
+        wrap_paragraph(footer).block(footer_block()),
+        outer[3],
+    );
 }
 
 fn wrap_paragraph<'a>(content: impl Into<ratatui::text::Text<'a>>) -> Paragraph<'a> {
@@ -281,15 +321,7 @@ fn wrap_paragraph<'a>(content: impl Into<ratatui::text::Text<'a>>) -> Paragraph<
 }
 
 fn panel_block(title: &str) -> Block<'_> {
-    Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .title(format!(" {title} "))
-        .title_style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
+    theme::panel_block(title)
 }
 
 fn render_overview(
@@ -454,18 +486,38 @@ fn render_positions_tab(
     area: Rect,
     ctx: &DashboardContext,
     live_spread: Option<&SpreadLiveSnapshot>,
+    state: &WatchState,
 ) {
-    let spreads = ctx.state.open_positions.len();
+    let monitors = list_spread_monitors(&ctx.rules, &ctx.state, live_spread);
+    let spreads = monitors.len();
     let contracts = ctx.state.total_contracts();
     let title = if contracts > spreads as u32 {
         format!("Positions ({spreads} spread · {contracts} ct)")
     } else {
         format!("Positions ({spreads})")
     };
-    f.render_widget(
-        wrap_paragraph(position_lines(ctx, live_spread)).block(panel_block(&title)),
-        area,
-    );
+
+    let vertical = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(area);
+
+    let inner = panel_block(&title).inner(vertical[0]);
+    f.render_widget(panel_block(&title), vertical[0]);
+    render_positions_panel(f, inner, &monitors, state.positions_scroll, live_spread);
+
+    let total = positions_content_height(&monitors);
+    if total > inner.height {
+        let mut sb = ScrollbarState::new(total as usize)
+            .position(state.positions_scroll as usize);
+        f.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("↑"))
+                .end_symbol(Some("↓")),
+            vertical[1],
+            &mut sb,
+        );
+    }
 }
 
 fn render_llm_tab(
