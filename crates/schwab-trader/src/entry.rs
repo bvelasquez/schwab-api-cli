@@ -297,6 +297,19 @@ pub async fn attempt_entry(
     if rules.is_blocked_symbol(&symbol) {
         return Ok(skip_entry(&symbol, "blocked_symbol", rules, &active_profile, replay));
     }
+    if rules.playbook.filters.shuffle.enabled {
+        let lookback = rules.playbook.filters.shuffle.lookback_days;
+        let recent =
+            crate::shuffle::collect_recent_exits(state, Some(rules_path), lookback);
+        let adj = crate::shuffle::compute_shuffle_adjustment(
+            rules, state, &symbol, 0.0, None, &recent,
+        );
+        if let Some(reason) = crate::shuffle::entry_shuffle_block_reason(
+            rules, state, &symbol, &adj, &recent,
+        ) {
+            return Ok(skip_entry(&symbol, &reason, rules, &active_profile, replay));
+        }
+    }
     if !state.unbracketed_positions.is_empty()
         && rules.execution.require_bracket_before_entry_resume
     {

@@ -175,7 +175,9 @@ pub fn record_sim_entry(
     kind: StrategyKind,
     signal: &Value,
 ) -> Result<Value> {
-    if state.trades_capacity_used() >= rules.risk.max_trades_per_day {
+    if rules.risk.max_trades_per_day > 0
+        && state.trades_capacity_used() >= rules.risk.max_trades_per_day
+    {
         return Ok(json!({
             "fill_status": "SKIPPED",
             "reason": "max_trades_per_day reached",

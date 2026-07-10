@@ -90,12 +90,13 @@ pub fn capital_lines(ctx: &WatchContext) -> Vec<Line<'static>> {
 }
 
 pub fn position_lines(ctx: &WatchContext) -> Vec<Line<'static>> {
-    crate::ui::live::position_monitor_lines(
+    let monitors = crate::ui::live::list_position_monitors(
         &ctx.rules,
         &ctx.state,
         ctx.live.as_ref(),
         chrono::Utc::now(),
-    )
+    );
+    crate::ui::positions_panel::position_preview_lines(&monitors)
 }
 
 pub fn position_rules_context_lines(ctx: &WatchContext) -> Vec<Line<'static>> {

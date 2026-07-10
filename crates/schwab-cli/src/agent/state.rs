@@ -55,6 +55,9 @@ pub struct AgentState {
     /// Set after a thesis-driven exit — prioritizes redeploy scan on this underlying.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redeploy_signal: Option<RedeploySignal>,
+    /// Last options regime snapshot (strategy selection).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_regime: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

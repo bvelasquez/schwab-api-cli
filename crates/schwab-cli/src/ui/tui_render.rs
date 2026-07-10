@@ -5,7 +5,6 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Gauge;
 
 use super::agent_health::{format_tick_error, SharedAgentHealth};
-use super::spread_live::{spread_monitor_lines, SpreadLiveSnapshot};
 use super::context::DashboardContext;
 use super::market_status::market_label;
 use super::watch::WatchAgentMode;
@@ -378,13 +377,6 @@ pub fn activity_lines(ctx: &DashboardContext) -> Vec<Line<'static>> {
             ])
         })
         .collect()
-}
-
-pub fn position_lines(
-    ctx: &DashboardContext,
-    live: Option<&SpreadLiveSnapshot>,
-) -> Vec<Line<'static>> {
-    spread_monitor_lines(&ctx.rules, &ctx.state, live)
 }
 
 /// Compact latest LLM review for the overview panel.

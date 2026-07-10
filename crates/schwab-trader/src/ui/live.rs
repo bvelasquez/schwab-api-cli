@@ -43,7 +43,9 @@ pub struct PositionMonitorView {
     pub pct_above_stop: f64,
     pub imminent_exit: Option<&'static str>,
     pub hold_days: u32,
+    pub hold_minutes: u32,
     pub time_stop_days: u32,
+    pub time_stop_minutes: u32,
     pub min_hold_days: u32,
     pub oco_label: String,
     pub quote_age_secs: Option<i64>,
@@ -106,6 +108,7 @@ pub fn build_position_monitor(
     let pct_toward_target = ((last - pos.entry_price) / target_span * 100.0).clamp(-100.0, 150.0);
 
     let hold_days = (now - pos.opened_at).num_days().max(0) as u32;
+    let hold_minutes = (now - pos.opened_at).num_minutes().max(0) as u32;
     let imminent_exit = exit_reason_for_position_at(&effective, pos, last, now);
 
     let oco_label = if has_working_broker_oco(pos) {
@@ -139,7 +142,9 @@ pub fn build_position_monitor(
         pct_above_stop,
         imminent_exit,
         hold_days,
+        hold_minutes,
         time_stop_days: effective.playbook.exit.time_stop_days,
+        time_stop_minutes: effective.playbook.exit.time_stop_minutes,
         min_hold_days: effective.playbook.holding_period.min_days,
         oco_label,
         quote_age_secs,
@@ -162,138 +167,89 @@ pub fn exit_rail(stop: f64, entry: f64, target: f64, last: f64, width: usize) ->
     chars.into_iter().collect()
 }
 
-pub fn pnl_style(pnl_pct: f64) -> Style {
-    if pnl_pct >= 1.0 {
-        Style::default().fg(Color::Green)
-    } else if pnl_pct <= -1.0 {
-        Style::default().fg(Color::Red)
-    } else if pnl_pct >= 0.0 {
-        Style::default().fg(Color::LightGreen)
+pub(crate) fn exit_rail_progress_labels(m: &PositionMonitorView) -> String {
+    if m.last_price < m.entry_price - f64::EPSILON {
+        let span = (m.entry_price - m.stop_price).max(0.01);
+        let toward_stop =
+            ((m.entry_price - m.last_price) / span * 100.0).clamp(0.0, 200.0);
+        format!(
+            "  {toward_stop:.0}% toward stop  {:.0}% above stop",
+            m.pct_above_stop
+        )
     } else {
-        Style::default().fg(Color::Yellow)
+        format!(
+            "  {:.0}%→target  {:.0}% above stop",
+            m.pct_toward_target.max(0.0),
+            m.pct_above_stop
+        )
     }
 }
 
-pub fn position_monitor_lines(
+#[derive(Debug, Clone, Copy)]
+pub struct PositionHealth {
+    pub label: &'static str,
+    pub arrow: &'static str,
+    pub color: Color,
+}
+
+pub fn position_health(m: &PositionMonitorView) -> PositionHealth {
+    if m.imminent_exit.is_some() {
+        return PositionHealth {
+            label: "EXIT SOON",
+            arrow: "!",
+            color: Color::Red,
+        };
+    }
+    if m.pnl_pct <= -3.0 || m.pct_above_stop <= 25.0 {
+        return PositionHealth {
+            label: "LOSING",
+            arrow: "▼",
+            color: Color::Red,
+        };
+    }
+    if m.pnl_pct < 0.0 || m.pct_above_stop <= 40.0 {
+        return PositionHealth {
+            label: "AT RISK",
+            arrow: "▼",
+            color: Color::Yellow,
+        };
+    }
+    if m.pct_toward_target >= 80.0 {
+        return PositionHealth {
+            label: "NEAR TARGET",
+            arrow: "▲▲",
+            color: Color::LightGreen,
+        };
+    }
+    if m.pnl_pct > 0.0 {
+        return PositionHealth {
+            label: "WINNING",
+            arrow: "▲",
+            color: Color::Green,
+        };
+    }
+    PositionHealth {
+        label: "HOLDING",
+        arrow: "═",
+        color: Color::Cyan,
+    }
+}
+
+pub fn list_position_monitors(
     rules: &TraderRules,
     state: &TraderState,
     live: Option<&WatchLiveSnapshot>,
     now: DateTime<Utc>,
-) -> Vec<Line<'static>> {
-    if state.open_positions.is_empty() {
-        return vec![Line::from("(no open swing positions)")];
-    }
-
-    let mut lines = Vec::new();
+) -> Vec<PositionMonitorView> {
     let mut positions: Vec<_> = state.open_positions.values().collect();
     positions.sort_by(|a, b| a.symbol.cmp(&b.symbol));
-
-    for pos in positions {
-        let quote = live
-            .and_then(|l| l.quotes.get(&pos.symbol.to_uppercase()));
-        let m = build_position_monitor(rules, state, pos, quote, now);
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("{} ", m.symbol),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(format!(
-                "x{:.2}  last ${:.2}",
-                m.quantity, m.last_price
-            )),
-        ]));
-
-        let bid_ask = match (m.bid, m.ask) {
-            (Some(b), Some(a)) => format!("  bid ${b:.2}  ask ${a:.2}"),
-            _ => String::new(),
-        };
-        let age = m
-            .quote_age_secs
-            .map(|s| format!("  quote {s}s ago"))
-            .unwrap_or_else(|| "  (stale — no live quote)".into());
-
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("{:+.2}%  {:+.2}", m.pnl_pct, m.pnl_usd),
-                pnl_style(m.pnl_pct),
-            ),
-            Span::raw(format!(" USD{bid_ask}{age}")),
-        ]));
-
-        lines.push(Line::from(format!(
-            "stop ${:.2}  entry ${:.2}  target ${:.2}",
-            m.stop_price, m.entry_price, m.profit_limit
-        )));
-
-        let rail = exit_rail(
-            m.stop_price,
-            m.entry_price,
-            m.profit_limit,
-            m.last_price,
-            28,
-        );
-        lines.push(Line::from(vec![
-            Span::styled("rail ", Style::default().fg(Color::DarkGray)),
-            Span::raw(rail),
-            Span::styled(
-                format!(
-                    "  {:.0}%→target  {:.0}% above stop",
-                    m.pct_toward_target, m.pct_above_stop
-                ),
-                Style::default().fg(Color::DarkGray),
-            ),
-        ]));
-
-        let hold = if rules.is_intraday() {
-            format!(
-                "hold {}m / {}m time stop",
-                (now - pos.opened_at).num_minutes().max(0),
-                rules.playbook.exit.time_stop_minutes
-            )
-        } else {
-            format!(
-                "hold day {} / {} time stop (min {}d)",
-                m.hold_days, m.time_stop_days, m.min_hold_days
-            )
-        };
-        lines.push(Line::from(format!("{hold}  │  {}", m.oco_label)));
-
-        if let Some(reason) = m.imminent_exit {
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!("⚠ EXIT NOW: {reason}"),
-                    Style::default()
-                        .fg(Color::Red)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]));
-        } else if m.pct_toward_target >= 80.0 {
-            lines.push(Line::from(vec![Span::styled(
-                format!("▲ near profit target ({:.0}% of way)", m.pct_toward_target),
-                Style::default().fg(Color::Green),
-            )]));
-        } else if m.pct_above_stop <= 25.0 {
-            lines.push(Line::from(vec![Span::styled(
-                format!("▼ near stop ({:.0}% above stop floor)", m.pct_above_stop),
-                Style::default().fg(Color::Red),
-            )]));
-        }
-
-        lines.push(Line::from(""));
-    }
-
-    if let Some(live) = live {
-        if let Some(err) = &live.last_error {
-            lines.push(Line::from(vec![Span::styled(
-                format!("quote feed: {err}"),
-                Style::default().fg(Color::Yellow),
-            )]));
-        }
-    }
-
-    lines
+    positions
+        .into_iter()
+        .map(|pos| {
+            let quote = live.and_then(|l| l.quotes.get(&pos.symbol.to_uppercase()));
+            build_position_monitor(rules, state, pos, quote, now)
+        })
+        .collect()
 }
 
 pub fn regime_and_rules_lines(ctx: &crate::ui::context::WatchContext) -> Vec<Line<'static>> {
@@ -384,6 +340,14 @@ mod tests {
     }
 
     #[test]
+    fn exit_rail_right_is_toward_target_when_winning() {
+        let winning = exit_rail(100.0, 110.0, 120.0, 115.0, 28);
+        let entry = winning.find('│').unwrap();
+        let mark = winning.find('●').unwrap();
+        assert!(mark > entry);
+    }
+
+    #[test]
     fn pnl_pct_computed() {
         let rules = TraderRules::default();
         let state = TraderState::default();
@@ -412,5 +376,36 @@ mod tests {
         let m = build_position_monitor(&rules, &state, &pos, Some(&q), Utc::now());
         assert!((m.pnl_pct - 5.0).abs() < 0.01);
         assert!(m.pct_toward_target > 0.0);
+    }
+
+    #[test]
+    fn exit_rail_labels_toward_stop_when_losing() {
+        let rules = TraderRules::default();
+        let state = TraderState::default();
+        let pos = SwingPosition {
+            position_id: "t".into(),
+            symbol: "AMD".into(),
+            account_hash: "a".into(),
+            quantity: 1.0,
+            entry_price: 110.0,
+            opened_at: Utc::now(),
+            stop_price: 100.0,
+            profit_limit: 120.0,
+            stop_risk_usd: 10.0,
+            market_value_usd: 0.0,
+            oco_order_id: None,
+            exit_plan_version: 1,
+            ..Default::default()
+        };
+        let q = QuoteTick {
+            symbol: "AMD".into(),
+            last: 102.0,
+            bid: None,
+            ask: None,
+            fetched_at: Utc::now(),
+        };
+        let m = build_position_monitor(&rules, &state, &pos, Some(&q), Utc::now());
+        let labels = exit_rail_progress_labels(&m);
+        assert!(labels.contains("toward stop"));
     }
 }

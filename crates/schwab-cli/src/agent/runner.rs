@@ -33,6 +33,7 @@ use super::exits::{
 };
 use super::llm::OpenRouterClient;
 use super::market_context::{market_context_summary_for_llm, vertical_entry_market_context};
+use super::regime::{detect_options_regime, OptionsRegimeSnapshot};
 use super::spread_analytics::{analytics_from_json, entry_analytics_pass};
 use super::paths::{active_state_path, load_agent_state, load_sim_agent_state};
 use super::sim::{ensure_ledger, record_sim_entry, record_sim_exit};
@@ -318,8 +319,30 @@ pub async fn tick_once(
         None
     };
 
-    let entries_paused = state.trades_capacity_used() >= rules.risk.max_trades_per_day;
+    let entries_paused = rules.risk.max_trades_per_day > 0
+        && state.trades_capacity_used() >= rules.risk.max_trades_per_day;
     let blocked_events_active = !rules.risk.blocked_events.is_empty();
+
+    let mut regime_snap: Option<OptionsRegimeSnapshot> = None;
+    if rules.regime.enabled && !entries_paused && !blocked_events_active {
+        match detect_options_regime(market, &rules.regime).await {
+            Ok(snap) => {
+                state.last_regime = Some(snap.to_json());
+                if snap.pause_entries {
+                    result.skipped.push(format!(
+                        "regime pause — {} (preferred={})",
+                        snap.class, snap.preferred_strategy
+                    ));
+                }
+                regime_snap = Some(snap);
+            }
+            Err(e) => {
+                result
+                    .skipped
+                    .push(format!("regime detect failed (continuing with defaults): {e:#}"));
+            }
+        }
+    }
 
     // Exit evaluation and position monitoring (always runs when market is open)
     if runtime.simulate {
@@ -425,15 +448,30 @@ pub async fn tick_once(
 
     // Entry scan (signals collected; execution after LLM review)
     let mut pending_entries: Vec<(String, StrategyKind, Value)> = Vec::new();
+    let regime_pause = regime_snap.as_ref().is_some_and(|s| s.pause_entries);
+    let preferred = regime_snap
+        .as_ref()
+        .map(|s| s.preferred_strategy.as_str())
+        .unwrap_or("put_credit");
+
     if entries_paused {
         result.skipped.push(format!(
-            "new entries paused — max_trades_per_day ({}) reached or reserved by pending entries",
+            "new entries paused — max_trades_per_day ({}) reached or reserved by pending entries \
+             (soft churn cap; hard gates are max_open_positions + portfolio/trade risk)",
             rules.risk.max_trades_per_day
         ));
     } else if blocked_events_active {
         result.skipped.push(format!(
             "new entries paused — blocked_events active: {}",
             rules.risk.blocked_events.join(", ")
+        ));
+    } else if regime_pause || preferred.eq_ignore_ascii_case("pause") {
+        result.skipped.push(format!(
+            "new entries paused — hostile/pause regime ({})",
+            regime_snap
+                .as_ref()
+                .map(|s| s.class.as_str())
+                .unwrap_or("pause")
         ));
     } else if !any_entry_slots_available(rules, state) {
         result
@@ -459,6 +497,25 @@ pub async fn tick_once(
                 }
             }
         }
+        let (want_vertical, want_condor, vertical_type) = if rules.regime.enabled {
+            let want_vertical = preferred.eq_ignore_ascii_case("put_credit")
+                || preferred.eq_ignore_ascii_case("call_credit");
+            let want_condor = preferred.eq_ignore_ascii_case("iron_condor");
+            let vertical_type = if preferred.eq_ignore_ascii_case("call_credit") {
+                "call_credit"
+            } else {
+                "put_credit"
+            };
+            (want_vertical, want_condor, vertical_type)
+        } else {
+            // Legacy: scan configured vertical type + iron condor when enabled.
+            (
+                true,
+                true,
+                rules.entry_rules.vertical.r#type.as_str(),
+            )
+        };
+
         for account in rules.enabled_accounts() {
             for underlying in &scan_watchlist {
                 let sym = underlying.to_uppercase();
@@ -472,9 +529,17 @@ pub async fn tick_once(
                     continue;
                 }
 
-                if rules.strategies.vertical.enabled {
-                    match evaluate_vertical_entry(market, rules, &sym, today, state, &account.hash)
-                        .await
+                if rules.strategies.vertical.enabled && want_vertical {
+                    match evaluate_vertical_entry(
+                        market,
+                        rules,
+                        &sym,
+                        today,
+                        state,
+                        &account.hash,
+                        vertical_type,
+                    )
+                    .await
                     {
                         Ok(Some(signal)) => {
                             pending_entries.push((
@@ -488,7 +553,7 @@ pub async fn tick_once(
                     }
                 }
 
-                if rules.strategies.iron_condor.enabled {
+                if rules.strategies.iron_condor.enabled && want_condor {
                     match evaluate_condor_entry(market, rules, &sym, today, state, &account.hash)
                         .await
                     {
@@ -504,6 +569,21 @@ pub async fn tick_once(
                     }
                 }
             }
+        }
+        if rules.regime.enabled {
+            result.skipped.push(format!(
+                "regime={} preferred={} vix={}",
+                regime_snap
+                    .as_ref()
+                    .map(|s| s.class.as_str())
+                    .unwrap_or("?"),
+                preferred,
+                regime_snap
+                    .as_ref()
+                    .and_then(|s| s.vix)
+                    .map(|v| format!("{v:.1}"))
+                    .unwrap_or_else(|| "?".into())
+            ));
         }
     }
 
@@ -548,6 +628,7 @@ pub async fn tick_once(
                 "at_open": result.at_open,
                 "mechanical_alert": mechanical_alert,
                 "market": market_context_summary_for_llm(),
+                "regime": state.last_regime.clone(),
                 "exit_rules": super::exits::exit_rules_summary(&rules.exit_rules),
                 "open_positions": result.monitored_positions,
                 "open_playbook": open_playbook_for_llm,
@@ -1270,6 +1351,7 @@ async fn evaluate_vertical_entry(
     today: NaiveDate,
     state: &AgentState,
     account_hash: &str,
+    spread_type: &str,
 ) -> Result<Option<Value>> {
     let entry = &rules.entry_rules.vertical;
     let open_count = state.count_open_for_strategy(account_hash, StrategyKind::Vertical);
@@ -1277,19 +1359,27 @@ async fn evaluate_vertical_entry(
         return Ok(None);
     }
 
+    let is_put = !spread_type.eq_ignore_ascii_case("call_credit");
+    let contract_type = if is_put { "PUT" } else { "CALL" };
+    let map_key = if is_put {
+        "putExpDateMap"
+    } else {
+        "callExpDateMap"
+    };
+
     let chain = market
         .chains()
         .get(&ChainQuery {
             symbol: underlying,
-            contract_type: Some("PUT"),
+            contract_type: Some(contract_type),
             strike_count: Some(50),
             include_underlying_quote: Some(true),
             ..Default::default()
         })
         .await?;
 
-    let (expiry, put_map) =
-        pick_expiry_map(&chain, "putExpDateMap", entry.dte_min, entry.dte_max, today)?;
+    let (expiry, strike_map) =
+        pick_expiry_map(&chain, map_key, entry.dte_min, entry.dte_max, today)?;
     let underlying_price = chain
         .pointer("/underlying/last")
         .or_else(|| chain.pointer("/underlyingPrice"))
@@ -1300,17 +1390,21 @@ async fn evaluate_vertical_entry(
         return Ok(None);
     }
 
-    let short_strike =
-        pick_strike_by_delta(&put_map, entry.short_delta_min, entry.short_delta_max, true)
-            .or_else(|| pick_otm_strike(&put_map, underlying_price, 0.10, true).ok())
-            .context("no suitable short strike")?;
-    let long_strike = pick_wing_strike(&put_map, short_strike, entry.max_width, true)?;
-    let credit = estimate_spread_credit(&put_map, short_strike, long_strike)?;
+    let short_strike = pick_strike_by_delta(
+        &strike_map,
+        entry.short_delta_min,
+        entry.short_delta_max,
+        is_put,
+    )
+    .or_else(|| pick_otm_strike(&strike_map, underlying_price, 0.05, is_put).ok())
+    .context("no suitable short strike")?;
+    let long_strike = pick_wing_strike(&strike_map, short_strike, entry.max_width, is_put)?;
+    let credit = estimate_spread_credit(&strike_map, short_strike, long_strike)?;
     if credit < entry.min_credit {
         return Ok(None);
     }
     let width = (short_strike - long_strike).abs();
-    if !entry_quality_ok(&put_map, short_strike, long_strike, width, credit, entry) {
+    if !entry_quality_ok(&strike_map, short_strike, long_strike, width, credit, entry) {
         return Ok(None);
     }
 
@@ -1319,12 +1413,13 @@ async fn evaluate_vertical_entry(
         underlying,
         expiry,
         today,
-        &put_map,
+        &strike_map,
         short_strike,
         long_strike,
         width,
         credit,
         entry.max_contracts_per_trade as f64,
+        is_put,
     );
 
     let analytics = analytics_from_json(market_context.get("analytics").unwrap_or(&json!({})));
@@ -1337,12 +1432,16 @@ async fn evaluate_vertical_entry(
         }
     }
 
+    let right = if is_put { 'P' } else { 'C' };
     let candidate_id = candidate_position_id(
         account_hash,
         underlying,
         &expiry.to_string(),
         StrategyKind::Vertical.as_str(),
-        vec![('P', short_strike, "S"), ('P', long_strike, "L")],
+        vec![
+            (right, short_strike, "S"),
+            (right, long_strike, "L"),
+        ],
     );
     if state.open_positions.contains_key(&candidate_id)
         || state.has_pending_position(&candidate_id)
@@ -1351,10 +1450,11 @@ async fn evaluate_vertical_entry(
         return Ok(None);
     }
 
+    let resolved_type = if is_put { "put_credit" } else { "call_credit" };
     let params = VerticalParams {
         underlying: underlying.to_string(),
         expiry: expiry.to_string(),
-        spread_type: entry.r#type.clone(),
+        spread_type: resolved_type.to_string(),
         short_strike,
         long_strike,
         contracts: entry.max_contracts_per_trade as f64,
@@ -1372,6 +1472,7 @@ async fn evaluate_vertical_entry(
         "params": params,
         "estimated_credit": credit,
         "market_context": market_context,
+        "regime_preferred": resolved_type,
     })))
 }
 
@@ -1534,7 +1635,7 @@ fn pick_nearest_strike(strike_map: &Value, target: f64) -> Result<f64> {
         .context("no strike candidates")
 }
 
-/// Pick put strike whose |delta| is closest to the middle of [delta_min, delta_max].
+/// Pick strike whose |delta| is closest to the middle of [delta_min, delta_max].
 fn pick_strike_by_delta(
     strike_map: &Value,
     delta_min: f64,
@@ -1547,8 +1648,15 @@ fn pick_strike_by_delta(
     for (key, contracts) in obj {
         let strike = key.parse::<f64>().ok()?;
         let delta = contracts.as_array()?.first()?.get("delta")?.as_f64()?;
-        let abs_delta = delta.abs();
+        // Puts have negative delta; calls positive — skip wrong side.
         if puts && delta > 0.0 {
+            continue;
+        }
+        if !puts && delta < 0.0 {
+            continue;
+        }
+        let abs_delta = delta.abs();
+        if abs_delta < delta_min || abs_delta > delta_max {
             continue;
         }
         let dist = (abs_delta - target).abs();
@@ -1718,7 +1826,9 @@ async fn maybe_execute_entry(
         return Ok(None);
     }
 
-    if state.trades_capacity_used() >= rules.risk.max_trades_per_day {
+    if rules.risk.max_trades_per_day > 0
+        && state.trades_capacity_used() >= rules.risk.max_trades_per_day
+    {
         return Ok(Some(json!({
             "fill_status": "SKIPPED",
             "reason": "max_trades_per_day reached or reserved by pending entries",
@@ -2082,6 +2192,7 @@ mod llm_schedule_tests {
                 ..Default::default()
             },
             risk: RiskConfig::default(),
+            regime: Default::default(),
             execution: ExecutionConfig::default(),
             llm: LlmConfig {
                 enabled: true,

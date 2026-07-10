@@ -12,19 +12,21 @@ use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Line;
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs, Wrap};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs, Wrap};
 use ratatui::Terminal;
 
 use crate::ui::context::{header_line, WatchContext};
 use crate::ui::health::SharedAgentHealth;
-use crate::ui::live::WatchLiveSnapshot;
+use crate::ui::live::{list_position_monitors, WatchLiveSnapshot};
+use crate::ui::positions_panel::{positions_content_height, render_positions_panel, CARD_HEIGHT};
 use crate::ui::render::{
     candidate_lines, capital_lines, entry_attempt_lines, journal_lines, llm_lines, log_lines,
     market_conditions_panel_lines, overview_agent_lines, position_lines,
     position_rules_context_lines, rules_summary,
 };
 use schwab_cli::market_conditions::MarketConditionsSnapshot;
+use schwab_cli::ui::theme::{self, footer_block, key_style};
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(3);
 
@@ -161,8 +163,12 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
                         KeyCode::Char('4') => tab = WatchTab::Capital,
                         KeyCode::Char('5') => tab = WatchTab::Journal,
                         KeyCode::Char('6') => tab = WatchTab::Llm,
-                        KeyCode::Char('j') | KeyCode::Down => scroll_tab(tab, &mut scroll, 1),
-                        KeyCode::Char('k') | KeyCode::Up => scroll_tab(tab, &mut scroll, -1),
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            scroll_tab(tab, &mut scroll, 1, &ctx)
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            scroll_tab(tab, &mut scroll, -1, &ctx)
+                        }
                         KeyCode::Char('r') => match load_watch_context(&config.rules_path, &config.live) {
                             Ok(c) => {
                                 ctx = c;
@@ -200,12 +206,28 @@ fn load_watch_context(
     WatchContext::load_with_live(rules_path, snapshot)
 }
 
-fn scroll_tab(tab: WatchTab, state: &mut WatchUiState, delta: i16) {
+fn scroll_tab(tab: WatchTab, state: &mut WatchUiState, delta: i16, ctx: &WatchContext) {
+    if tab == WatchTab::Positions {
+        let monitors = list_position_monitors(
+            &ctx.rules,
+            &ctx.state,
+            ctx.live.as_ref(),
+            chrono::Utc::now(),
+        );
+        let max = positions_content_height(&monitors).saturating_sub(CARD_HEIGHT);
+        let s = &mut state.positions_scroll.scroll;
+        if delta < 0 {
+            *s = s.saturating_sub(delta.unsigned_abs());
+        } else {
+            *s = (*s + delta as u16).min(max);
+        }
+        return;
+    }
+
     let scroll = match tab {
         WatchTab::Journal => &mut state.journal_scroll.scroll,
         WatchTab::Llm => &mut state.llm_scroll.scroll,
         WatchTab::Overview => &mut state.log_scroll.scroll,
-        WatchTab::Positions => &mut state.positions_scroll.scroll,
         _ => return,
     };
     if delta < 0 {
@@ -220,15 +242,7 @@ fn wrap_paragraph<'a>(content: impl Into<ratatui::text::Text<'a>>) -> Paragraph<
 }
 
 fn panel_block(title: &str) -> Block<'_> {
-    Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .title(format!(" {title} "))
-        .title_style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
+    theme::panel_block(title)
 }
 
 fn draw_ui(
@@ -247,33 +261,46 @@ fn draw_ui(
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(4),
-            Constraint::Length(1),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Min(6),
+            Constraint::Length(3),
         ])
         .split(area);
 
-    f.render_widget(wrap_paragraph(header_line(ctx, agent_mode, dry_run, simulate)), outer[0]);
+    f.render_widget(
+        wrap_paragraph(header_line(ctx, agent_mode, dry_run, simulate))
+            .block(theme::chrome_block("Schwab Trader")),
+        outer[0],
+    );
 
     let titles: Vec<Line> = WatchTab::all()
         .iter()
-        .map(|t| Line::from(t.title()))
+        .enumerate()
+        .map(|(i, t)| {
+            Line::from(vec![
+                Span::styled(format!(" {} ", i + 1), Style::default().fg(theme::MUTED)),
+                Span::raw(t.title()),
+            ])
+        })
         .collect();
     let tabs = Tabs::new(titles)
-        .style(Style::default().fg(Color::DarkGray))
+        .style(Style::default().fg(theme::MUTED))
         .highlight_style(
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         )
-        .select(tab as usize);
-    f.render_widget(tabs, outer[1]);
+        .divider("│")
+        .select(tab as usize)
+        .padding(" ", " ");
+    f.render_widget(tabs.block(footer_block()), outer[1]);
 
+    let content = outer[2];
     match tab {
         WatchTab::Overview => render_overview(
             f,
-            outer[2],
+            content,
             ctx,
             agent_mode,
             dry_run,
@@ -282,43 +309,24 @@ fn draw_ui(
             scroll,
             market_conditions,
         ),
-        WatchTab::Positions => {
-            let area = outer[2];
-            let split = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Length(8), Constraint::Min(4)])
-                .split(area);
-            f.render_widget(
-                wrap_paragraph(position_rules_context_lines(ctx))
-                    .block(panel_block("Regime / Rules")),
-                split[0],
-            );
-            render_scroll(
-                f,
-                split[1],
-                position_lines(ctx),
-                scroll.positions_scroll.scroll,
-                "Live Positions",
-                live_quote_footer(ctx),
-            );
-        }
+        WatchTab::Positions => render_positions_tab(f, content, ctx, scroll),
         WatchTab::Candidates => {
             f.render_widget(
                 wrap_paragraph(candidate_lines(ctx)).block(panel_block("Scan / Candidates")),
-                outer[2],
+                content,
             );
         }
         WatchTab::Capital => {
             f.render_widget(
                 wrap_paragraph(capital_lines(ctx)).block(panel_block("Capital Ledger")),
-                outer[2],
+                content,
             );
         }
         WatchTab::Journal => {
             let bottom = ctx.journal_file().display().to_string();
             render_scroll(
                 f,
-                outer[2],
+                content,
                 journal_lines(ctx),
                 scroll.journal_scroll.scroll,
                 "Journal",
@@ -328,7 +336,7 @@ fn draw_ui(
         WatchTab::Llm => {
             render_scroll(
                 f,
-                outer[2],
+                content,
                 llm_lines(ctx),
                 scroll.llm_scroll.scroll,
                 "LLM Review",
@@ -338,15 +346,20 @@ fn draw_ui(
     }
 
     let footer = Line::from(vec![
-        ratatui::text::Span::styled(" Tab/1-6 ", Style::default().fg(Color::DarkGray)),
-        ratatui::text::Span::styled("j/k scroll ", Style::default().fg(Color::DarkGray)),
-        ratatui::text::Span::styled("r refresh ", Style::default().fg(Color::DarkGray)),
-        ratatui::text::Span::styled("q quit ", Style::default().fg(Color::DarkGray)),
-        ratatui::text::Span::styled(live_quote_footer(ctx), Style::default().fg(Color::DarkGray)),
-        ratatui::text::Span::raw(" "),
-        ratatui::text::Span::styled(status_msg, Style::default().fg(Color::DarkGray)),
+        Span::styled(" Tab ", key_style()),
+        Span::styled("/1-6 switch  ", theme::label_style()),
+        Span::styled("j/k ", key_style()),
+        Span::styled("scroll  ", theme::label_style()),
+        Span::styled("r ", key_style()),
+        Span::styled("refresh  ", theme::label_style()),
+        Span::styled("q ", key_style()),
+        Span::styled("quit  ", theme::label_style()),
+        Span::styled("│ ", theme::label_style()),
+        Span::styled(live_quote_footer(ctx), theme::label_style()),
+        Span::raw("  "),
+        Span::styled(status_msg, theme::label_style()),
     ]);
-    f.render_widget(wrap_paragraph(footer), outer[3]);
+    f.render_widget(wrap_paragraph(footer).block(footer_block()), outer[3]);
 }
 
 fn live_quote_footer(ctx: &WatchContext) -> String {
@@ -365,6 +378,62 @@ fn live_quote_footer(ctx: &WatchContext) -> String {
         }
     }
     String::new()
+}
+
+fn render_positions_tab(
+    f: &mut ratatui::Frame,
+    area: Rect,
+    ctx: &WatchContext,
+    scroll: &WatchUiState,
+) {
+    let monitors = list_position_monitors(
+        &ctx.rules,
+        &ctx.state,
+        ctx.live.as_ref(),
+        chrono::Utc::now(),
+    );
+    let count = monitors.len();
+    let title = format!("Live Positions ({count})");
+
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(7), Constraint::Min(8)])
+        .split(area);
+
+    f.render_widget(
+        wrap_paragraph(position_rules_context_lines(ctx))
+            .block(panel_block("Regime / Rules")),
+        outer[0],
+    );
+
+    let vertical = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(outer[1]);
+
+    let inner = panel_block(&title).inner(vertical[0]);
+    f.render_widget(panel_block(&title), vertical[0]);
+    render_positions_panel(
+        f,
+        inner,
+        &monitors,
+        scroll.positions_scroll.scroll,
+        ctx.live.as_ref(),
+        ctx.rules.is_intraday(),
+    );
+
+    let total = positions_content_height(&monitors);
+    if total > inner.height {
+        let mut sb = ScrollbarState::new(total as usize)
+            .position(scroll.positions_scroll.scroll as usize);
+        f.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("↑"))
+                .end_symbol(Some("↓")),
+            vertical[1],
+            &mut sb,
+        );
+    }
 }
 
 fn render_overview(
@@ -431,12 +500,7 @@ fn render_overview(
         wrap_paragraph(if ctx.state.open_positions.is_empty() {
             entry_attempt_lines(ctx)
         } else {
-            let mut lines = position_lines(ctx);
-            if lines.len() > 6 {
-                lines.truncate(6);
-                lines.push(Line::from("… see Positions tab"));
-            }
-            lines
+            position_lines(ctx)
         })
         .block(panel_block(if ctx.state.open_positions.is_empty() {
             "Last Entry"
