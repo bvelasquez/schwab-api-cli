@@ -528,6 +528,9 @@ pub async fn tick_once(
                 {
                     continue;
                 }
+                if underlying_entry_cap_reached(rules, state, &account.hash, &sym) {
+                    continue;
+                }
 
                 if rules.strategies.vertical.enabled && want_vertical {
                     match evaluate_vertical_entry(
@@ -1156,6 +1159,20 @@ fn redeploy_cooldown_active(rules: &RulesConfig, sig: &RedeploySignal) -> bool {
         return false;
     }
     Utc::now().signed_duration_since(sig.at).num_minutes() < cooldown as i64
+}
+
+fn underlying_entry_cap_reached(
+    rules: &RulesConfig,
+    state: &AgentState,
+    account_hash: &str,
+    underlying: &str,
+) -> bool {
+    let Some(cap) = rules.risk.max_open_for_underlying(underlying) else {
+        return false;
+    };
+    let open = state.count_open_for_underlying(account_hash, underlying);
+    let pending = state.pending_entry_count_for_underlying(account_hash, underlying);
+    open + pending >= cap
 }
 
 fn maybe_clear_stale_redeploy(state: &mut AgentState) {
@@ -2315,6 +2332,28 @@ mod llm_schedule_tests {
         });
         let wl = watchlist_for_scan(&rules, &state);
         assert_eq!(wl.first().map(String::as_str), Some("IWM"));
+    }
+
+    #[test]
+    fn underlying_entry_cap_blocks_second_iwm_spread() {
+        let mut rules = test_rules(2);
+        rules
+            .risk
+            .max_open_per_underlying
+            .insert("IWM".into(), 1);
+        let state = state_with_open_position();
+        assert!(underlying_entry_cap_reached(
+            &rules,
+            &state,
+            "ACC",
+            "IWM"
+        ));
+        assert!(!underlying_entry_cap_reached(
+            &rules,
+            &state,
+            "ACC",
+            "SPY"
+        ));
     }
 
     #[test]

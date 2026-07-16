@@ -200,6 +200,31 @@ impl AgentState {
             .count() as u32
     }
 
+    pub fn count_open_for_underlying(&self, account_hash: &str, underlying: &str) -> u32 {
+        self.open_positions
+            .values()
+            .filter(|p| {
+                p.account_hash == account_hash && p.underlying.eq_ignore_ascii_case(underlying)
+            })
+            .count() as u32
+    }
+
+    pub fn pending_entry_count_for_underlying(
+        &self,
+        account_hash: &str,
+        underlying: &str,
+    ) -> u32 {
+        self.pending_orders
+            .iter()
+            .filter(|p| {
+                p.action == PendingOrderAction::Entry
+                    && p.account_hash == account_hash
+                    && position_id_underlying(&p.position_id)
+                        .is_some_and(|u| u.eq_ignore_ascii_case(underlying))
+            })
+            .count() as u32
+    }
+
     pub fn pending_entry_count(&self) -> u32 {
         self.pending_orders
             .iter()
@@ -306,6 +331,10 @@ pub fn state_summary(state: &AgentState) -> Value {
         "pending_orders_detail": state.pending_orders,
         "recent_actions": state.last_actions.iter().rev().take(10).collect::<Vec<_>>(),
     })
+}
+
+fn position_id_underlying(position_id: &str) -> Option<&str> {
+    position_id.split('|').nth(1)
 }
 
 #[cfg(test)]
