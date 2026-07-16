@@ -280,6 +280,9 @@ pub struct RiskConfig {
     /// `0` = unlimited (no daily trade-count pause).
     pub max_trades_per_day: u32,
     pub allowed_underlyings: Vec<String>,
+    /// Optional per-symbol open-slot caps (e.g. SPY: 2, IWM: 1). Keys are case-insensitive.
+    #[serde(default)]
+    pub max_open_per_underlying: std::collections::HashMap<String, u32>,
     pub blocked_events: Vec<String>,
 }
 
@@ -290,8 +293,18 @@ impl Default for RiskConfig {
             max_risk_per_trade_usd: 2_000.0,
             max_trades_per_day: 3,
             allowed_underlyings: vec!["SPY".into(), "QQQ".into(), "IWM".into()],
+            max_open_per_underlying: std::collections::HashMap::new(),
             blocked_events: vec![],
         }
+    }
+}
+
+impl RiskConfig {
+    pub fn max_open_for_underlying(&self, underlying: &str) -> Option<u32> {
+        self.max_open_per_underlying
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(underlying))
+            .map(|(_, v)| *v)
     }
 }
 
