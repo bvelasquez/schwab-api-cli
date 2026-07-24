@@ -58,9 +58,9 @@ pub struct WatchConfig {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WatchTab {
     Overview = 0,
-    Rules = 1,
-    Log = 2,
-    Positions = 3,
+    Positions = 1,
+    Rules = 2,
+    Log = 3,
     Llm = 4,
 }
 
@@ -68,9 +68,9 @@ impl WatchTab {
     fn all() -> [WatchTab; 5] {
         [
             WatchTab::Overview,
+            WatchTab::Positions,
             WatchTab::Rules,
             WatchTab::Log,
-            WatchTab::Positions,
             WatchTab::Llm,
         ]
     }
@@ -78,19 +78,19 @@ impl WatchTab {
     fn title(self) -> &'static str {
         match self {
             WatchTab::Overview => "Overview",
+            WatchTab::Positions => "Positions",
             WatchTab::Rules => "Rules",
             WatchTab::Log => "Log",
-            WatchTab::Positions => "Positions",
             WatchTab::Llm => "LLM",
         }
     }
 
     fn next(self) -> Self {
         match self {
-            WatchTab::Overview => WatchTab::Rules,
+            WatchTab::Overview => WatchTab::Positions,
+            WatchTab::Positions => WatchTab::Rules,
             WatchTab::Rules => WatchTab::Log,
-            WatchTab::Log => WatchTab::Positions,
-            WatchTab::Positions => WatchTab::Llm,
+            WatchTab::Log => WatchTab::Llm,
             WatchTab::Llm => WatchTab::Overview,
         }
     }
@@ -158,9 +158,9 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
                         KeyCode::Char('q') | KeyCode::Esc => break,
                         KeyCode::Tab => tab = tab.next(),
                         KeyCode::Char('1') => tab = WatchTab::Overview,
-                        KeyCode::Char('2') => tab = WatchTab::Rules,
-                        KeyCode::Char('3') => tab = WatchTab::Log,
-                        KeyCode::Char('4') => tab = WatchTab::Positions,
+                        KeyCode::Char('2') => tab = WatchTab::Positions,
+                        KeyCode::Char('3') => tab = WatchTab::Rules,
+                        KeyCode::Char('4') => tab = WatchTab::Log,
                         KeyCode::Char('5') => tab = WatchTab::Llm,
                         KeyCode::Char('j') | KeyCode::Down => {
                             scroll_active_tab(tab, &mut state, 1, &ctx)
@@ -241,21 +241,62 @@ fn draw_ui(
     live_spread: Option<&SpreadLiveSnapshot>,
     market_conditions: &Arc<Mutex<MarketConditionsSnapshot>>,
 ) {
+    let exits_armed = agent_health
+        .and_then(|h| h.lock().ok())
+        .map(|g| g.exits_armed())
+        .unwrap_or(true);
+    let auth_required = agent_health
+        .and_then(|h| h.lock().ok())
+        .map(|g| g.auth_required)
+        .unwrap_or(false);
+    let loop_running = agent_health
+        .and_then(|h| h.lock().ok())
+        .map(|g| g.loop_running)
+        .unwrap_or(true);
+
+    let show_banner = matches!(agent_mode, WatchAgentMode::Embedded) && !exits_armed;
+    let mut constraints = vec![Constraint::Length(3)];
+    if show_banner {
+        constraints.push(Constraint::Length(3));
+    }
+    constraints.push(Constraint::Length(3));
+    constraints.push(Constraint::Min(6));
+    constraints.push(Constraint::Length(3));
+
     let outer = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Min(6),
-            Constraint::Length(3),
-        ])
+        .constraints(constraints)
         .split(area);
 
+    let mut idx = 0usize;
     f.render_widget(
         wrap_paragraph(header_line(ctx, agent_mode, agent_health))
             .block(theme::chrome_block("Schwab Options")),
-        outer[0],
+        outer[idx],
     );
+    idx += 1;
+
+    if show_banner {
+        let banner = if auth_required {
+            " AGENT DOWN (auth) — exits not executing — run: schwab auth login "
+        } else if !loop_running {
+            " AGENT DOWN — exits not executing — supervisor stopped "
+        } else {
+            " AGENT DEGRADED — exits not executing — retrying… "
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                banner,
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )))
+            .block(theme::footer_block()),
+            outer[idx],
+        );
+        idx += 1;
+    }
 
     let titles: Vec<Line> = WatchTab::all()
         .iter()
@@ -280,9 +321,11 @@ fn draw_ui(
         .divider("│")
         .select(tab as usize)
         .padding(" ", " ");
-    f.render_widget(tabs.block(theme::footer_block()), outer[1]);
+    f.render_widget(tabs.block(theme::footer_block()), outer[idx]);
+    idx += 1;
 
-    let content = outer[2];
+    let content = outer[idx];
+    idx += 1;
     match tab {
         WatchTab::Overview => render_overview(
             f,
@@ -294,7 +337,9 @@ fn draw_ui(
         ),
         WatchTab::Rules => render_rules_tab(f, content, ctx, state),
         WatchTab::Log => render_log_tab(f, content, ctx, state),
-        WatchTab::Positions => render_positions_tab(f, content, ctx, live_spread, state),
+        WatchTab::Positions => {
+            render_positions_tab(f, content, ctx, live_spread, state, exits_armed)
+        }
         WatchTab::Llm => render_llm_tab(f, content, ctx, state),
     }
 
@@ -312,7 +357,7 @@ fn draw_ui(
     ]);
     f.render_widget(
         wrap_paragraph(footer).block(footer_block()),
-        outer[3],
+        outer[idx],
     );
 }
 
@@ -487,6 +532,7 @@ fn render_positions_tab(
     ctx: &DashboardContext,
     live_spread: Option<&SpreadLiveSnapshot>,
     state: &WatchState,
+    exits_armed: bool,
 ) {
     let monitors = list_spread_monitors(&ctx.rules, &ctx.state, live_spread);
     let spreads = monitors.len();
@@ -504,7 +550,14 @@ fn render_positions_tab(
 
     let inner = panel_block(&title).inner(vertical[0]);
     f.render_widget(panel_block(&title), vertical[0]);
-    render_positions_panel(f, inner, &monitors, state.positions_scroll, live_spread);
+    render_positions_panel(
+        f,
+        inner,
+        &monitors,
+        state.positions_scroll,
+        live_spread,
+        exits_armed,
+    );
 
     let total = positions_content_height(&monitors);
     if total > inner.height {

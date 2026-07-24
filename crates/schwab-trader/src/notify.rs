@@ -199,6 +199,54 @@ pub async fn notify_trading_halted(
         .await;
 }
 
+pub async fn notify_agent_degraded(
+    tg: Option<&TelegramNotifier>,
+    rules: &TraderRules,
+    class: &str,
+    err: &str,
+    consecutive_failures: u32,
+    simulate: bool,
+) {
+    // Avoid Telegram spam: first failure, then every 10th.
+    if consecutive_failures > 1 && consecutive_failures % 10 != 0 {
+        return;
+    }
+    let Some(tg) = tg else { return };
+    if !tg.wants_actions() {
+        return;
+    }
+    let mode = if simulate { "SIM" } else { "LIVE" };
+    let hint = if class == "auth_fatal" {
+        "\nFix: schwab auth login — agent will resume automatically"
+    } else {
+        "\nAgent staying up; backing off and retrying"
+    };
+    let short: String = err.chars().take(280).collect();
+    let _ = tg
+        .send(&format!(
+            "schwab-trader [{}] [{mode}]\n⚠ AGENT DEGRADED ({class}) ×{consecutive_failures}\n{short}{hint}",
+            rules.trader_id
+        ))
+        .await;
+}
+
+pub async fn notify_agent_recovered(
+    tg: Option<&TelegramNotifier>,
+    rules: &TraderRules,
+    after_failures: u32,
+) {
+    let Some(tg) = tg else { return };
+    if !tg.wants_actions() {
+        return;
+    }
+    let _ = tg
+        .send(&format!(
+            "schwab-trader [{}]\n✓ AGENT RECOVERED\nafter {after_failures} failure(s) — exits armed again",
+            rules.trader_id
+        ))
+        .await;
+}
+
 pub async fn notify_profile_change(
     tg: Option<&TelegramNotifier>,
     rules: &TraderRules,

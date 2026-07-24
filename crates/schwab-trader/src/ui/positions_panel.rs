@@ -31,6 +31,7 @@ pub fn render_positions_panel(
     scroll: u16,
     live: Option<&WatchLiveSnapshot>,
     intraday: bool,
+    exits_armed: bool,
 ) {
     if monitors.is_empty() {
         f.render_widget(
@@ -51,7 +52,7 @@ pub fn render_positions_panel(
             height: CARD_HEIGHT,
         };
         if card.y < area.y + area.height && card.y + CARD_HEIGHT > area.y {
-            render_position_card(f, card.intersection(area), m, intraday);
+            render_position_card(f, card.intersection(area), m, intraday, exits_armed);
         }
         y = y.saturating_add(CARD_HEIGHT);
     }
@@ -87,13 +88,16 @@ pub fn render_positions_panel(
 }
 
 /// Compact text preview for the overview tab (first two positions).
-pub fn position_preview_lines(monitors: &[PositionMonitorView]) -> Vec<Line<'static>> {
+pub fn position_preview_lines(
+    monitors: &[PositionMonitorView],
+    exits_armed: bool,
+) -> Vec<Line<'static>> {
     if monitors.is_empty() {
         return vec![Line::from("(no open positions)")];
     }
     let mut lines = Vec::new();
     for m in monitors.iter().take(2) {
-        let health = position_health(m);
+        let health = position_health(m, exits_armed);
         lines.push(Line::from(vec![
             Span::styled(
                 format!("{} ", m.symbol),
@@ -124,14 +128,24 @@ pub fn position_preview_lines(monitors: &[PositionMonitorView]) -> Vec<Line<'sta
     lines
 }
 
-fn render_position_card(f: &mut Frame, area: Rect, m: &PositionMonitorView, intraday: bool) {
-    let health = position_health(m);
+fn render_position_card(
+    f: &mut Frame,
+    area: Rect,
+    m: &PositionMonitorView,
+    intraday: bool,
+    exits_armed: bool,
+) {
+    let health = position_health(m, exits_armed);
     let title = format!(
         "{}  x{:.2}  last ${:.2}",
         m.symbol, m.quantity, m.last_price
     );
     let border_color = if m.imminent_exit.is_some() {
-        theme::LOSS
+        if exits_armed {
+            theme::LOSS
+        } else {
+            theme::WARN
+        }
     } else {
         health.color
     };
@@ -148,7 +162,7 @@ fn render_position_card(f: &mut Frame, area: Rect, m: &PositionMonitorView, intr
         .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
         .split(inner);
 
-    render_metrics_column(f, cols[0], m, &health, intraday);
+    render_metrics_column(f, cols[0], m, &health, intraday, exits_armed);
     render_payoff_chart(f, cols[1], m);
 }
 
@@ -158,6 +172,7 @@ fn render_metrics_column(
     m: &PositionMonitorView,
     health: &super::live::PositionHealth,
     intraday: bool,
+    exits_armed: bool,
 ) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -286,7 +301,13 @@ fn render_metrics_column(
 
     let mut footer = format!("{}  ·  {}", m.oco_label, age);
     if let Some(reason) = m.imminent_exit {
-        footer.push_str(&format!("  ·  EXIT: {reason}"));
+        if exits_armed {
+            footer.push_str(&format!("  ·  EXIT: {reason}"));
+        } else {
+            footer.push_str(&format!(
+                "  ·  PENDING: {reason} (agent down — not executing)"
+            ));
+        }
     }
     f.render_widget(
         Paragraph::new(footer)

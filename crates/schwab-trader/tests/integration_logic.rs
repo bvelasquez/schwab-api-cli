@@ -28,6 +28,10 @@ fn sample_snap() -> TechnicalSnapshot {
         above_sma_50: Some(true),
         intraday: false,
         history_features: None,
+        last_earnings_date: None,
+        estimated_next_earnings: None,
+        days_until_estimated_earnings: None,
+        earnings_estimate_confidence: None
     }
 }
 

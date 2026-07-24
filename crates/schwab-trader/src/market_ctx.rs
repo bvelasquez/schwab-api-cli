@@ -97,6 +97,26 @@ impl MarketCtx {
         }
     }
 
+    /// Quote `fundamental` block (for `lastEarningsDate`). Empty object in replay.
+    pub async fn quote_fundamental(&self, symbol: &str) -> Result<Value> {
+        let symbol = symbol.trim().to_uppercase();
+        match self {
+            Self::Live { market, .. } => {
+                let raw = market
+                    .quotes()
+                    .get_quote(&symbol, Some("quote,fundamental"), None)
+                    .await
+                    .with_context(|| format!("fundamental quote for {symbol}"))?;
+                let entry = extract_quote_entry(&raw, &symbol);
+                Ok(entry
+                    .get("fundamental")
+                    .cloned()
+                    .unwrap_or(serde_json::json!({})))
+            }
+            Self::Replay { .. } => Ok(serde_json::json!({})),
+        }
+    }
+
     pub async fn daily_candles(&self, symbol: &str, min_bars: usize) -> Result<Vec<Candle>> {
         self.daily_candles_with_config(symbol, "year", 1, "daily")
             .await
@@ -267,6 +287,13 @@ fn extract_quote(raw: &Value, symbol: &str) -> Value {
     raw.get("quote")
         .cloned()
         .unwrap_or_else(|| raw.clone())
+}
+
+fn extract_quote_entry(raw: &Value, symbol: &str) -> Value {
+    if let Some(entry) = raw.get(symbol) {
+        return entry.clone();
+    }
+    raw.clone()
 }
 
 fn quote_f64(quote: &Value, field: &str) -> Option<f64> {

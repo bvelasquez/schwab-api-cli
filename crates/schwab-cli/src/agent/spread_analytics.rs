@@ -14,6 +14,10 @@ pub struct SpreadAnalytics {
     pub credit: f64,
     pub dte: i64,
     pub chain_iv_pct: Option<f64>,
+    /// Annualized realized vol (%) of the underlying over the configured lookback.
+    pub realized_vol_pct: Option<f64>,
+    /// `chain_iv_pct / realized_vol_pct` when both are available.
+    pub iv_rv_ratio: Option<f64>,
     pub short_delta: Option<f64>,
     pub long_delta: Option<f64>,
     pub short_theta: Option<f64>,
@@ -45,6 +49,7 @@ pub struct VerticalAnalyticsInput {
     pub credit: f64,
     pub dte: i64,
     pub chain_iv_pct: Option<f64>,
+    pub realized_vol_pct: Option<f64>,
     pub short_delta: Option<f64>,
     pub long_delta: Option<f64>,
     pub short_theta: Option<f64>,
@@ -62,6 +67,12 @@ pub fn compute_vertical_analytics(input: VerticalAnalyticsInput) -> SpreadAnalyt
         .chain_iv_pct
         .or_else(|| strike_iv_fallback(input.short_delta))
         .filter(|v| *v > 0.0);
+
+    let realized_vol_pct = input.realized_vol_pct.filter(|v| *v > 0.0);
+    let iv_rv_ratio = match (iv, realized_vol_pct) {
+        (Some(iv_pct), Some(rv)) if rv > 0.0 => Some(iv_pct / rv),
+        _ => None,
+    };
 
     let (short_otm_pct, distance_to_be_usd, break_even) =
         if input.underlying_price > f64::EPSILON {
@@ -166,6 +177,8 @@ pub fn compute_vertical_analytics(input: VerticalAnalyticsInput) -> SpreadAnalyt
         credit,
         dte: input.dte,
         chain_iv_pct: iv,
+        realized_vol_pct,
+        iv_rv_ratio,
         short_delta: input.short_delta,
         long_delta: input.long_delta,
         short_theta: input.short_theta,
@@ -188,22 +201,38 @@ pub fn compute_vertical_analytics(input: VerticalAnalyticsInput) -> SpreadAnalyt
     }
 }
 
-/// Composite 0–100 score for TUI win-chance meter.
+/// Composite 0–100 path-strength score for credit spreads.
+/// Weights probability / OTM cushion / delta over mark-to-market P&L — options are not stocks.
 pub fn spread_win_score(
     profit_pct: f64,
     analytics: &SpreadAnalytics,
     pct_cushion_from_stop: f64,
 ) -> f64 {
     let pop = analytics.spread_pop_pct.unwrap_or(50.0) / 100.0;
-    let pnl = ((profit_pct + 30.0) / 80.0).clamp(0.0, 1.0);
-    let cushion = (analytics.distance_to_be_pct.unwrap_or(0.0) / 15.0).clamp(0.0, 1.0);
-    let stop_room = (pct_cushion_from_stop / 100.0).clamp(0.0, 1.0);
+    // OTM cushion: ~8% OTM ≈ full score (far from short strike).
+    let otm = (analytics.short_otm_pct.unwrap_or(0.0) / 8.0).clamp(0.0, 1.0);
+    let be_cushion = (analytics.distance_to_be_pct.unwrap_or(0.0) / 12.0).clamp(0.0, 1.0);
     let delta_comfort = analytics
         .short_delta
-        .map(|d| (0.45 - d.abs()) / 0.35)
+        .map(|d| (0.40 - d.abs()) / 0.30)
         .unwrap_or(0.5)
         .clamp(0.0, 1.0);
-    (pop * 0.35 + pnl * 0.25 + cushion * 0.20 + stop_room * 0.10 + delta_comfort * 0.10) * 100.0
+    // Positive net theta helps sellers as time passes.
+    let theta = analytics
+        .net_theta_per_day_usd
+        .map(|t| ((t + 0.5) / 3.0).clamp(0.0, 1.0))
+        .unwrap_or(0.5);
+    // MTM is secondary — temporary debit widenings should not dominate.
+    let pnl = ((profit_pct + 40.0) / 100.0).clamp(0.0, 1.0);
+    let stop_room = (pct_cushion_from_stop / 100.0).clamp(0.0, 1.0);
+    (pop * 0.28
+        + otm * 0.28
+        + be_cushion * 0.12
+        + delta_comfort * 0.12
+        + theta * 0.08
+        + pnl * 0.07
+        + stop_room * 0.05)
+        * 100.0
 }
 
 pub fn entry_analytics_pass(entry: &crate::rules::VerticalEntryRules, a: &SpreadAnalytics) -> bool {
@@ -221,7 +250,25 @@ pub fn entry_analytics_pass(entry: &crate::rules::VerticalEntryRules, a: &Spread
     if a.credit_to_width_pct.unwrap_or(0.0) < min_ctw {
         return false;
     }
+    // Fail-closed: when the 1σ gate is on, missing IV (None) rejects — never silently pass.
+    if entry.reject_short_inside_1sigma && a.short_strike_inside_1sigma != Some(false) {
+        return false;
+    }
+    if let Some(min_ratio) = entry.min_iv_rv_ratio {
+        match a.iv_rv_ratio {
+            Some(ratio) if ratio >= min_ratio => {}
+            _ => return false, // missing IV/RV or ratio too low — fail closed
+        }
+    }
     true
+}
+
+/// Shared IV/RV check for iron condors (and any caller with only the ratio threshold).
+pub fn passes_min_iv_rv_ratio(min_ratio: Option<f64>, iv_rv: Option<f64>) -> bool {
+    match min_ratio {
+        None => true,
+        Some(min) => iv_rv.is_some_and(|r| r >= min),
+    }
 }
 
 pub fn analytics_to_json(a: &SpreadAnalytics) -> Value {
@@ -362,6 +409,7 @@ mod tests {
             credit: 0.25,
             dte: 36,
             chain_iv_pct: Some(28.0),
+            realized_vol_pct: Some(20.0),
             short_delta: Some(-0.22),
             long_delta: Some(-0.15),
             short_theta: Some(-0.08),
@@ -380,5 +428,73 @@ mod tests {
         let (rail, _) = price_cushion_rail(281.75, 299.0, 282.0, true, 24);
         assert!(rail.contains('B'));
         assert!(rail.contains('●'));
+    }
+
+    #[test]
+    fn entry_analytics_reject_inside_1sigma_when_enabled() {
+        let mut entry = crate::rules::VerticalEntryRules::default();
+        entry.min_pop_pct = Some(50.0);
+        entry.min_distance_to_be_pct = Some(1.0);
+        entry.min_credit_to_width_pct = Some(5.0);
+        entry.reject_short_inside_1sigma = true;
+
+        let mut a = SpreadAnalytics {
+            spread_pop_pct: Some(70.0),
+            distance_to_be_pct: Some(5.0),
+            credit_to_width_pct: Some(15.0),
+            short_strike_inside_1sigma: Some(true),
+            ..Default::default()
+        };
+        assert!(!entry_analytics_pass(&entry, &a));
+
+        a.short_strike_inside_1sigma = Some(false);
+        assert!(entry_analytics_pass(&entry, &a));
+
+        entry.reject_short_inside_1sigma = false;
+        a.short_strike_inside_1sigma = Some(true);
+        assert!(entry_analytics_pass(&entry, &a));
+    }
+
+    #[test]
+    fn entry_analytics_1sigma_fails_closed_when_iv_missing() {
+        let mut entry = crate::rules::VerticalEntryRules::default();
+        entry.min_pop_pct = Some(50.0);
+        entry.min_distance_to_be_pct = Some(1.0);
+        entry.min_credit_to_width_pct = Some(5.0);
+        entry.reject_short_inside_1sigma = true;
+
+        let a = SpreadAnalytics {
+            spread_pop_pct: Some(70.0),
+            distance_to_be_pct: Some(5.0),
+            credit_to_width_pct: Some(15.0),
+            short_strike_inside_1sigma: None,
+            ..Default::default()
+        };
+        assert!(!entry_analytics_pass(&entry, &a));
+    }
+
+    #[test]
+    fn entry_analytics_iv_rv_gate() {
+        let mut entry = crate::rules::VerticalEntryRules::default();
+        entry.min_pop_pct = Some(50.0);
+        entry.min_distance_to_be_pct = Some(1.0);
+        entry.min_credit_to_width_pct = Some(5.0);
+        entry.min_iv_rv_ratio = Some(1.15);
+
+        let mut a = SpreadAnalytics {
+            spread_pop_pct: Some(70.0),
+            distance_to_be_pct: Some(5.0),
+            credit_to_width_pct: Some(15.0),
+            short_strike_inside_1sigma: Some(false),
+            iv_rv_ratio: Some(1.05),
+            ..Default::default()
+        };
+        assert!(!entry_analytics_pass(&entry, &a));
+
+        a.iv_rv_ratio = Some(1.20);
+        assert!(entry_analytics_pass(&entry, &a));
+
+        a.iv_rv_ratio = None;
+        assert!(!entry_analytics_pass(&entry, &a));
     }
 }

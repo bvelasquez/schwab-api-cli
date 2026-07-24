@@ -56,6 +56,14 @@ fn embedded_agent_label(
             .unwrap_or_else(|| "exited".into());
         return (format!("stopped ({err})"), false);
     }
+    if !h.healthy {
+        let err = h
+            .last_error
+            .as_deref()
+            .map(|e| truncate_err(&format_tick_error(e), 36))
+            .unwrap_or_else(|| "retrying".into());
+        return (format!("degraded ({err})"), false);
+    }
     if ctx.tick_is_stale() && h.ticks_completed == 0 {
         let starting = h.started_at.elapsed().as_secs();
         let err = h
@@ -244,6 +252,15 @@ pub fn agent_status_lines(
         12,
     ));
     if let Some(h) = agent_health.and_then(|h| h.lock().ok()) {
+        lines.push(kv_line("health", h.status_label().to_string(), 12));
+        if !h.exits_armed() {
+            lines.push(Line::from(vec![Span::styled(
+                "  AGENT DOWN — exits not executing",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )]));
+        }
         if let Some(err) = h.last_error.as_ref() {
             lines.push(Line::from(vec![
                 Span::styled("  last error ", Style::default().fg(Color::DarkGray)),
@@ -287,7 +304,7 @@ pub fn rules_summary_lines(ctx: &DashboardContext) -> Vec<Line<'static>> {
             ),
             10,
         ),
-        kv_line("watchlist", rules.watchlist.join(", "), 10),
+        kv_line("watchlist", rules.watchlist_symbols().join(", "), 10),
     ];
 
     if rules.strategies.vertical.enabled {
@@ -659,7 +676,7 @@ pub fn rules_detail_lines(ctx: &DashboardContext) -> Vec<Line<'static>> {
     out.push(kv_line(
         "allowed",
         if risk.allowed_underlyings.is_empty() {
-            rules.watchlist.join(", ")
+            rules.watchlist_symbols().join(", ")
         } else {
             risk.allowed_underlyings.join(", ")
         },

@@ -162,8 +162,9 @@ fn realized_vol_annualized_pct(closes: &[f64], lookback: usize) -> f64 {
     let start = closes.len().saturating_sub(lookback + 1);
     for i in start + 1..closes.len() {
         let prev = closes[i - 1];
-        if prev > 0.0 {
-            returns.push((closes[i] / prev - 1.0).ln());
+        let r = closes[i] / prev;
+        if prev > 0.0 && r > 0.0 {
+            returns.push(r.ln());
         }
     }
     if returns.is_empty() {

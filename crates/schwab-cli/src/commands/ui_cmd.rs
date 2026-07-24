@@ -9,7 +9,7 @@ use crate::cli::RulesCommands;
 use crate::config::RuntimeConfig;
 use crate::rules::RulesConfig;
 use crate::safety::require_trading_approval;
-use crate::ui::agent_health::{new_shared_health, SharedAgentHealth};
+use crate::ui::agent_health::{new_shared_health, update_health, SharedAgentHealth};
 use crate::ui::discover::{list_rules_files_display, resolve_rules_file};
 use crate::ui::market_status::{self, MarketSnapshot};
 use crate::ui::menu::{list_rules_files, show_dashboard, show_rules};
@@ -98,15 +98,7 @@ pub async fn run_watch(
         let path = rules_path.clone();
         let health = agent_health.clone().expect("health when spawning");
         Some(tokio::spawn(async move {
-            let result = run_agent_loop(&agent_runtime, &path, false, Some(health.clone())).await;
-            if let Err(e) = result {
-                let msg = format!("agent exited: {e:#}");
-                let _ = crate::agent::paths::append_agent_log(&path, &msg);
-                if let Ok(mut g) = health.lock() {
-                    g.loop_running = false;
-                    g.record_error(&msg);
-                }
-            }
+            supervise_options_agent(agent_runtime, path, health).await;
         }))
     } else {
         None
@@ -150,6 +142,52 @@ pub async fn run_watch(
     }
 
     watch_result
+}
+
+/// Belt-and-suspenders: if `run_agent_loop` ever returns, restart with backoff.
+async fn supervise_options_agent(
+    rt: RuntimeConfig,
+    path: PathBuf,
+    health: SharedAgentHealth,
+) {
+    let mut restart_backoff_secs: u64 = 5;
+    loop {
+        update_health(&health, |g| {
+            g.loop_running = true;
+        });
+        let result = run_agent_loop(&rt, &path, false, Some(health.clone())).await;
+        match result {
+            Ok(()) => {
+                update_health(&health, |g| g.record_loop_stopped(None));
+                let _ = crate::agent::paths::append_agent_log(
+                    &path,
+                    "agent supervisor: loop returned Ok — stopping",
+                );
+                break;
+            }
+            Err(e) => {
+                let msg = format!("agent loop exited: {e:#}");
+                let _ = crate::agent::paths::append_agent_log(&path, &msg);
+                update_health(&health, |g| {
+                    g.record_supervisor_restart();
+                    g.record_loop_stopped(Some(msg));
+                });
+                let restarts = health.lock().map(|g| g.restart_count).unwrap_or(0);
+                let _ = crate::agent::paths::append_agent_log(
+                    &path,
+                    &format!(
+                        "agent supervisor: restarting in {restart_backoff_secs}s (restart #{restarts})"
+                    ),
+                );
+                tokio::time::sleep(Duration::from_secs(restart_backoff_secs)).await;
+                restart_backoff_secs = (restart_backoff_secs.saturating_mul(2)).min(300);
+                update_health(&health, |g| {
+                    g.loop_running = true;
+                    g.healthy = false;
+                });
+            }
+        }
+    }
 }
 
 pub async fn run_rules(runtime: &RuntimeConfig, command: RulesCommands) -> Result<()> {

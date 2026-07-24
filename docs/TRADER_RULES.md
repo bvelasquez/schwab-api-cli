@@ -37,7 +37,7 @@ flowchart TB
 | Intraday rules | `rules/my-intraday-trader.yaml` (local copy) |
 | Runtime state | `rules/trader-state-<rules-stem>.json` (e.g. `trader-state-my-trader.json`) |
 | Journal | `rules/trader-journal-<rules-stem>.jsonl` |
-| Options overlap | Reads options agent state for loss reserve (`capital.options_risk.rules_file`) |
+| Options overlap | Sums reserved risk from `capital.options_risk.rules_files` (legacy `rules_file` still accepted) |
 
 Path stems derive from the rules **filename** (`my-trader.yaml` → stem `my-trader`).
 
@@ -334,20 +334,15 @@ Runs when `llm.enabled` and `llm.allow_rule_adaptation`, and either:
 
 ### Learn-adaptable paths (`rule_patches`)
 
+Only these paths are accepted by `LEARN_ADAPTABLE_PATHS` (others are silently dropped):
+
 | Path | Type |
 |------|------|
 | `playbook.exit.profit_target_pct` | float |
 | `playbook.exit.stop_loss_pct` | float |
 | `playbook.exit.trailing.trail_atr_multiple` | float |
 | `playbook.exit.trailing.activate_after_profit_pct` | float |
-| `playbook.exit.time_stop_days` | int (swing) |
-| `playbook.exit.time_stop_minutes` | int (intraday) |
-| `playbook.entry.rsi_14_range` | `[low, high]` |
-| `playbook.entry.position_size.risk_per_trade_pct` | float |
-| `playbook.entry.position_size.method` | `risk_pct` \| `atr_normalized` |
-| `playbook.entry.max_new_entries_per_day` | int |
-| `playbook.intraday.min_relative_volume` | float |
-| `playbook.intraday.momentum_rsi_min` | float |
+| `playbook.entry.rsi_14_range` | `[low, high]` (low clamped ≥ 45 via `adaptation_bounds`) |
 
 Patches are validated, clamped via `adaptation_bounds`, then applied per [governance](#llm-governance).
 
@@ -488,7 +483,7 @@ schwab-trader journal stats --rules-file rules/my-trader.yaml --json
 
 | Session | When | Sleep | LLM | Trades |
 |---------|------|-------|-----|--------|
-| **regular** | 9:30–16:00 ET | `tick_interval_seconds` (90s) | Selection when candidates; monitor every `review_every_ticks` | Yes |
+| **regular** | 9:30–16:00 ET | `tick_interval_seconds` (90s) | Selection **and** monitor share `review_every_ticks` cadence (candidates wait for the next review tick) | Yes |
 | **premarket** | 8:00–9:30 ET | `premarket_tick_interval_seconds` | Web digest only | No |
 | **overnight** | Closed + `overnight.enabled` | `overnight.tick_interval_seconds` | Web digest if not flat | No |
 | **idle** | Closed, overnight off | 3600s | None | No |
@@ -509,14 +504,38 @@ Intraday uses minute-bar analytics (relative volume, SMA 9/20) and `time_stop_mi
 ## Capital formula (every entry)
 
 ```
-options_reserved = options_agent_state.reserved_risk_usd() × (1 + buffer_pct/100)
+options_reserved = sum(state.reserved_risk for each capital.options_risk.rules_files)
+                   × (1 + buffer_pct/100)
+                   # legacy singular rules_file is still accepted and merged into the list
 free_cash        = max(0, cash_available − options_reserved − min_cash_floor)
 pct_budget       = free_cash × max_pct_of_free_cash / 100
 cap_remaining    = fixed_sleeve_cap_usd − equity_deployed (trader positions only)
 tradable_budget  = min(pct_budget, cap_remaining)
 ```
 
+List **every** options rules file that can run on the same account hash. Example:
+
+```yaml
+capital:
+  options_risk:
+    rules_files:
+      - rules/options-pilot-9947.yaml
+      - rules/options-monthly-income.yaml
+    fallback_reserve_usd: 500
+    buffer_pct: 10
+```
+
 `schwab-trader capital show --rules-file <path> --json` prints the full ledger.
+
+## Earnings blackout
+
+`playbook.filters.no_trade_before_earnings_days` (default `2`) is enforced on scan/entry:
+
+1. Read Schwab quote `fundamental.lastEarningsDate`
+2. Estimate next ≈ last + 91 days (advance quarters until future)
+3. Reject if within `lead` days of that estimate
+
+Surfaced on the technical snapshot as `estimated_next_earnings`, `days_until_estimated_earnings`, and `earnings_estimate_confidence: heuristic`. Missing fundamentals **fail open** (do not block). Not a confirmed calendar feed.
 
 ## Bracket execution (live)
 

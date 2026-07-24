@@ -30,6 +30,7 @@ pub fn render_positions_panel(
     monitors: &[SpreadMonitorView],
     scroll: u16,
     live: Option<&SpreadLiveSnapshot>,
+    exits_armed: bool,
 ) {
     if monitors.is_empty() {
         f.render_widget(
@@ -51,7 +52,7 @@ pub fn render_positions_panel(
         };
         if card.y < area.y + area.height && card.y + CARD_HEIGHT > area.y {
             let visible = card.intersection(area);
-            render_position_card(f, visible, m);
+            render_position_card(f, visible, m, exits_armed);
         }
         y = y.saturating_add(CARD_HEIGHT);
     }
@@ -89,8 +90,8 @@ pub fn render_positions_panel(
     }
 }
 
-fn render_position_card(f: &mut Frame, area: Rect, m: &SpreadMonitorView) {
-    let health = spread_health(m);
+fn render_position_card(f: &mut Frame, area: Rect, m: &SpreadMonitorView, exits_armed: bool) {
+    let health = spread_health(m, exits_armed);
     let type_label = m
         .analytics
         .as_ref()
@@ -108,7 +109,11 @@ fn render_position_card(f: &mut Frame, area: Rect, m: &SpreadMonitorView) {
         m.underlying, m.contracts, type_label, m.expiry, m.dte
     );
     let border_color = if m.imminent_exit.is_some() {
-        theme::LOSS
+        if exits_armed {
+            theme::LOSS
+        } else {
+            theme::WARN
+        }
     } else {
         health.color
     };
@@ -125,7 +130,7 @@ fn render_position_card(f: &mut Frame, area: Rect, m: &SpreadMonitorView) {
         .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
         .split(inner);
 
-    render_metrics_column(f, cols[0], m, &health);
+    render_metrics_column(f, cols[0], m, &health, exits_armed);
     render_payoff_chart(f, cols[1], m);
 }
 
@@ -134,6 +139,7 @@ fn render_metrics_column(
     area: Rect,
     m: &SpreadMonitorView,
     health: &crate::ui::spread_live::SpreadHealth,
+    exits_armed: bool,
 ) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -158,6 +164,32 @@ fn render_metrics_column(
         .map(|a| spread_win_score(m.profit_pct, a, m.pct_cushion_from_stop))
         .unwrap_or(50.0);
 
+    // Path-first headline (options ≠ stocks): OTM cushion + time, then optional MTM.
+    let path_line = if let Some(a) = &m.analytics {
+        let otm = a
+            .short_otm_pct
+            .map(|p| format!("{p:.1}% OTM"))
+            .unwrap_or_else(|| "OTM—".into());
+        let to_short = a
+            .distance_to_short_strike_usd
+            .map(|d| format!("${d:.0} to short"))
+            .unwrap_or_else(|| "—".into());
+        let theta = a
+            .net_theta_per_day_usd
+            .map(|t| format!("θ ${t:+.2}/d"))
+            .unwrap_or_else(|| "θ —".into());
+        let expiry_here = crate::ui::spread_payoff::vertical_credit_payoff_usd(
+            a.underlying_price,
+            a.is_put_spread,
+            a.short_strike,
+            a.long_strike,
+            m.entry_credit,
+            m.contracts,
+        );
+        format!("{otm}  {to_short}  {theta}  if expired here ${expiry_here:+.0}")
+    } else {
+        format!("{}d DTE  waiting for chain…", m.dte)
+    };
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
@@ -166,15 +198,25 @@ fn render_metrics_column(
                     .fg(health.color)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(
-                format!("{:+.1}% P&L  ${:+.0}", m.profit_pct, m.pnl_usd),
-                Style::default().fg(pnl_color(m.profit_pct)),
-            ),
+            Span::styled(path_line, Style::default().fg(theme::ACCENT)),
         ])),
         rows[0],
     );
 
-    f.render_widget(thesis_gauge(win), rows[1]);
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                format!(
+                    "if closed now {:+.1}%  ${:+.0}  (mark — not expiry path)",
+                    m.profit_pct, m.pnl_usd
+                ),
+                Style::default().fg(pnl_color(m.profit_pct)),
+            ),
+        ])),
+        rows[1],
+    );
+
+    f.render_widget(thesis_gauge(win), rows[2]);
 
     if let Some(a) = &m.analytics {
         let pop = a.spread_pop_pct.unwrap_or(0.0);
@@ -187,7 +229,7 @@ fn render_metrics_column(
                 )
                 .ratio((pop / 100.0).clamp(0.0, 1.0))
                 .label(format!("POP vs BE {pop:.0}%")),
-            rows[2],
+            rows[3],
         );
 
         let strike_line = if a.is_put_spread {
@@ -203,7 +245,7 @@ fn render_metrics_column(
         };
         f.render_widget(
             Paragraph::new(strike_line).style(Style::default().fg(theme::ACCENT)),
-            rows[3],
+            rows[4],
         );
 
         let chg = a
@@ -213,7 +255,7 @@ fn render_metrics_column(
         f.render_widget(
             Paragraph::new(format!("spot ${:.2}{chg}", a.underlying_price))
                 .style(theme::value_style()),
-            rows[4],
+            rows[5],
         );
 
         let delta_s = a
@@ -225,10 +267,13 @@ fn render_metrics_column(
             .map(|t| format!("{:+.2}/d", t))
             .unwrap_or_else(|| "—".into());
         f.render_widget(
-            Paragraph::new(format!("δ {delta_s}  θ {theta}  IV {:.0}%",
-                a.chain_iv_pct.unwrap_or(0.0)))
+            Paragraph::new(format!(
+                "δ {delta_s}  θ {theta}  IV {:.0}%  ·  {}d left",
+                a.chain_iv_pct.unwrap_or(0.0),
+                m.dte
+            ))
             .style(theme::label_style()),
-            rows[5],
+            rows[6],
         );
 
         if let Some(be) = a.break_even_price {
@@ -249,7 +294,7 @@ fn render_metrics_column(
                     Span::styled(rail, Style::default().fg(Color::Blue)),
                     Span::styled("  B S ●", theme::label_style()),
                 ])),
-                rows[6],
+                rows[7],
             );
         }
     } else {
@@ -283,8 +328,8 @@ fn render_metrics_column(
                     .bg(Color::Rgb(40, 44, 56)),
             )
             .ratio(exit_ratio)
-            .label(format!("exit {exit_label} {:.0}%", exit_ratio * 100.0)),
-        rows[7],
+            .label(format!("mark exit {exit_label} {:.0}%", exit_ratio * 100.0)),
+        rows[8],
     );
 
     let rail = spread_exit_rail(
@@ -305,12 +350,9 @@ fn render_metrics_column(
             Span::styled("S", Style::default().fg(theme::LOSS)),
             Span::styled(rail, Style::default().fg(rail_color)),
             Span::styled("T", Style::default().fg(theme::PROFIT)),
-            Span::styled(
-                spread_rail_progress_labels(m),
-                theme::label_style(),
-            ),
+            Span::styled(spread_rail_progress_labels(m), theme::label_style()),
         ])),
-        rows[8],
+        rows[9],
     );
 
     let age = m
@@ -322,13 +364,19 @@ fn render_metrics_column(
         m.dte_close, m.stop_debit, m.entry_credit, m.target_debit
     );
     if let Some(reason) = &m.imminent_exit {
-        footer.push_str(&format!("  ·  EXIT: {reason}"));
+        if exits_armed {
+            footer.push_str(&format!("  ·  EXIT: {reason}"));
+        } else {
+            footer.push_str(&format!(
+                "  ·  PENDING: {reason} (agent down — not executing)"
+            ));
+        }
     }
     f.render_widget(
         Paragraph::new(footer)
             .style(theme::label_style())
             .wrap(Wrap { trim: true }),
-        rows[9],
+        rows[10],
     );
 }
 
@@ -340,5 +388,5 @@ fn thesis_gauge(win: f64) -> Gauge<'static> {
                 .bg(Color::Rgb(40, 44, 56)),
         )
         .ratio((win / 100.0).clamp(0.0, 1.0))
-        .label(format!("thesis score {win:.0}%"))
+        .label(format!("path score {win:.0}%"))
 }

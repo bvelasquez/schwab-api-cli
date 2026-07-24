@@ -20,7 +20,10 @@ pub async fn run(runtime: &TraderRuntime, command: AgentCommands) -> Result<()> 
             run_agent_loop(
                 runtime,
                 &rules_file,
-                AgentRunOptions { once },
+                AgentRunOptions {
+                    once,
+                    health: None,
+                },
             )
             .await
         }

@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use ratatui::style::Color;
 
 use crate::agent::exits::{
-    evaluate_exit_from_mark, spread_exit_thresholds, SpreadMark,
+    evaluate_exit_from_mark_with_analytics, spread_exit_thresholds, SpreadMark,
 };
 use crate::agent::spread_analytics::SpreadAnalytics;
 use crate::agent::state::{AgentState, TrackedPosition};
@@ -165,29 +165,64 @@ pub struct SpreadHealth {
     pub color: Color,
 }
 
-pub fn spread_health(m: &SpreadMonitorView) -> SpreadHealth {
+pub fn spread_health(m: &SpreadMonitorView, exits_armed: bool) -> SpreadHealth {
     let pop = m.analytics.as_ref().and_then(|a| a.spread_pop_pct);
     let delta = m
         .analytics
         .as_ref()
         .and_then(|a| a.short_delta.map(|d| d.abs()));
+    let short_otm = m.analytics.as_ref().and_then(|a| a.short_otm_pct);
+    // Options path: far OTM + healthy POP/delta means the thesis is intact even if MTM is red.
+    let path_healthy = short_otm.is_some_and(|otm| otm >= 3.5)
+        && pop.is_none_or(|p| p >= 55.0)
+        && delta.is_none_or(|d| d < 0.32);
+    let near_strike = short_otm.is_some_and(|otm| otm < 3.5);
     let near_stop = m.pct_cushion_from_stop < 30.0;
 
     if m.imminent_exit.is_some() {
+        if exits_armed {
+            return SpreadHealth {
+                label: "EXIT SOON",
+                arrow: "!",
+                color: Color::Red,
+            };
+        }
         return SpreadHealth {
-            label: "EXIT SOON",
+            label: "PENDING EXIT",
             arrow: "!",
-            color: Color::Red,
+            color: Color::Yellow,
         };
     }
-    if m.profit_pct <= -25.0 || (near_stop && m.profit_pct < -10.0) {
+    // Path-first: do not brand a far-OTM credit as LOSING just because marks widened.
+    if path_healthy {
+        if m.profit_pct >= 40.0 || m.pct_toward_target >= 90.0 {
+            return SpreadHealth {
+                label: "STRONG WIN",
+                arrow: "▲▲",
+                color: Color::LightGreen,
+            };
+        }
+        if m.profit_pct > 5.0 {
+            return SpreadHealth {
+                label: "WINNING",
+                arrow: "▲",
+                color: Color::Green,
+            };
+        }
+        return SpreadHealth {
+            label: "PATH OK",
+            arrow: "═",
+            color: Color::Cyan,
+        };
+    }
+    if near_strike && (m.profit_pct <= -25.0 || near_stop) {
         return SpreadHealth {
             label: "LOSING",
             arrow: "▼",
             color: Color::Red,
         };
     }
-    if m.profit_pct < 0.0 || pop.is_some_and(|p| p < 50.0) || delta.is_some_and(|d| d >= 0.35) {
+    if near_strike || pop.is_some_and(|p| p < 50.0) || delta.is_some_and(|d| d >= 0.35) {
         return SpreadHealth {
             label: "AT RISK",
             arrow: "▼",
@@ -222,13 +257,22 @@ pub fn spread_health(m: &SpreadMonitorView) -> SpreadHealth {
     }
 }
 
+fn spread_monitor_sort_key(pos: &TrackedPosition) -> (DateTime<Utc>, &str, &str, &str) {
+    (
+        pos.opened_at,
+        pos.underlying.as_str(),
+        pos.expiry.as_str(),
+        pos.position_id.as_str(),
+    )
+}
+
 pub fn list_spread_monitors(
     rules: &RulesConfig,
     state: &AgentState,
     live: Option<&SpreadLiveSnapshot>,
 ) -> Vec<SpreadMonitorView> {
     let mut positions: Vec<_> = state.open_positions.values().collect();
-    positions.sort_by(|a, b| a.underlying.cmp(&b.underlying));
+    positions.sort_by_key(|pos| spread_monitor_sort_key(pos));
     positions
         .into_iter()
         .map(|pos| {
@@ -242,10 +286,14 @@ pub fn attach_exit_hint(mark: &mut SpreadPositionMark, rules: &RulesConfig, entr
     if entry_credit <= f64::EPSILON {
         return;
     }
-    if let Some(eval) = evaluate_exit_from_mark(rules, Some(entry_credit), &mark.mark) {
+    // Must pass live analytics so OTM-cushion stop rules match the agent.
+    if let Some(eval) = evaluate_exit_from_mark_with_analytics(
+        rules,
+        Some(entry_credit),
+        &mark.mark,
+        mark.analytics.as_ref(),
+    ) {
         mark.imminent_exit = Some(eval.reason);
-    } else if mark.mark.dte <= rules.exit_rules.dte_close as i64 {
-        mark.imminent_exit = Some("dte_close".into());
     }
 }
 
@@ -253,7 +301,8 @@ pub fn attach_exit_hint(mark: &mut SpreadPositionMark, rules: &RulesConfig, entr
 mod tests {
     use super::*;
     use crate::agent::spread_analytics::{compute_vertical_analytics, spread_win_score, VerticalAnalyticsInput};
-    use crate::rules::ExitRules;
+    use crate::agent::state::AgentState;
+    use crate::rules::{ExitRules, RulesConfig};
 
     #[test]
     fn spread_rail_places_markers() {
@@ -340,6 +389,7 @@ mod tests {
             credit: 0.40,
             dte: 25,
             chain_iv_pct: Some(18.0),
+            realized_vol_pct: None,
             short_delta: Some(-0.20),
             long_delta: Some(-0.12),
             short_theta: Some(-0.10),
@@ -363,6 +413,8 @@ mod tests {
         assert!((m.pct_toward_target - 100.0).abs() < 0.1);
         assert!((m.pnl_usd - 40.0).abs() < 0.01);
         assert!(m.analytics.is_some());
+        assert_eq!(spread_health(&m, true).label, "EXIT SOON");
+        assert_eq!(spread_health(&m, false).label, "PENDING EXIT");
     }
 
     #[test]
@@ -389,6 +441,7 @@ mod tests {
             credit: 0.32,
             dte: 30,
             chain_iv_pct: Some(29.0),
+            realized_vol_pct: None,
             short_delta: Some(-0.16),
             long_delta: Some(-0.14),
             short_theta: Some(-0.06),
@@ -409,9 +462,107 @@ mod tests {
             mark_age_secs: Some(1),
         };
         let m = build_spread_monitor(&tracked, Some(&live), &exit_rules);
-        let h = spread_health(&m);
-        assert!(matches!(h.label, "WINNING" | "STRONG WIN" | "WATCH"));
+        let h = spread_health(&m, true);
+        assert!(matches!(h.label, "WINNING" | "STRONG WIN" | "WATCH" | "PATH OK"));
         assert!(spread_win_score(m.profit_pct, m.analytics.as_ref().unwrap(), m.pct_cushion_from_stop)
             > 60.0);
+    }
+
+    #[test]
+    fn far_otm_negative_mtm_is_path_ok_not_losing() {
+        let exit_rules = ExitRules::default();
+        let tracked = TrackedPosition {
+            position_id: "QQQ|2026-08-21".into(),
+            account_hash: "h".into(),
+            underlying: "QQQ".into(),
+            expiry: "2026-08-21".into(),
+            strategy: "vertical".into(),
+            opened_at: Utc::now(),
+            entry_credit: Some(0.82),
+            max_loss_usd: 418.0,
+            contracts: 1,
+            entry_params: None,
+            ..Default::default()
+        };
+        let analytics = compute_vertical_analytics(VerticalAnalyticsInput {
+            is_put_spread: true,
+            underlying_price: 685.0,
+            short_strike: 655.0,
+            long_strike: 650.0,
+            credit: 0.82,
+            dte: 28,
+            chain_iv_pct: Some(29.0),
+            realized_vol_pct: None,
+            short_delta: Some(-0.23),
+            long_delta: Some(-0.20),
+            short_theta: Some(-0.30),
+            long_theta: Some(-0.28),
+            contracts: 1,
+            underlying_change_pct: Some(-1.2),
+        });
+        // ~4.4% OTM — path healthy even with ugly marks.
+        assert!(analytics.short_otm_pct.unwrap() >= 3.5);
+        let live = SpreadPositionMark {
+            mark: SpreadMark {
+                entry_credit: 0.82,
+                debit_to_close: 1.10,
+                profit_pct: -34.0,
+                dte: 28,
+                source: "test".into(),
+            },
+            analytics: Some(analytics),
+            imminent_exit: None,
+            mark_age_secs: Some(1),
+        };
+        let m = build_spread_monitor(&tracked, Some(&live), &exit_rules);
+        assert_eq!(spread_health(&m, true).label, "PATH OK");
+    }
+
+    #[test]
+    fn spread_monitors_sorted_by_opened_at_not_hashmap_order() {
+        let rules = RulesConfig {
+            version: 1,
+            agent_id: "t".into(),
+            accounts: vec![],
+            schedule: Default::default(),
+            strategies: Default::default(),
+            watchlist: vec![],
+            entry_policy: Default::default(),
+            entry_rules: Default::default(),
+            exit_rules: ExitRules::default(),
+            risk: Default::default(),
+            regime: Default::default(),
+            execution: Default::default(),
+            llm: Default::default(),
+            notify: Default::default(),
+            simulation: None,
+        };
+        let mut state = AgentState::default();
+        let older = Utc::now() - chrono::Duration::days(10);
+        let newer = Utc::now() - chrono::Duration::days(2);
+        state.open_positions.insert(
+            "IWM|2026-08-14".into(),
+            TrackedPosition {
+                position_id: "IWM|2026-08-14".into(),
+                underlying: "IWM".into(),
+                expiry: "2026-08-14".into(),
+                opened_at: newer,
+                ..Default::default()
+            },
+        );
+        state.open_positions.insert(
+            "IWM|2026-07-18".into(),
+            TrackedPosition {
+                position_id: "IWM|2026-07-18".into(),
+                underlying: "IWM".into(),
+                expiry: "2026-07-18".into(),
+                opened_at: older,
+                ..Default::default()
+            },
+        );
+        let monitors = list_spread_monitors(&rules, &state, None);
+        assert_eq!(monitors.len(), 2);
+        assert_eq!(monitors[0].expiry, "2026-07-18");
+        assert_eq!(monitors[1].expiry, "2026-08-14");
     }
 }

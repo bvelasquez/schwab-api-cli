@@ -1,4 +1,19 @@
 //! Spoken trade-event cues — embedded MP3s played via macOS `afplay`.
+//!
+//! # Audio policy (keep speech rare)
+//!
+//! **Speak (money moved or mechanical exit):**
+//! - Entry filled (`EntryOpened`)
+//! - Exit filled with mechanical reason (`ExitProfit`, `ExitStop`, `ExitDte`, …)
+//! - Broker rejected entry (`EntryRejected`)
+//! - Broker OCO bracket fill (`ExitBracket`)
+//!
+//! **Silent (UI/Telegram only):**
+//! - LLM risk / halt / advisor cues (`AlertRisk`, `AlertHalted`, `ExitAdvisor`)
+//! - Entry deferred (LLM veto, cooldown, awaiting proceed)
+//! - Limit order working / accepted
+//! - Stale entry cancel
+//! - Skipped capacity / cooldown (fill_status SKIPPED)
 
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
@@ -69,6 +84,22 @@ impl TradeAudioEvent {
             Self::AlertRisk => ("alert_risk", include_bytes!("../../assets/trade-audio/alert_risk.mp3")),
         }
     }
+
+    /// Whether this clip is played automatically (vs UI/Telegram only).
+    pub fn is_critical(self) -> bool {
+        matches!(
+            self,
+            Self::EntryOpened
+                | Self::EntryRejected
+                | Self::ExitProfit
+                | Self::ExitStop
+                | Self::ExitTime
+                | Self::ExitEod
+                | Self::ExitOvernight
+                | Self::ExitDte
+                | Self::ExitBracket
+        )
+    }
 }
 
 /// Configure audio (call once when an agent/watch session starts).
@@ -87,7 +118,7 @@ pub fn init(no_audio: bool) {
 }
 
 pub fn speak(event: TradeAudioEvent) {
-    if DISABLED.load(Ordering::Relaxed) {
+    if DISABLED.load(Ordering::Relaxed) || !event.is_critical() {
         return;
     }
     let (name, bytes) = event.asset();
@@ -139,9 +170,6 @@ fn speak_from_order_status(kind: &str, fill_status: &str, detail: &Value) {
                 .unwrap_or("");
             speak_exit_reason(reason);
         }
-        "WORKING" | "ACCEPTED" | "PENDING_ACTIVATION" | "QUEUED" => {
-            speak(TradeAudioEvent::EntryWorking);
-        }
         "REJECTED" | "CANCELED" | "CANCELLED" | "EXPIRED" => speak(TradeAudioEvent::EntryRejected),
         _ if kind.contains("REJECTED") => speak(TradeAudioEvent::EntryRejected),
         _ => {}
@@ -190,6 +218,19 @@ fn play_path(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deferred_and_working_are_not_critical() {
+        assert!(!TradeAudioEvent::EntryDeferred.is_critical());
+        assert!(!TradeAudioEvent::EntryWorking.is_critical());
+        assert!(!TradeAudioEvent::EntryCancelled.is_critical());
+        assert!(!TradeAudioEvent::AlertRisk.is_critical());
+        assert!(!TradeAudioEvent::AlertHalted.is_critical());
+        assert!(!TradeAudioEvent::ExitAdvisor.is_critical());
+        assert!(TradeAudioEvent::EntryOpened.is_critical());
+        assert!(TradeAudioEvent::ExitStop.is_critical());
+        assert!(TradeAudioEvent::ExitBracket.is_critical());
+    }
 
     #[test]
     fn exit_reason_maps_to_events() {

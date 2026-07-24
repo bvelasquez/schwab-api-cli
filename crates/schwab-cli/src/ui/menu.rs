@@ -115,7 +115,7 @@ async fn validate_rules(runtime: &RuntimeConfig, file: Option<PathBuf>) -> Resul
             "agent_id": rules.agent_id,
             "rules_path": rules_path,
             "accounts": rules.accounts.len(),
-            "watchlist": rules.watchlist,
+            "watchlist": rules.watchlist_items(),
             "llm_enabled": rules.llm.enabled,
             "telegram_enabled": rules.notify.telegram.enabled,
         }),

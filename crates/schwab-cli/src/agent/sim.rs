@@ -266,6 +266,7 @@ pub fn record_sim_entry(
                 .pointer("/market_context/short_delta")
                 .and_then(|v| v.as_f64())
                 .map(f64::abs),
+            ..Default::default()
         },
     );
 

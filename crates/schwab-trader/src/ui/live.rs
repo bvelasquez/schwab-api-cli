@@ -192,12 +192,20 @@ pub struct PositionHealth {
     pub color: Color,
 }
 
-pub fn position_health(m: &PositionMonitorView) -> PositionHealth {
-    if m.imminent_exit.is_some() {
+pub fn position_health(m: &PositionMonitorView, exits_armed: bool) -> PositionHealth {
+    if let Some(reason) = m.imminent_exit {
+        if exits_armed {
+            return PositionHealth {
+                label: "EXIT SOON",
+                arrow: "!",
+                color: Color::Red,
+            };
+        }
+        let _ = reason;
         return PositionHealth {
-            label: "EXIT SOON",
+            label: "PENDING EXIT",
             arrow: "!",
-            color: Color::Red,
+            color: Color::Yellow,
         };
     }
     if m.pnl_pct <= -3.0 || m.pct_above_stop <= 25.0 {
@@ -235,6 +243,14 @@ pub fn position_health(m: &PositionMonitorView) -> PositionHealth {
     }
 }
 
+fn position_monitor_sort_key(pos: &SwingPosition) -> (DateTime<Utc>, &str, &str) {
+    (
+        pos.opened_at,
+        pos.symbol.as_str(),
+        pos.position_id.as_str(),
+    )
+}
+
 pub fn list_position_monitors(
     rules: &TraderRules,
     state: &TraderState,
@@ -242,7 +258,7 @@ pub fn list_position_monitors(
     now: DateTime<Utc>,
 ) -> Vec<PositionMonitorView> {
     let mut positions: Vec<_> = state.open_positions.values().collect();
-    positions.sort_by(|a, b| a.symbol.cmp(&b.symbol));
+    positions.sort_by_key(|pos| position_monitor_sort_key(pos));
     positions
         .into_iter()
         .map(|pos| {
@@ -407,5 +423,67 @@ mod tests {
         let m = build_position_monitor(&rules, &state, &pos, Some(&q), Utc::now());
         let labels = exit_rail_progress_labels(&m);
         assert!(labels.contains("toward stop"));
+    }
+
+    #[test]
+    fn position_monitors_sorted_by_opened_at_not_hashmap_order() {
+        let rules = TraderRules::default();
+        let mut state = TraderState::default();
+        let older = Utc::now() - chrono::Duration::days(5);
+        let newer = Utc::now() - chrono::Duration::days(1);
+        state.open_positions.insert(
+            "SPY|new".into(),
+            SwingPosition {
+                position_id: "SPY|new".into(),
+                symbol: "SPY".into(),
+                opened_at: newer,
+                ..Default::default()
+            },
+        );
+        state.open_positions.insert(
+            "SPY|old".into(),
+            SwingPosition {
+                position_id: "SPY|old".into(),
+                symbol: "SPY".into(),
+                opened_at: older,
+                ..Default::default()
+            },
+        );
+        let monitors = list_position_monitors(&rules, &state, None, Utc::now());
+        assert_eq!(monitors.len(), 2);
+        assert_eq!(monitors[0].hold_days, 5);
+        assert_eq!(monitors[1].hold_days, 1);
+    }
+
+    #[test]
+    fn pending_exit_label_when_agent_disarmed() {
+        let rules = TraderRules::default();
+        let state = TraderState::default();
+        let pos = SwingPosition {
+            position_id: "t".into(),
+            symbol: "RTX".into(),
+            account_hash: "a".into(),
+            quantity: 1.0,
+            entry_price: 100.0,
+            opened_at: Utc::now(),
+            stop_price: 95.0,
+            profit_limit: 108.0,
+            stop_risk_usd: 5.0,
+            market_value_usd: 110.0,
+            oco_order_id: None,
+            exit_plan_version: 1,
+            ..Default::default()
+        };
+        let q = QuoteTick {
+            symbol: "RTX".into(),
+            last: 109.0,
+            bid: Some(108.9),
+            ask: Some(109.1),
+            fetched_at: Utc::now(),
+        };
+        let m = build_position_monitor(&rules, &state, &pos, Some(&q), Utc::now());
+        assert_eq!(m.imminent_exit, Some("profit_target"));
+        assert_eq!(position_health(&m, true).label, "EXIT SOON");
+        assert_eq!(position_health(&m, false).label, "PENDING EXIT");
     }
 }

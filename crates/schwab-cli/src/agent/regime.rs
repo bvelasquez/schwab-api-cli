@@ -76,7 +76,10 @@ pub async fn detect_options_regime(
 
     let class = classify_options_regime(cfg, vix, above_sma_50, above_sma_200);
     let pause_entries = class == OptionsRegimeClass::Hostile
-        || vix.is_some_and(|v| v >= cfg.pause_entries_vix_above);
+        || vix.is_some_and(|v| v >= cfg.pause_entries_vix_above)
+        || cfg
+            .pause_entries_vix_below
+            .is_some_and(|floor| vix.is_some_and(|v| v <= floor));
     let preferred = preferred_strategy(cfg, class);
 
     Ok(OptionsRegimeSnapshot {
@@ -93,6 +96,8 @@ pub async fn detect_options_regime(
             "vix_low": cfg.vix_low,
             "vix_high": cfg.vix_high,
             "pause_entries_vix_above": cfg.pause_entries_vix_above,
+            "pause_entries_vix_below": cfg.pause_entries_vix_below,
+            "realized_vol_lookback": cfg.realized_vol_lookback,
         }),
     })
 }
@@ -251,5 +256,24 @@ mod tests {
             classify_options_regime(&cfg, Some(29.0), true, true),
             OptionsRegimeClass::HighVolChop
         );
+    }
+
+    #[test]
+    fn pause_entries_when_vix_at_or_below_floor() {
+        let cfg = OptionsRegimeConfig {
+            pause_entries_vix_below: Some(14.0),
+            pause_entries_vix_above: 30.0,
+            ..Default::default()
+        };
+        let pause = cfg
+            .pause_entries_vix_below
+            .is_some_and(|floor| Some(13.5_f64).is_some_and(|v| v <= floor))
+            || Some(13.5_f64).is_some_and(|v| v >= cfg.pause_entries_vix_above);
+        assert!(pause);
+        let no_pause = !(cfg
+            .pause_entries_vix_below
+            .is_some_and(|floor| Some(16.0_f64).is_some_and(|v| v <= floor))
+            || Some(16.0_f64).is_some_and(|v| v >= cfg.pause_entries_vix_above));
+        assert!(no_pause);
     }
 }

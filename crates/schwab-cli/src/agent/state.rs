@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::options::types::StrategyKind;
+use crate::rules::{EntryPolicyConfig, RulesConfig};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentState {
@@ -52,12 +53,42 @@ pub struct AgentState {
     /// Paper-trading ledger when running with --simulate (separate state file).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sim: Option<crate::agent::sim::SimLedger>,
-    /// Set after a thesis-driven exit — prioritizes redeploy scan on this underlying.
+    /// Set after a thesis-driven exit — optional redeploy cooldown on that underlying.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redeploy_signal: Option<RedeploySignal>,
+    /// Recent stop-loss exits for re-entry cooldown.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_stop_loss_exits: Vec<StopLossExitRecord>,
+    /// Last live entry attempt per candidate position_id (limits retry spam).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub last_entry_attempts: HashMap<String, DateTime<Utc>>,
+    /// Cached LLM `proceed` for current candidate fingerprints.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_proceed_cache: Option<EntryProceedCache>,
     /// Last options regime snapshot (strategy selection).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_regime: Option<Value>,
+    /// High-water mark for options sleeve equity (drawdown halt).
+    #[serde(default)]
+    pub sleeve_peak_equity_usd: f64,
+    /// Cumulative realized PnL for live (non-sim) closes. Sim uses `sim.realized_pnl_usd`.
+    #[serde(default)]
+    pub cumulative_realized_pnl_usd: f64,
+    /// When set, new entries are paused (exits continue). Cleared when condition recovers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trading_halted_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StopLossExitRecord {
+    pub at: DateTime<Utc>,
+    pub underlying: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntryProceedCache {
+    pub at: DateTime<Utc>,
+    pub candidate_fingerprints: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +124,15 @@ pub struct TrackedPosition {
     /// |short_delta| at entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry_short_delta: Option<f64>,
+    /// Broker order id for the resting GTC profit-target close order, if placed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protective_order_id: Option<String>,
+    /// Last known status of `protective_order_id` (e.g. "WORKING", "FILLED", "CANCELED").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protective_order_status: Option<String>,
+    /// Consecutive failed attempts to place the protective order (drives reconcile retry/backoff).
+    #[serde(default)]
+    pub protective_order_attempts: u32,
 }
 
 pub fn update_peak_profit_pct(position: &mut TrackedPosition, profit_pct: f64) {
@@ -102,6 +142,97 @@ pub fn update_peak_profit_pct(position: &mut TrackedPosition, profit_pct: f64) {
 
 pub fn is_thesis_exit_reason(reason: &str) -> bool {
     reason.starts_with("thesis_")
+}
+
+pub fn is_stop_loss_exit_reason(reason: &str) -> bool {
+    reason == "stop_loss"
+}
+
+pub fn record_stop_loss_exit(state: &mut AgentState, underlying: &str) {
+    state.recent_stop_loss_exits.push(StopLossExitRecord {
+        at: Utc::now(),
+        underlying: underlying.to_uppercase(),
+    });
+    prune_stop_loss_records(&mut state.recent_stop_loss_exits, 45);
+}
+
+fn prune_stop_loss_records(records: &mut Vec<StopLossExitRecord>, keep_days: i64) {
+    let cutoff = Utc::now() - chrono::Duration::days(keep_days);
+    records.retain(|r| r.at >= cutoff);
+}
+
+pub fn stop_loss_re_entry_blocked(
+    rules: &RulesConfig,
+    state: &AgentState,
+    underlying: &str,
+) -> Option<i64> {
+    let cfg = &rules.risk.re_entry_after_stop_loss;
+    if !cfg.enabled || cfg.cooldown_days == 0 {
+        return None;
+    }
+    let sym = underlying.to_uppercase();
+    let latest = state
+        .recent_stop_loss_exits
+        .iter()
+        .filter(|r| r.underlying.eq_ignore_ascii_case(&sym))
+        .map(|r| r.at)
+        .max()?;
+    let elapsed_days = Utc::now().signed_duration_since(latest).num_days();
+    let remaining = cfg.cooldown_days as i64 - elapsed_days;
+    if remaining > 0 {
+        Some(remaining)
+    } else {
+        None
+    }
+}
+
+pub fn entry_attempt_cooldown_active(
+    policy: &EntryPolicyConfig,
+    state: &AgentState,
+    position_id: &str,
+) -> Option<i64> {
+    if policy.entry_attempt_cooldown_minutes == 0 {
+        return None;
+    }
+    let at = state.last_entry_attempts.get(position_id)?;
+    let elapsed = Utc::now().signed_duration_since(*at).num_minutes();
+    let limit = policy.entry_attempt_cooldown_minutes as i64;
+    if elapsed < limit {
+        Some(limit - elapsed)
+    } else {
+        None
+    }
+}
+
+pub fn record_entry_attempt(state: &mut AgentState, position_id: &str) {
+    state
+        .last_entry_attempts
+        .insert(position_id.to_string(), Utc::now());
+}
+
+pub fn candidate_fingerprint(signal: &Value) -> Option<String> {
+    signal
+        .get("position_id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+}
+
+pub fn entry_proceed_cache_valid(
+    policy: &EntryPolicyConfig,
+    cache: &EntryProceedCache,
+    fingerprints: &[String],
+) -> bool {
+    if fingerprints.is_empty() {
+        return false;
+    }
+    if policy.proceed_cache_minutes == 0 {
+        return false;
+    }
+    let age = Utc::now().signed_duration_since(cache.at).num_minutes();
+    if age > policy.proceed_cache_minutes as i64 {
+        return false;
+    }
+    cache.candidate_fingerprints == fingerprints
 }
 
 impl Default for TrackedPosition {
@@ -120,6 +251,9 @@ impl Default for TrackedPosition {
             peak_profit_pct: None,
             entry_pop_pct: None,
             entry_short_delta: None,
+            protective_order_id: None,
+            protective_order_status: None,
+            protective_order_attempts: 0,
         }
     }
 }
@@ -205,6 +339,32 @@ impl AgentState {
             .values()
             .filter(|p| {
                 p.account_hash == account_hash && p.underlying.eq_ignore_ascii_case(underlying)
+            })
+            .count() as u32
+    }
+
+    /// Open positions whose underlying is in `symbols` (case-insensitive).
+    pub fn count_open_in_symbol_set(&self, account_hash: &str, symbols: &[String]) -> u32 {
+        self.open_positions
+            .values()
+            .filter(|p| {
+                p.account_hash == account_hash
+                    && symbols
+                        .iter()
+                        .any(|s| s.eq_ignore_ascii_case(&p.underlying))
+            })
+            .count() as u32
+    }
+
+    pub fn pending_entry_count_in_symbol_set(&self, account_hash: &str, symbols: &[String]) -> u32 {
+        self.pending_orders
+            .iter()
+            .filter(|p| {
+                p.action == PendingOrderAction::Entry
+                    && p.account_hash == account_hash
+                    && position_id_underlying(&p.position_id).is_some_and(|u| {
+                        symbols.iter().any(|s| s.eq_ignore_ascii_case(u))
+                    })
             })
             .count() as u32
     }
@@ -340,6 +500,7 @@ fn position_id_underlying(position_id: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rules::{ReEntryAfterStopLoss, RiskConfig, RulesConfig};
 
     #[test]
     fn reserved_risk_includes_pending_entries_only() {
@@ -383,5 +544,37 @@ mod tests {
 
         assert_eq!(state.pending_entry_count(), 1);
         assert!((state.reserved_risk_usd() - 345.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn stop_loss_re_entry_blocked_within_cooldown() {
+        let mut rules = RulesConfig {
+            version: 1,
+            agent_id: "t".into(),
+            accounts: vec![],
+            schedule: Default::default(),
+            strategies: Default::default(),
+            watchlist: vec![],
+            entry_policy: Default::default(),
+            entry_rules: Default::default(),
+            exit_rules: Default::default(),
+            risk: RiskConfig {
+                re_entry_after_stop_loss: ReEntryAfterStopLoss {
+                    enabled: true,
+                    cooldown_days: 5,
+                },
+                ..Default::default()
+            },
+            regime: Default::default(),
+            execution: Default::default(),
+            llm: Default::default(),
+            notify: Default::default(),
+            simulation: None,
+        };
+        let mut state = AgentState::default();
+        record_stop_loss_exit(&mut state, "IWM");
+        assert!(stop_loss_re_entry_blocked(&rules, &state, "IWM").is_some());
+        rules.risk.re_entry_after_stop_loss.enabled = false;
+        assert!(stop_loss_re_entry_blocked(&rules, &state, "IWM").is_none());
     }
 }

@@ -124,13 +124,13 @@ pub fn render_payoff_chart(f: &mut Frame, area: Rect, m: &SpreadMonitorView) {
     let (hx, hy) = marker_spans(x_min, x_max, y_min, y_max);
 
     let chart_title = format!(
-        " +${:.0}/-${:.0}  spot ${:.0}  now ${:+.0}",
-        bounds.max_profit, bounds.max_loss, spot, now_y
+        " +${:.0}/-${:.0}  spot ${:.0}  @expiry ${:+.0}  mtm ${:+.0}",
+        bounds.max_profit, bounds.max_loss, spot, spot_y, now_y
     );
     let legend = if show_expiry_ref {
-        " ● now   ○ expiry@spot "
+        " ● path@expiry   ○ mtm if closed now "
     } else {
-        " ● now "
+        " ● path@expiry "
     };
 
     let canvas = Canvas::default()
@@ -163,10 +163,11 @@ pub fn render_payoff_chart(f: &mut Frame, area: Rect, m: &SpreadMonitorView) {
             ctx.draw(&Line::new(spot, y_min, spot, y_max, Color::Rgb(50, 110, 130)));
 
             if show_expiry_ref {
+                // MTM if closed now — secondary (hollow).
                 draw_chart_marker(
                     ctx,
                     spot,
-                    spot_y,
+                    now_y,
                     hx * 0.55,
                     hy * 0.55,
                     Color::Gray,
@@ -181,11 +182,11 @@ pub fn render_payoff_chart(f: &mut Frame, area: Rect, m: &SpreadMonitorView) {
                 ));
             }
 
-            // Live mark — bright crosshair + bold ● (primary focal point).
+            // Path if expired at today's spot — primary focal point.
             draw_chart_marker(
                 ctx,
                 spot,
-                now_y,
+                spot_y,
                 hx,
                 hy,
                 Color::LightYellow,
@@ -229,6 +230,7 @@ mod tests {
             credit: 0.28,
             dte: 35,
             chain_iv_pct: Some(29.0),
+            realized_vol_pct: None,
             short_delta: Some(-0.26),
             long_delta: Some(-0.23),
             short_theta: Some(-0.15),
