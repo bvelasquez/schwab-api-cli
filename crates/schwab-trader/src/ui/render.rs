@@ -13,14 +13,8 @@ pub fn overview_agent_lines(ctx: &WatchContext, health: &AgentHealth, agent_mode
     let mut lines = vec![
         Line::from(format!("trader_id: {}", ctx.rules.trader_id)),
         Line::from(format!("mode: {agent_mode}")),
-        Line::from(format!(
-            "agent: {}",
-            if health.loop_running {
-                "running"
-            } else {
-                "stopped"
-            }
-        )),
+        Line::from(format!("agent: {}", health.status_label())),
+        Line::from(format!("exits_armed: {}", health.exits_armed())),
         Line::from(format!("tick_count: {}", ctx.state.tick_count)),
         Line::from(format!("trades_today: {}", ctx.state.trades_today)),
         Line::from(format!(
@@ -31,11 +25,22 @@ pub fn overview_agent_lines(ctx: &WatchContext, health: &AgentHealth, agent_mode
                 .unwrap_or_else(|| "—".into())
         )),
     ];
+    if health.restart_count > 0 {
+        lines.push(Line::from(format!("restarts: {}", health.restart_count)));
+    }
     if let Some(err) = &health.last_error {
         lines.push(Line::from(vec![
             Span::styled("error: ", Style::default().fg(Color::Red)),
             Span::raw(err.clone()),
         ]));
+    }
+    if !health.exits_armed() {
+        lines.push(Line::from(vec![Span::styled(
+            "AGENT DOWN — exits not executing",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )]));
     }
     if let Some(stats) = crate::sim::compute_stats(&ctx.state) {
         lines.push(Line::from(""));
@@ -89,14 +94,14 @@ pub fn capital_lines(ctx: &WatchContext) -> Vec<Line<'static>> {
     ]
 }
 
-pub fn position_lines(ctx: &WatchContext) -> Vec<Line<'static>> {
+pub fn position_lines(ctx: &WatchContext, exits_armed: bool) -> Vec<Line<'static>> {
     let monitors = crate::ui::live::list_position_monitors(
         &ctx.rules,
         &ctx.state,
         ctx.live.as_ref(),
         chrono::Utc::now(),
     );
-    crate::ui::positions_panel::position_preview_lines(&monitors)
+    crate::ui::positions_panel::position_preview_lines(&monitors, exits_armed)
 }
 
 pub fn position_rules_context_lines(ctx: &WatchContext) -> Vec<Line<'static>> {

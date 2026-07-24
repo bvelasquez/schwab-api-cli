@@ -1,5 +1,6 @@
 pub mod llm;
 pub mod paths;
+pub mod resilience;
 pub mod runner;
 pub mod schedule;
 pub mod state;

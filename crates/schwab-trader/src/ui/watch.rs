@@ -132,7 +132,14 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
             .as_ref()
             .and_then(|h| h.lock().ok())
             .map(|g| g.clone())
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                // Monitor-only: no embedded agent — don't imply AGENT DOWN.
+                crate::ui::health::AgentHealth {
+                    loop_running: true,
+                    healthy: true,
+                    ..crate::ui::health::AgentHealth::default()
+                }
+            });
 
         terminal.draw(|f| {
             draw_ui(
@@ -258,21 +265,49 @@ fn draw_ui(
     health: &crate::ui::health::AgentHealth,
     market_conditions: &Arc<std::sync::Mutex<MarketConditionsSnapshot>>,
 ) {
+    let show_banner = !health.exits_armed();
+    let mut constraints = vec![Constraint::Length(3)];
+    if show_banner {
+        constraints.push(Constraint::Length(3));
+    }
+    constraints.push(Constraint::Length(3));
+    constraints.push(Constraint::Min(6));
+    constraints.push(Constraint::Length(3));
+
     let outer = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Min(6),
-            Constraint::Length(3),
-        ])
+        .constraints(constraints)
         .split(area);
 
+    let mut idx = 0usize;
     f.render_widget(
-        wrap_paragraph(header_line(ctx, agent_mode, dry_run, simulate))
+        wrap_paragraph(header_line(ctx, agent_mode, dry_run, simulate, Some(health)))
             .block(theme::chrome_block("Schwab Trader")),
-        outer[0],
+        outer[idx],
     );
+    idx += 1;
+
+    if show_banner {
+        let banner = if health.auth_fatal {
+            " AGENT DOWN (auth) — exits not executing — run: schwab auth login "
+        } else if !health.loop_running {
+            " AGENT DOWN — exits not executing — supervisor stopped "
+        } else {
+            " AGENT DEGRADED — exits not executing — retrying… "
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                banner,
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )))
+            .block(footer_block()),
+            outer[idx],
+        );
+        idx += 1;
+    }
 
     let titles: Vec<Line> = WatchTab::all()
         .iter()
@@ -294,9 +329,11 @@ fn draw_ui(
         .divider("│")
         .select(tab as usize)
         .padding(" ", " ");
-    f.render_widget(tabs.block(footer_block()), outer[1]);
+    f.render_widget(tabs.block(footer_block()), outer[idx]);
+    idx += 1;
 
-    let content = outer[2];
+    let content = outer[idx];
+    idx += 1;
     match tab {
         WatchTab::Overview => render_overview(
             f,
@@ -309,7 +346,7 @@ fn draw_ui(
             scroll,
             market_conditions,
         ),
-        WatchTab::Positions => render_positions_tab(f, content, ctx, scroll),
+        WatchTab::Positions => render_positions_tab(f, content, ctx, scroll, health.exits_armed()),
         WatchTab::Candidates => {
             f.render_widget(
                 wrap_paragraph(candidate_lines(ctx)).block(panel_block("Scan / Candidates")),
@@ -359,7 +396,7 @@ fn draw_ui(
         Span::raw("  "),
         Span::styled(status_msg, theme::label_style()),
     ]);
-    f.render_widget(wrap_paragraph(footer).block(footer_block()), outer[3]);
+    f.render_widget(wrap_paragraph(footer).block(footer_block()), outer[idx]);
 }
 
 fn live_quote_footer(ctx: &WatchContext) -> String {
@@ -385,6 +422,7 @@ fn render_positions_tab(
     area: Rect,
     ctx: &WatchContext,
     scroll: &WatchUiState,
+    exits_armed: bool,
 ) {
     let monitors = list_position_monitors(
         &ctx.rules,
@@ -420,6 +458,7 @@ fn render_positions_tab(
         scroll.positions_scroll.scroll,
         ctx.live.as_ref(),
         ctx.rules.is_intraday(),
+        exits_armed,
     );
 
     let total = positions_content_height(&monitors);
@@ -500,7 +539,7 @@ fn render_overview(
         wrap_paragraph(if ctx.state.open_positions.is_empty() {
             entry_attempt_lines(ctx)
         } else {
-            position_lines(ctx)
+            position_lines(ctx, health.exits_armed())
         })
         .block(panel_block(if ctx.state.open_positions.is_empty() {
             "Last Entry"

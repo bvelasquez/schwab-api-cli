@@ -126,11 +126,12 @@ pub async fn run_scan_inner(
     }))
 }
 
-/// Higher is better: RSI near midpoint, strong relative volume, tight spread.
+/// Higher is better: mild bullish RSI, strong RS, relative volume, tight spread.
 pub fn candidate_score(snap: &TechnicalSnapshot) -> f64 {
+    // Prefer RSI ~55 (momentum with room), not 50 midpoint / overbought 70+.
     let rsi_score = snap
         .rsi_14
-        .map(|r| 1.0 - (r - 50.0).abs() / 50.0)
+        .map(|r| 1.0 - (r - 55.0).abs() / 45.0)
         .unwrap_or(0.0)
         .max(0.0);
     let vol_score = snap
@@ -146,9 +147,9 @@ pub fn candidate_score(snap: &TechnicalSnapshot) -> f64 {
         .history_features
         .as_ref()
         .and_then(|h| h.rs_vs_benchmark_30d_pct)
-        .map(|rs| ((rs / 15.0) + 0.5).clamp(0.0, 1.0))
-        .unwrap_or(0.5);
-    rsi_score * 0.35 + vol_score * 0.3 + spread_score * 0.2 + rs_score * 0.15
+        .map(|rs| ((rs / 12.0) + 0.5).clamp(0.0, 1.0))
+        .unwrap_or(0.4);
+    rsi_score * 0.3 + vol_score * 0.25 + spread_score * 0.15 + rs_score * 0.3
 }
 
 #[cfg(test)]
@@ -175,6 +176,10 @@ mod tests {
             above_sma_50: None,
             intraday: false,
             history_features: None,
+            last_earnings_date: None,
+            estimated_next_earnings: None,
+            days_until_estimated_earnings: None,
+            earnings_estimate_confidence: None,
         };
         let balanced = candidate_score(&snap);
         let extreme = candidate_score(&TechnicalSnapshot {

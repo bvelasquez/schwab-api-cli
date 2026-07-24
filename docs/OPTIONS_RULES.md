@@ -48,11 +48,52 @@ schwab agent stop rules/options-rules.example.yaml --json
 |------|---------|----------|
 | `profit_target_pct` | 50 | Close when captured ≥50% of entry credit |
 | `stop_loss_pct` | 200 | Close when debit to close ≥ 2× entry credit |
+| `stop_loss_require_short_otm_below_pct` | unset | If set, arm the mark stop only when short OTM% is below this (gives time while far from strike) |
 | `dte_close` | 21 | Close when DTE ≤ 21 regardless |
 
 Exits run **before** entry scans each regular tick. Marks come from live option chain **`debit_to_close`** (not Schwab `net_market_value`).
 
 Monitor LLM context includes `mechanical_rules.stop_triggered` — only treat a stop as hit when that field is `true`. See [LLM_SCHEMA_REFERENCE.md](LLM_SCHEMA_REFERENCE.md#field-reference--exit_rules-mechanical--authoritative).
+
+## Broker-side protection (what survives if the agent is down)
+
+All three exit rules above are evaluated by the agent's own tick loop — if the process is
+down (crashed, killed, host rebooted, network lost), none of them fire until it resumes.
+One piece of protection is broker-resident and survives regardless: after each live entry
+fill, the agent places a resting **GTC limit order to close the spread at the profit-target
+debit** (`execution.protective_order`, enabled by default). This lives on Schwab's servers,
+not in the agent's memory.
+
+Stop-loss and DTE-close **cannot** be made broker-resident the same way — Schwab's order API
+rejects a stop trigger (`orderType: STOP`/`STOP_LIMIT`) on a multi-leg complex option order
+(`complexOrderStrategyType: VERTICAL`/`IRON_CONDOR`), confirmed via a live `orders preview`
+test (`HTTP 400: "Stop price must be populated only for stop orders"` — the identical shape
+works fine on a single-leg option). Splitting a spread into two independent single-leg stop
+orders is **not** done here: a stop firing on only one leg would turn a defined-risk spread
+into a naked position, which is worse than the status quo. Because of this, running the
+agent under process supervision with auto-restart (systemd/launchd/Docker restart policy)
+plus a paging alert on any tick gap is a **hard operational requirement**, not optional —
+stop-loss and DTE-close protection depend on the process being up.
+
+```yaml
+execution:
+  protective_order:
+    enabled: true        # place a broker-resident GTC profit-target close order per entry
+    max_attempts: 3       # placement retries right after fill
+    max_seconds: 30        # deadline for those retries
+```
+
+If placement fails after `max_attempts`, the position stays open without broker-side
+protection and is retried every subsequent tick (`reconcile_protective_orders`) until it
+succeeds. Tick JSON reports `monitoring.unprotected_count` — treat a nonzero value the same
+way `docs/TRADER_ROLLOUT.md` treats `monitoring.unbracketed_count` for the equity bot: it
+means live risk is currently uncovered on Schwab's side and should be investigated, not
+ignored. Positions opened before this feature existed (no stored `entry_params`) cannot be
+retroactively protected and count toward `unprotected_count` without being retried.
+
+The resting order is canceled and replaced whenever the mechanical tick loop closes the
+position early (stop/DTE/thesis exit) or tops up an existing position, to avoid a race
+between the resting order and the tick-driven close.
 
 ## Risk gates vs daily trade count
 
@@ -62,6 +103,60 @@ Hard gates for new entries:
 - `risk.max_portfolio_risk_usd` / `risk.max_risk_per_trade_usd`
 
 `risk.max_trades_per_day` is only a **soft churn cap** (redeploy after thesis exits, etc.). Set it to `0` for unlimited daily opens (still subject to open slots + $ risk).
+
+## Macro / event blackouts
+
+Two different mechanisms — do not confuse them:
+
+| Field | Behavior |
+|-------|----------|
+| `risk.blocked_events` | **Manual kill switch.** Any non-empty list pauses **all** new entries until cleared. Not date-aware. |
+| `risk.blocked_dates` | **Calendar.** Each entry has `date` (`YYYY-MM-DD`), `lead_days`, and `label`. New entries pause when `date - lead_days ≤ today ≤ date`. Exits and protective-order reconcile still run. |
+
+```yaml
+risk:
+  blocked_events: []          # leave empty unless you want a hard manual pause
+  blocked_dates:
+    - date: "2026-09-16"      # FOMC decision day
+      lead_days: 1            # also block the prior calendar day
+      label: FOMC
+    - date: "2026-09-11"
+      lead_days: 0
+      label: CPI
+```
+
+Populate from the public Fed / BLS calendars (no external API). Tick JSON surfaces
+`monitoring.blocked_dates_active` with the active labels.
+
+## Correlation groups
+
+Cap concurrent opens across highly correlated underlyings (e.g. SPY/QQQ):
+
+```yaml
+risk:
+  correlation_groups:
+    - name: broad_market
+      symbols: [QQQ, SPY]
+      max_open: 1
+```
+
+Checked next to `max_open_per_underlying` during entry scan. `max_open: 0` disables the group.
+
+## Portfolio drawdown halt
+
+Mirrors the equity trader's sleeve HWM halt. Tracks:
+
+`sleeve_equity ≈ drawdown_sleeve_usd (or max_portfolio_risk_usd) + realized_pnl + unrealized_mark_pnl`
+
+When drawdown from peak ≥ `max_drawdown_halt_pct`, **new entries pause**; exits and protective orders continue. Clears automatically when drawdown recovers. Telegram notifies on halt / resume.
+
+```yaml
+risk:
+  max_drawdown_halt_pct: 15.0
+  drawdown_sleeve_usd: 4000   # options cash sleeve; omit to use max_portfolio_risk_usd
+```
+
+Tick JSON: `monitoring.drawdown`, `monitoring.trading_halted_reason`.
 
 ## Regime-aware structure (`regime`)
 
@@ -73,8 +168,43 @@ When `regime.enabled: true`, the agent classifies SPY trend + VIX and scans **on
 | `bearish_trend` (below SMA50 and SMA200) | `call_credit` |
 | `high_vol_chop` | `iron_condor` |
 | `hostile` or VIX ≥ `pause_entries_vix_above` | pause new entries |
+| VIX ≤ `pause_entries_vix_below` (when set) | pause new entries |
+
+`vix_low` / `vix_high` only **classify** regimes. Entry pauses use the explicit
+`pause_entries_vix_above` / `pause_entries_vix_below` knobs (floor is optional).
 
 Requires `strategies.iron_condor.enabled: true` for condor regimes. Vertical call credits use the same delta/width rules as puts.
+
+## Entry quality gates (edge)
+
+Mechanical filters on vertical candidates (`entry_rules.vertical`):
+
+| Gate | Behavior |
+|------|----------|
+| `min_pop_pct` / `min_distance_to_be_pct` / `min_credit_to_width_pct` | Reject weak POP / BE cushion / credit-to-width |
+| `reject_short_inside_1sigma` | Reject shorts inside 1σ expected move. **Fail-closed** when chain IV is missing (never silently passes). |
+| `min_iv_rv_ratio` | Reject when `chain_iv / realized_vol <` threshold (e.g. `1.15`). Realized vol uses `regime.realized_vol_lookback` (default 20). **Fail-closed** when IV or RV is missing. |
+
+Iron condors honor `entry_rules.iron_condor.min_iv_rv_ratio` the same way.
+
+Tick / candidate `market_context` surfaces `realized_vol_pct` and `iv_rv_ratio` for LLM review.
+
+## Entry policy (`entry_policy`)
+
+Controls scan order and the live LLM proceed gate. Defaults are intentionally strict:
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `mode` | `first_qualifying` | Stop after the first watchlist symbol that produces a candidate |
+| `fallback_only_after_primary_exhausted` | `true` | Scan `role: fallback` symbols only if no primary candidate |
+| `require_llm_proceed` | **`true`** | Live entries need a fresh fingerprint-matched LLM `proceed` (see `proceed_cache_minutes`) |
+| `proceed_cache_minutes` | `45` | How long a cached proceed remains valid between LLM selection reviews |
+| `entry_attempt_cooldown_minutes` | `30` | After a non-fill attempt, wait before retrying the same candidate |
+| `promote_redeploy_symbol` | `false` | After thesis redeploy cooldown, optionally scan that symbol first |
+
+Set `require_llm_proceed: false` only when you intentionally want mechanical-only entries
+(still subject to all rules gates). With `llm.veto_entries: true` and the default policy,
+no live entry executes without a valid proceed cache.
 
 ## LLM advisor (two-model)
 
@@ -82,9 +212,14 @@ When `llm.enabled: true`, the agent picks the model by phase:
 
 | Phase | When | Model (`rules.yaml`) |
 |-------|------|----------------------|
-| **Selection** | Rules produced `candidate_entries` | `llm.selection_model` (default: `anthropic/claude-sonnet-4`) |
-| **Monitor** | Open positions, every `review_every_ticks` | `llm.monitor_model` (default: `google/gemini-2.5-flash`) |
+| **Selection** | Rules produced `candidate_entries`, every `review_every_ticks` | `llm.selection_model` (default: `anthropic/claude-sonnet-4`) |
+| **Monitor** | Open positions, every `review_every_ticks` (or `monitor_review_every_ticks` when set) | `llm.monitor_model` (default: `google/gemini-2.5-flash`) |
 | **Web** | Every `web_research_every_reviews` selection reviews | `llm.web_model` (default: `perplexity/sonar`) |
+
+**Cadence:** Selection is **not** run every tick merely because candidates exist. It shares
+the same tick throttle as monitor (`review_every_ticks`). A fresh candidate can wait up to
+that many ticks before LLM review (and thus before a proceed-gated live entry). Direction
+is fail-closed / conservative.
 
 **Skipped when flat** — no open positions and no candidate entries (no LLM call).
 
@@ -144,6 +279,25 @@ When `notify.telegram.enabled: true`, set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHA
 
 - `notify_on_actions: true` — entries, exits, LLM alerts
 - `notify_every_tick: true` — summary every tick (noisy)
+
+Tick failures also alert: an `AGENT DEGRADED` message on the first failure and every 10th
+consecutive one after (throttled to avoid spam), and `AGENT RECOVERED` once a tick succeeds
+again.
+
+## Error handling and backoff
+
+Each tick failure is classified (`agent::resilience`) into one of three classes, which
+determines both the backoff and the alert:
+
+| Class | Examples | Backoff |
+|-------|----------|---------|
+| `recoverable` | Network timeouts, 5xx, 429, transient 401 | Exponential, 5s → 300s cap |
+| `auth_fatal` | Refresh token invalid/expired/revoked, not authenticated | Fixed 60s — retries indefinitely until `schwab auth login` |
+| `unexpected` | Anything else (a real bug) | Exponential, 5s → 300s cap, same as recoverable |
+
+The agent never exits on a tick error (unattended operation) — it always backs off and
+retries, logging which class fired so `recoverable` noise and `unexpected` bugs are visibly
+distinguishable in the log/Telegram alert instead of looking identical.
 
 ## Manual options commands
 

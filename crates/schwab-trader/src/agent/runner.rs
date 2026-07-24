@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::Utc;
 use serde_json::{json, Value};
 use tokio::time::sleep;
@@ -13,6 +13,9 @@ use crate::adaptation::{
 };
 use crate::agent::llm::{candidate_approved, OpenRouterClient, TraderLlmReview};
 use crate::agent::paths::state_path;
+use crate::agent::resilience::{
+    backoff_seconds, class_label, classify_agent_error, AgentErrorClass,
+};
 use crate::agent::schedule::{
     self, should_run_monitor_review, should_run_overnight_digest, should_run_premarket_digest,
     should_use_web_research, AgentSession,
@@ -36,10 +39,22 @@ use crate::rules::TraderRules;
 use crate::shuffle::{build_entry_shuffle_context, entry_shuffle_block_from_scan};
 use crate::sim::{compute_stats, snapshot_equity};
 use crate::sources::{attach_feeds_to_context, fetch_feeds_for_phase};
+use crate::ui::health::{update_health, SharedAgentHealth};
 use schwab_cli::notify::TelegramNotifier;
+use schwab_cli::trade_audio::{self, TradeAudioEvent};
 
 pub struct AgentRunOptions {
     pub once: bool,
+    pub health: Option<SharedAgentHealth>,
+}
+
+impl Default for AgentRunOptions {
+    fn default() -> Self {
+        Self {
+            once: false,
+            health: None,
+        }
+    }
 }
 
 struct TickOutcome {
@@ -53,11 +68,39 @@ pub async fn run_agent_loop(
     rules_path: &Path,
     options: AgentRunOptions,
 ) -> Result<()> {
-    let mut rules = TraderRules::load(rules_path)?;
+    let health = options.health.clone();
+    let mut rules = match TraderRules::load(rules_path) {
+        Ok(r) => r,
+        Err(err) if !options.once => {
+            return resilient_startup_retry(runtime, rules_path, options, err).await;
+        }
+        Err(err) => return Err(err),
+    };
     rules.log_validation_hints();
-    let account = rules.primary_account()?.hash.clone();
-    let api = runtime.build_api()?;
-    let market = runtime.build_market_api()?;
+
+    let account = match rules.primary_account() {
+        Ok(a) => a.hash.clone(),
+        Err(err) => return Err(err),
+    };
+
+    let (api, market) = match (runtime.build_api(), runtime.build_market_api()) {
+        (Ok(a), Ok(m)) => (a, m),
+        (Err(err), _) | (_, Err(err)) if !options.once => {
+            handle_loop_error(
+                runtime,
+                rules_path,
+                &rules,
+                health.as_ref(),
+                None,
+                &err,
+                1,
+            )
+            .await;
+            // Keep retrying client construction — auth may be fixed on disk.
+            return resilient_client_retry(runtime, rules_path, options, rules).await;
+        }
+        (Err(err), _) | (_, Err(err)) => return Err(err),
+    };
 
     let mut state = load_state(rules_path, &rules.trader_id)?;
 
@@ -77,10 +120,17 @@ pub async fn run_agent_loop(
 
     schwab_cli::trade_audio::init(runtime.no_audio);
 
+    let mut consecutive_failures: u32 = 0;
+
     loop {
+        // Soft re-auth probe so a fresh `schwab auth login` is picked up mid-run.
+        if let Err(err) = refresh_access_token_soft(&api).await {
+            tracing::debug!("access token probe: {err:#}");
+        }
+
         state.tick_count += 1;
         state.last_tick = Some(Utc::now());
-        let outcome = run_tick(
+        match run_tick(
             runtime,
             rules_path,
             &mut rules,
@@ -91,47 +141,209 @@ pub async fn run_agent_loop(
             llm_client.as_ref(),
             telegram.as_ref(),
         )
-        .await?;
-        state.last_tick_result = Some(outcome.body.clone());
-        save_state(rules_path, &state)?;
-        let log_line = format!(
-            "tick={} session={} open={} trades_today={} style={} dry_run={} simulate={}",
-            state.tick_count,
-            outcome.session,
-            state.open_positions.len(),
-            state.trades_today,
-            rules.playbook.style,
-            runtime.dry_run,
-            runtime.simulate
-        );
-        let _ = crate::agent::paths::append_trader_log(rules_path, &log_line);
-        runtime.emit(schwab_cli::output::ResponseEnvelope::ok(
-            "trader agent tick",
-            json!({
-                "tick": state.tick_count,
-                "session": outcome.session,
-                "next_sleep_seconds": outcome.next_sleep_seconds,
-                "summary": state.summary(),
-                "tick_result": outcome.body,
-            }),
-        ));
+        .await
+        {
+            Ok(outcome) => {
+                if consecutive_failures > 0 {
+                    let msg = format!(
+                        "agent recovered after {consecutive_failures} failure(s)"
+                    );
+                    let _ = crate::agent::paths::append_trader_log(rules_path, &msg);
+                    notify::notify_agent_recovered(
+                        telegram.as_ref(),
+                        &rules,
+                        consecutive_failures,
+                    )
+                    .await;
+                }
+                consecutive_failures = 0;
+                if let Some(h) = &health {
+                    update_health(h, |g| g.record_tick_ok());
+                }
 
-        notify::notify_tick_summary(
-            telegram.as_ref(),
-            &rules,
-            &outcome.session,
-            state.open_positions.len(),
-            state.trades_today,
-        )
-        .await;
+                state.last_tick_result = Some(outcome.body.clone());
+                if let Err(err) = save_state(rules_path, &state) {
+                    tracing::warn!("save_state after tick failed: {err:#}");
+                }
+                let log_line = format!(
+                    "tick={} session={} open={} trades_today={} style={} dry_run={} simulate={}",
+                    state.tick_count,
+                    outcome.session,
+                    state.open_positions.len(),
+                    state.trades_today,
+                    rules.playbook.style,
+                    runtime.dry_run,
+                    runtime.simulate
+                );
+                let _ = crate::agent::paths::append_trader_log(rules_path, &log_line);
+                runtime.emit(schwab_cli::output::ResponseEnvelope::ok(
+                    "trader agent tick",
+                    json!({
+                        "tick": state.tick_count,
+                        "session": outcome.session,
+                        "next_sleep_seconds": outcome.next_sleep_seconds,
+                        "summary": state.summary(),
+                        "tick_result": outcome.body,
+                    }),
+                ));
 
-        if options.once {
-            break;
+                notify::notify_tick_summary(
+                    telegram.as_ref(),
+                    &rules,
+                    &outcome.session,
+                    state.open_positions.len(),
+                    state.trades_today,
+                )
+                .await;
+
+                if options.once {
+                    break;
+                }
+                sleep(Duration::from_secs(outcome.next_sleep_seconds)).await;
+            }
+            Err(err) => {
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                let class = handle_loop_error(
+                    runtime,
+                    rules_path,
+                    &rules,
+                    health.as_ref(),
+                    telegram.as_ref(),
+                    &err,
+                    consecutive_failures,
+                )
+                .await;
+
+                if options.once {
+                    return Err(err).context("agent tick failed");
+                }
+
+                let wait = backoff_seconds(class, consecutive_failures);
+                let _ = crate::agent::paths::append_trader_log(
+                    rules_path,
+                    &format!(
+                        "tick_error class={} failures={} backoff={}s err={err:#}",
+                        class_label(class),
+                        consecutive_failures,
+                        wait
+                    ),
+                );
+                sleep(Duration::from_secs(wait)).await;
+            }
         }
-        sleep(Duration::from_secs(outcome.next_sleep_seconds)).await;
     }
 
     Ok(())
+}
+
+async fn resilient_startup_retry(
+    runtime: &TraderRuntime,
+    rules_path: &Path,
+    options: AgentRunOptions,
+    first_err: anyhow::Error,
+) -> Result<()> {
+    let health = options.health.clone();
+    let mut failures = 1u32;
+    let class = classify_agent_error(&first_err);
+    if let Some(h) = &health {
+        update_health(h, |g| {
+            g.record_tick_err(format!("{first_err:#}"), class);
+        });
+    }
+    let _ = crate::agent::paths::append_trader_log(
+        rules_path,
+        &format!("startup_error class={} err={first_err:#}", class_label(class)),
+    );
+    loop {
+        let wait = backoff_seconds(class, failures);
+        sleep(Duration::from_secs(wait)).await;
+        match TraderRules::load(rules_path) {
+            Ok(_) => {
+                return Box::pin(run_agent_loop(runtime, rules_path, options)).await;
+            }
+            Err(err) => {
+                failures = failures.saturating_add(1);
+                let c = classify_agent_error(&err);
+                if let Some(h) = &health {
+                    update_health(h, |g| g.record_tick_err(format!("{err:#}"), c));
+                }
+            }
+        }
+    }
+}
+
+async fn resilient_client_retry(
+    runtime: &TraderRuntime,
+    rules_path: &Path,
+    options: AgentRunOptions,
+    rules: TraderRules,
+) -> Result<()> {
+    let health = options.health.clone();
+    let telegram = notify::telegram_from_rules(&rules.notify).ok().flatten();
+    let mut failures = 1u32;
+    loop {
+        let wait = backoff_seconds(AgentErrorClass::AuthFatal, failures);
+        sleep(Duration::from_secs(wait)).await;
+        match (runtime.build_api(), runtime.build_market_api()) {
+            (Ok(_), Ok(_)) => {
+                return Box::pin(run_agent_loop(runtime, rules_path, options)).await;
+            }
+            (Err(err), _) | (_, Err(err)) => {
+                failures = failures.saturating_add(1);
+                let _ = handle_loop_error(
+                    runtime,
+                    rules_path,
+                    &rules,
+                    health.as_ref(),
+                    telegram.as_ref(),
+                    &err,
+                    failures,
+                )
+                .await;
+            }
+        }
+    }
+}
+
+async fn refresh_access_token_soft(api: &Arc<schwab_api::TraderApi>) -> Result<()> {
+    let _ = api
+        .client()
+        .oauth()
+        .ensure_access_token()
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(())
+}
+
+async fn handle_loop_error(
+    runtime: &TraderRuntime,
+    rules_path: &Path,
+    rules: &TraderRules,
+    health: Option<&SharedAgentHealth>,
+    telegram: Option<&TelegramNotifier>,
+    err: &anyhow::Error,
+    consecutive_failures: u32,
+) -> AgentErrorClass {
+    let class = classify_agent_error(err);
+    let msg = format!("{err:#}");
+    if let Some(h) = health {
+        update_health(h, |g| g.record_tick_err(msg.clone(), class));
+    }
+    trade_audio::speak(TradeAudioEvent::AlertHalted);
+    notify::notify_agent_degraded(
+        telegram,
+        rules,
+        class_label(class),
+        &msg,
+        consecutive_failures,
+        runtime.simulate,
+    )
+    .await;
+    let _ = crate::agent::paths::append_trader_log(
+        rules_path,
+        &format!("agent_degraded class={} failures={consecutive_failures} err={msg}", class_label(class)),
+    );
+    class
 }
 
 async fn run_tick(
@@ -695,13 +907,6 @@ async fn tick_regular(
     for attempt in &entry_attempts {
         notify::notify_entry_attempt(telegram, rules, attempt).await;
     }
-    if entry_attempts.iter().any(|a| {
-        a.get("reason")
-            .and_then(|v| v.as_str())
-            == Some("llm_veto_or_missing_review")
-    }) {
-        schwab_cli::trade_audio::speak(schwab_cli::trade_audio::TradeAudioEvent::EntryDeferred);
-    }
 
     let mut learn_result = None;
     if rules.llm.enabled && should_run_learn(rules, state, false) {
@@ -863,6 +1068,14 @@ fn resolve_regular_llm_phase<'a>(
         return None;
     }
 
+    if !should_run_monitor_review(
+        state.regular_tick_count,
+        state.last_llm_review_tick,
+        rules.llm.review_every_ticks,
+    ) {
+        return None;
+    }
+
     let entry_blocked = state.entry_block_reason(rules);
 
     if has_candidates && entry_blocked.is_none() {
@@ -884,13 +1097,7 @@ fn resolve_regular_llm_phase<'a>(
         return None;
     }
 
-    if has_positions
-        && should_run_monitor_review(
-            state.regular_tick_count,
-            state.last_llm_review_tick,
-            rules.llm.review_every_ticks,
-        )
-    {
+    if has_positions {
         return Some(("monitor", &rules.llm.monitor_model, false));
     }
 

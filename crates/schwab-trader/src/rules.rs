@@ -146,9 +146,36 @@ pub struct CapitalConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct OptionsRiskConfig {
+    /// Options agent rules files whose open/pending risk is reserved from free cash.
+    /// Prefer this over the legacy singular `rules_file`.
+    #[serde(default)]
+    pub rules_files: Vec<String>,
+    /// Legacy singular path (still accepted). Merged into `rules_files` at read time.
+    #[serde(default)]
     pub rules_file: String,
     pub fallback_reserve_usd: f64,
     pub buffer_pct: f64,
+}
+
+impl OptionsRiskConfig {
+    /// Deduped list of options rules paths (plural + legacy singular).
+    pub fn all_rules_files(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .rules_files
+            .iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let singular = self.rules_file.trim();
+        if !singular.is_empty()
+            && !out
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case(singular))
+        {
+            out.push(singular.to_string());
+        }
+        out
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -362,6 +389,12 @@ pub struct FilterConfig {
     /// Position size multiplier in the soft zone (e.g. 0.5).
     #[serde(default)]
     pub near_52w_high_size_scalar: Option<f64>,
+    /// Require effective_profit_target_pct / stop_loss_pct >= this (catches ATR-capped targets).
+    #[serde(default)]
+    pub min_reward_risk: Option<f64>,
+    /// Require stop_loss_pct / ATR% >= this so the stop clears daily noise.
+    #[serde(default)]
+    pub min_stop_atr_multiple: Option<f64>,
     #[serde(default)]
     pub symbol_groups: Vec<SymbolGroupConfig>,
     #[serde(default)]
@@ -600,6 +633,7 @@ impl Default for CapitalConfig {
 impl Default for OptionsRiskConfig {
     fn default() -> Self {
         Self {
+            rules_files: vec![],
             rules_file: String::new(),
             fallback_reserve_usd: 500.0,
             buffer_pct: 10.0,
@@ -686,7 +720,7 @@ impl Default for EntryConfig {
             min_avg_volume_20d: 500_000.0,
             max_spread_pct: 0.5,
             require_above_sma: vec![20, 50],
-            rsi_14_range: [35.0, 68.0],
+            rsi_14_range: [45.0, 65.0],
             max_positions: 4,
             max_new_entries_per_day: 1,
             position_size: PositionSizeConfig::default(),
@@ -778,6 +812,8 @@ impl Default for FilterConfig {
             min_distance_from_52w_high_pct: None,
             near_52w_high_soft_zone_pct: None,
             near_52w_high_size_scalar: None,
+            min_reward_risk: None,
+            min_stop_atr_multiple: None,
             symbol_groups: vec![],
             shuffle: EntryShuffleConfig::default(),
         }

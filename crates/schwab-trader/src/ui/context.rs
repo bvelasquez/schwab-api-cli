@@ -149,6 +149,7 @@ pub fn header_line(
     _agent_mode: &str,
     dry_run: bool,
     simulate: bool,
+    health: Option<&crate::ui::health::AgentHealth>,
 ) -> Line<'static> {
     let mode = if simulate {
         "SIM"
@@ -166,8 +167,14 @@ pub fn header_line(
             format!(" │ quotes {age}s")
         })
         .unwrap_or_default();
+    let agent = match health {
+        Some(h) if !h.exits_armed() => {
+            format!(" │ AGENT {}", h.status_label().to_ascii_uppercase())
+        }
+        _ => String::new(),
+    };
     Line::from(format!(
-        " schwab-trader watch │ {} │ {} │ tick {} │ {} open{quotes} ",
+        " schwab-trader watch │ {} │ {} │ tick {} │ {} open{quotes}{agent} ",
         ctx.rules.trader_id,
         mode,
         ctx.state.tick_count,

@@ -33,6 +33,17 @@ pub struct TechnicalSnapshot {
     pub intraday: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub history_features: Option<HistoryFeatures>,
+    /// Last reported earnings date from Schwab fundamentals (if available).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_earnings_date: Option<String>,
+    /// Heuristic next earnings ≈ last + 91d (advanced to future).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_next_earnings: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub days_until_estimated_earnings: Option<i64>,
+    /// Always `heuristic` when estimate is present — not a confirmed calendar date.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub earnings_estimate_confidence: Option<String>,
 }
 
 pub async fn fetch_technical_snapshot(
@@ -102,7 +113,28 @@ pub async fn fetch_technical_snapshot_with_benchmark(
             bench_for_features,
         ));
     }
+    if rules.playbook.filters.no_trade_before_earnings_days > 0 {
+        enrich_earnings_estimate(market, &mut snap).await;
+    }
     Ok(snap)
+}
+
+async fn enrich_earnings_estimate(market: &MarketCtx, snap: &mut TechnicalSnapshot) {
+    let Ok(fundamental) = market.quote_fundamental(&snap.symbol).await else {
+        return;
+    };
+    let Some(last) = crate::earnings::parse_last_earnings_date(&fundamental) else {
+        return;
+    };
+    let today = match market {
+        MarketCtx::Replay { as_of, .. } => as_of.date_naive(),
+        MarketCtx::Live { .. } => crate::earnings::today_et_naive(),
+    };
+    let est = crate::earnings::estimate_next_earnings(last, today);
+    snap.last_earnings_date = Some(est.last_earnings_date.to_string());
+    snap.estimated_next_earnings = Some(est.estimated_next_earnings.to_string());
+    snap.days_until_estimated_earnings = Some(est.days_until_estimated);
+    snap.earnings_estimate_confidence = Some(est.confidence.to_string());
 }
 
 pub fn build_technical_snapshot(
@@ -146,6 +178,10 @@ pub fn build_technical_snapshot(
         above_sma_50: sma_50.map(|s| last >= s),
         intraday,
         history_features: None,
+        last_earnings_date: None,
+        estimated_next_earnings: None,
+        days_until_estimated_earnings: None,
+        earnings_estimate_confidence: None,
     })
 }
 
@@ -240,6 +276,63 @@ pub fn passes_entry_filters(
             None => return Some("missing pct_from_52w_high".into()),
             _ => {}
         }
+    }
+
+    if let Some(min_rr) = rules.playbook.filters.min_reward_risk.filter(|v| *v > 0.0) {
+        let stop_pct = rules.playbook.exit.stop_loss_pct;
+        if stop_pct <= 0.0 {
+            return Some("stop_loss_pct must be > 0 for min_reward_risk".into());
+        }
+        let target_pct =
+            crate::capital::effective_profit_target_pct(snap.last, rules, snap.atr_14);
+        let rr = target_pct / stop_pct;
+        if rr + f64::EPSILON < min_rr {
+            return Some(format!(
+                "reward/risk {rr:.2} below min {min_rr:.2} (target {target_pct:.1}% / stop {stop_pct:.1}%)"
+            ));
+        }
+    }
+
+    if let Some(min_mult) = rules
+        .playbook
+        .filters
+        .min_stop_atr_multiple
+        .filter(|v| *v > 0.0)
+    {
+        let stop_pct = rules.playbook.exit.stop_loss_pct;
+        match snap.atr_14 {
+            Some(atr) if atr > 0.0 && snap.last > 0.0 => {
+                let atr_pct = (atr / snap.last) * 100.0;
+                if atr_pct <= 0.0 {
+                    return Some("ATR% is zero".into());
+                }
+                let mult = stop_pct / atr_pct;
+                if mult + f64::EPSILON < min_mult {
+                    return Some(format!(
+                        "stop {stop_pct:.1}% is only {mult:.2}× ATR ({atr_pct:.1}%); need ≥{min_mult:.2}×"
+                    ));
+                }
+            }
+            _ => return Some("missing atr_14 for min_stop_atr_multiple".into()),
+        }
+    }
+
+    let lead = rules.playbook.filters.no_trade_before_earnings_days;
+    if lead > 0 {
+        if let (Some(days), Some(conf)) = (
+            snap.days_until_estimated_earnings,
+            snap.earnings_estimate_confidence.as_deref(),
+        ) {
+            if days >= 0 && days <= lead as i64 {
+                return Some(format!(
+                    "within {lead}d of estimated earnings {} (last={}, confidence={})",
+                    snap.estimated_next_earnings.as_deref().unwrap_or("?"),
+                    snap.last_earnings_date.as_deref().unwrap_or("?"),
+                    conf
+                ));
+            }
+        }
+        // Missing earnings data: fail-open (heuristic only; don't block all entries).
     }
 
     let _ = tech;
@@ -362,6 +455,7 @@ fn atr(candles: &[Candle], period: usize) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rules::TraderRules;
 
     #[test]
     fn sma_computes_tail() {
@@ -383,5 +477,105 @@ mod tests {
             .unwrap();
         assert!(snap.sma_20.is_some());
         assert!(snap.rsi_14.is_some());
+    }
+
+    fn base_snap() -> TechnicalSnapshot {
+        TechnicalSnapshot {
+            symbol: "TEST".into(),
+            last: 100.0,
+            bid: Some(99.9),
+            ask: Some(100.1),
+            spread_pct: Some(0.2),
+            sma_9: Some(99.0),
+            sma_20: Some(98.0),
+            sma_50: Some(95.0),
+            rsi_14: Some(55.0),
+            atr_14: Some(2.0),
+            volume_sma_20: Some(2_000_000.0),
+            relative_volume: Some(1.2),
+            above_sma_9: Some(true),
+            above_sma_20: Some(true),
+            above_sma_50: Some(true),
+            intraday: false,
+            history_features: Some(HistoryFeatures {
+                bars_available: 60,
+                return_30d_pct: Some(5.0),
+                return_90d_pct: Some(10.0),
+                pct_from_52w_high: Some(-8.0),
+                pct_from_52w_low: Some(20.0),
+                sma_200: Some(90.0),
+                above_sma_200: Some(true),
+                rs_vs_benchmark_30d_pct: Some(2.0),
+                rs_vs_benchmark_90d_pct: Some(3.0),
+            }),
+            last_earnings_date: None,
+            estimated_next_earnings: None,
+            days_until_estimated_earnings: None,
+            earnings_estimate_confidence: None,
+        }
+    }
+
+    #[test]
+    fn rejects_poor_reward_risk_when_atr_caps_target() {
+        let mut rules = TraderRules {
+            version: 1,
+            trader_id: "t".into(),
+            accounts: vec![],
+            ..TraderRules::default()
+        };
+        rules.playbook.exit.profit_target_pct = 8.0;
+        rules.playbook.exit.stop_loss_pct = 5.0;
+        rules.playbook.exit.profit_target_atr_cap.enabled = true;
+        rules.playbook.exit.profit_target_atr_cap.atr_multiple = 2.5;
+        rules.playbook.filters.min_reward_risk = Some(1.25);
+        // ATR 1.2% → capped target 3.0% → RR 0.6
+        let mut snap = base_snap();
+        snap.atr_14 = Some(1.2);
+        let reason = passes_entry_filters(&snap, &rules.playbook.entry, &rules.technical, &rules);
+        assert!(
+            reason.as_deref().is_some_and(|r| r.contains("reward/risk")),
+            "got {reason:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_stop_inside_daily_atr_noise() {
+        let mut rules = TraderRules {
+            version: 1,
+            trader_id: "t".into(),
+            accounts: vec![],
+            ..TraderRules::default()
+        };
+        rules.playbook.exit.stop_loss_pct = 5.0;
+        rules.playbook.filters.min_stop_atr_multiple = Some(1.5);
+        // ATR 4% → stop is only 1.25× ATR
+        let mut snap = base_snap();
+        snap.atr_14 = Some(4.0);
+        let reason = passes_entry_filters(&snap, &rules.playbook.entry, &rules.technical, &rules);
+        assert!(
+            reason.as_deref().is_some_and(|r| r.contains("ATR")),
+            "got {reason:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_balanced_atr_geometry() {
+        let mut rules = TraderRules {
+            version: 1,
+            trader_id: "t".into(),
+            accounts: vec![],
+            ..TraderRules::default()
+        };
+        rules.playbook.exit.profit_target_pct = 8.0;
+        rules.playbook.exit.stop_loss_pct = 5.0;
+        rules.playbook.exit.profit_target_atr_cap.enabled = true;
+        rules.playbook.exit.profit_target_atr_cap.atr_multiple = 2.5;
+        rules.playbook.filters.min_reward_risk = Some(1.25);
+        rules.playbook.filters.min_stop_atr_multiple = Some(1.5);
+        // ATR 2.5% → target min(8, 6.25)=6.25 → RR 1.25; stop/ATR = 2.0
+        let mut snap = base_snap();
+        snap.atr_14 = Some(2.5);
+        let reason = passes_entry_filters(&snap, &rules.playbook.entry, &rules.technical, &rules);
+        assert!(reason.is_none(), "got {reason:?}");
     }
 }

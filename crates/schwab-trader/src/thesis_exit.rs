@@ -139,6 +139,10 @@ mod tests {
             above_sma_50: None,
             intraday: false,
             history_features: None,
+            last_earnings_date: None,
+            estimated_next_earnings: None,
+            days_until_estimated_earnings: None,
+            earnings_estimate_confidence: None,
         };
         assert_eq!(
             thesis_exit_reason(&rules, &pos, 101.5, &snap, None),
@@ -175,6 +179,10 @@ mod tests {
                 rs_vs_benchmark_30d_pct: Some(-5.0),
                 ..Default::default()
             }),
+            last_earnings_date: None,
+            estimated_next_earnings: None,
+            days_until_estimated_earnings: None,
+            earnings_estimate_confidence: None,
         };
         assert_eq!(
             thesis_exit_reason(&rules, &pos, 99.0, &snap, None),

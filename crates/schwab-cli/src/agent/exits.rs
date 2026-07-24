@@ -177,6 +177,7 @@ pub async fn evaluate_position_monitor(
         tracked,
         &exit,
         mark_opt.as_ref(),
+        analytics.as_ref(),
         market_context,
         chain_error.as_deref(),
         &rules.exit_rules,
@@ -189,10 +190,12 @@ pub async fn evaluate_position_monitor(
     })
 }
 
-pub fn evaluate_exit_from_mark(
+/// Mechanical exits with optional live analytics (OTM cushion can suppress stop).
+pub fn evaluate_exit_from_mark_with_analytics(
     rules: &RulesConfig,
     entry_credit: Option<f64>,
     mark: &SpreadMark,
+    analytics: Option<&SpreadAnalytics>,
 ) -> Option<ExitEvaluation> {
     let entry_credit = entry_credit.filter(|c| *c > f64::EPSILON)?;
     let mark = SpreadMark {
@@ -208,7 +211,7 @@ pub fn evaluate_exit_from_mark(
     }
 
     let stop_debit = entry_credit * (rules.exit_rules.stop_loss_pct / 100.0);
-    if mark.debit_to_close >= stop_debit {
+    if mark.debit_to_close >= stop_debit && stop_loss_armed(rules, analytics) {
         return Some(ExitEvaluation {
             reason: "stop_loss".into(),
             mark,
@@ -225,8 +228,20 @@ pub fn evaluate_exit_from_mark(
     None
 }
 
+/// Credit-multiple stop is armed unless OTM cushion says we are still safely far from the short.
+/// Missing OTM data keeps the stop armed (fail-safe).
+pub fn stop_loss_armed(rules: &RulesConfig, analytics: Option<&SpreadAnalytics>) -> bool {
+    let Some(require_below) = rules.exit_rules.stop_loss_require_short_otm_below_pct else {
+        return true;
+    };
+    match analytics.and_then(|a| a.short_otm_pct) {
+        Some(otm) => otm < require_below,
+        None => true,
+    }
+}
+
 /// Primary + thesis deterioration exits (evaluated every tick when chain data is live).
-/// Profit target / stop / DTE always apply; thesis exits respect `min_hold_minutes`.
+/// Profit target / DTE always apply; mark stop may require thin OTM cushion; thesis respects min_hold.
 pub fn evaluate_all_exits(
     rules: &RulesConfig,
     entry_credit: Option<f64>,
@@ -235,7 +250,9 @@ pub fn evaluate_all_exits(
     peak_profit_pct: Option<f64>,
     opened_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Option<ExitEvaluation> {
-    if let Some(exit) = evaluate_exit_from_mark(rules, entry_credit, mark) {
+    if let Some(exit) =
+        evaluate_exit_from_mark_with_analytics(rules, entry_credit, mark, analytics)
+    {
         return Some(exit);
     }
     let Some(analytics) = analytics else {
@@ -437,6 +454,7 @@ pub fn monitor_snapshot_json(
     tracked: Option<&TrackedPosition>,
     exit_eval: &Option<ExitEvaluation>,
     mark: Option<&SpreadMark>,
+    analytics: Option<&SpreadAnalytics>,
     market_context: Option<Value>,
     chain_error: Option<&str>,
     exit_rules: &ExitRules,
@@ -493,17 +511,31 @@ pub fn monitor_snapshot_json(
     if let Some(m) = mark.or(exit_eval.as_ref().map(|e| &e.mark)) {
         let entry = m.entry_credit;
         let stop_debit = entry * (exit_rules.stop_loss_pct / 100.0);
+        let debit_hit = m.debit_to_close >= stop_debit;
+        // Reconstruct a minimal RulesConfig view for arming — use exit_rules fields directly.
+        let otm = analytics.and_then(|a| a.short_otm_pct);
+        let stop_armed = match exit_rules.stop_loss_require_short_otm_below_pct {
+            None => true,
+            Some(require_below) => match otm {
+                Some(v) => v < require_below,
+                None => true,
+            },
+        };
         snapshot["mechanical_rules"] = json!({
             "profit_target_pct": exit_rules.profit_target_pct,
             "stop_loss_pct": exit_rules.stop_loss_pct,
+            "stop_loss_require_short_otm_below_pct": exit_rules.stop_loss_require_short_otm_below_pct,
+            "short_otm_pct": otm,
+            "stop_armed": stop_armed,
             "stop_debit_threshold_per_share": stop_debit,
             "current_debit_to_close": m.debit_to_close,
-            "stop_triggered": m.debit_to_close >= stop_debit,
+            "stop_triggered": debit_hit && stop_armed,
+            "stop_suppressed_by_otm_cushion": debit_hit && !stop_armed,
             "profit_target_triggered": m.profit_pct >= exit_rules.profit_target_pct,
             "thesis_exits_enabled": exit_rules.thesis.enabled,
             "thesis_min_hold_minutes": exit_rules.thesis.min_hold_minutes,
             "peak_profit_pct": tracked.and_then(|p| p.peak_profit_pct),
-            "note": "Mechanical exits use debit_to_close from the chain, NOT net_market_value. Thesis exits (POP/delta/OTM/giveback) run after min_hold when enabled."
+            "note": "Mechanical exits use debit_to_close from the chain, NOT net_market_value. Mark stop only arms when short OTM% is below stop_loss_require_short_otm_below_pct (if set). Thesis exits run after min_hold when enabled."
         });
     }
 
@@ -681,6 +713,7 @@ pub async fn reconcile_open_positions(
                         peak_profit_pct: None,
                         entry_pop_pct: None,
                         entry_short_delta: None,
+                        ..Default::default()
                     },
                 );
             }
@@ -869,7 +902,7 @@ mod tests {
             profit_target_pct: 50.0,
             stop_loss_pct: 200.0,
             dte_close: 21,
-            thesis: Default::default(),
+            ..Default::default()
         };
         let rules = RulesConfig {
             version: 1,
@@ -878,6 +911,7 @@ mod tests {
             schedule: Default::default(),
             strategies: Default::default(),
             watchlist: vec![],
+            entry_policy: Default::default(),
             entry_rules: Default::default(),
             exit_rules,
             risk: Default::default(),
@@ -894,7 +928,7 @@ mod tests {
             dte: 30,
             source: "test".into(),
         };
-        let exit = evaluate_exit_from_mark(&rules, Some(0.25), &mark);
+        let exit = evaluate_exit_from_mark_with_analytics(&rules, Some(0.25), &mark, None);
         assert_eq!(
             exit.as_ref().map(|e| e.reason.as_str()),
             Some("profit_target")
@@ -981,6 +1015,7 @@ mod tests {
             schedule: Default::default(),
             strategies: Default::default(),
             watchlist: vec![],
+            entry_policy: Default::default(),
             entry_rules: Default::default(),
             exit_rules: ExitRules {
                 profit_target_pct: 50.0,
@@ -990,6 +1025,7 @@ mod tests {
                     enabled: true,
                     ..Default::default()
                 },
+                ..Default::default()
             },
             risk: Default::default(),
             regime: Default::default(),
@@ -1121,6 +1157,40 @@ mod tests {
         assert_eq!(
             candidate_fails_thesis_gates(&rules, &healthy),
             Some("thesis_inside_1sigma")
+        );
+    }
+
+    #[test]
+    fn stop_loss_suppressed_while_short_well_otm() {
+        let mut rules = thesis_rules();
+        rules.exit_rules.stop_loss_pct = 200.0;
+        rules.exit_rules.stop_loss_require_short_otm_below_pct = Some(3.5);
+        let mark = SpreadMark {
+            entry_credit: 0.80,
+            debit_to_close: 2.00,
+            profit_pct: -150.0,
+            dte: 28,
+            source: "test".into(),
+        };
+        let far = SpreadAnalytics {
+            short_otm_pct: Some(4.4),
+            ..Default::default()
+        };
+        assert!(!stop_loss_armed(&rules, Some(&far)));
+        assert!(
+            evaluate_exit_from_mark_with_analytics(&rules, Some(0.80), &mark, Some(&far)).is_none()
+        );
+
+        let near = SpreadAnalytics {
+            short_otm_pct: Some(2.0),
+            ..Default::default()
+        };
+        assert!(stop_loss_armed(&rules, Some(&near)));
+        assert_eq!(
+            evaluate_exit_from_mark_with_analytics(&rules, Some(0.80), &mark, Some(&near))
+                .as_ref()
+                .map(|e| e.reason.as_str()),
+            Some("stop_loss")
         );
     }
 

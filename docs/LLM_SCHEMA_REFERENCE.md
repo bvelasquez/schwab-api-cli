@@ -177,7 +177,7 @@ The LLM **does not replace** mechanical exits unless `allow_llm_exits: true` (of
 | `version` | integer | Must be `1` |
 | `agent_id` | string | Stable id, e.g. `my-options-pilot` |
 | `accounts` | array | At least one enabled account with `hash` |
-| `watchlist` | array | Underlying tickers to scan, e.g. `SPY`, `IWM` |
+| `watchlist` | array | Symbols to scan — plain strings or objects with `symbol`, `role`, overrides |
 
 ### Full schema (all sections)
 
@@ -208,9 +208,21 @@ strategies:
   iron_condor:
     enabled: false
 
+# Plain strings still work. Preferred form supports role + per-symbol overrides:
 watchlist:
-  - SPY
-  - IWM
+  - symbol: SPY
+    role: primary                # primary | fallback
+    min_credit: 0.45             # optional VerticalEntryOverrides
+  - symbol: IWM
+    role: fallback
+
+entry_policy:                    # defaults are strict — see OPTIONS_RULES.md
+  mode: first_qualifying
+  fallback_only_after_primary_exhausted: true
+  require_llm_proceed: true      # default true: live entry needs fresh LLM proceed
+  proceed_cache_minutes: 45
+  entry_attempt_cooldown_minutes: 30
+  promote_redeploy_symbol: false
 
 entry_rules:
   vertical:
@@ -221,6 +233,11 @@ entry_rules:
     max_width: 2                 # strike width (short − long)
     short_delta_min: 0.15
     short_delta_max: 0.30
+    min_pop_pct: 60
+    min_distance_to_be_pct: 3
+    min_credit_to_width_pct: 12.5
+    reject_short_inside_1sigma: false  # when true, fail-closed if IV missing
+    min_iv_rv_ratio: 1.15              # optional; fail-closed if IV/RV missing
     max_open_positions: 2
     max_contracts_per_trade: 1
   iron_condor:
@@ -229,6 +246,7 @@ entry_rules:
     min_credit: 1.00
     wing_width: 5
     short_delta: 0.16
+    min_iv_rv_ratio: 1.15        # optional
     max_open_positions: 2
     max_contracts_per_trade: 1
 
@@ -244,7 +262,23 @@ risk:
   allowed_underlyings:
     - SPY
     - IWM
-  blocked_events: []             # reserved for future event gates
+  blocked_events: []             # non-empty = hard pause all entries (manual kill)
+  blocked_dates:                 # date-aware calendar (see OPTIONS_RULES.md)
+    - date: "2026-09-16"
+      lead_days: 1
+      label: FOMC
+  correlation_groups:
+    - name: broad_market
+      symbols: [SPY, QQQ]
+      max_open: 1
+  max_drawdown_halt_pct: 15.0
+  drawdown_sleeve_usd: 4000
+
+regime:                          # optional
+  enabled: true
+  pause_entries_vix_above: 22.0
+  pause_entries_vix_below: 14.0  # optional crushed-vol floor
+  realized_vol_lookback: 20
 
 execution:
   order_type: limit

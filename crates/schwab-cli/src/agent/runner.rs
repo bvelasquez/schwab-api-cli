@@ -23,7 +23,9 @@ use crate::order_status::{
     is_failure_status, is_terminal_status, order_status, wait_for_order, wait_result_json,
     WaitCondition, WaitOptions,
 };
-use crate::rules::{LlmPhase, RulesConfig, VerticalEntryRules};
+use crate::rules::{
+    EntryScanMode, LlmPhase, RulesConfig, VerticalEntryRules, WatchlistItemConfig, WatchlistRole,
+};
 use crate::safety::{execute_trading_order, require_trading_approval};
 use crate::trade_audio::{self, TradeAudioEvent};
 
@@ -34,21 +36,26 @@ use super::exits::{
 use super::llm::OpenRouterClient;
 use super::market_context::{market_context_summary_for_llm, vertical_entry_market_context};
 use super::regime::{detect_options_regime, OptionsRegimeSnapshot};
-use super::spread_analytics::{analytics_from_json, entry_analytics_pass};
+use super::risk::{drawdown_to_json, record_live_realized_pnl, update_drawdown};
+use super::spread_analytics::{analytics_from_json, entry_analytics_pass, passes_min_iv_rv_ratio};
+use super::volatility::{fetch_realized_vol_pct, iv_rv_ratio};
 use super::paths::{active_state_path, load_agent_state, load_sim_agent_state};
+use super::protective;
+use super::resilience;
 use super::sim::{ensure_ledger, record_sim_entry, record_sim_exit};
 use super::schedule::{self, AgentSession};
 use super::state::{
-    is_thesis_exit_reason, save_state, update_peak_profit_pct, AgentState, PendingOrder,
-    PendingOrderAction, RedeploySignal, TrackedPosition,
+    candidate_fingerprint, entry_attempt_cooldown_active, entry_proceed_cache_valid,
+    is_stop_loss_exit_reason, is_thesis_exit_reason, record_entry_attempt, record_stop_loss_exit,
+    save_state, stop_loss_re_entry_blocked, update_peak_profit_pct, AgentState, EntryProceedCache,
+    PendingOrder, PendingOrderAction, RedeploySignal, TrackedPosition,
 };
 use super::telegram_format::{
     format_action_telegram, format_llm_review_telegram, format_market_open_telegram,
     format_overnight_telegram, record_llm_telegram_sent, should_send_llm_telegram,
 };
-use crate::ui::agent_health::{is_fatal_auth_error, SharedAgentHealth};
+use crate::ui::agent_health::SharedAgentHealth;
 
-const TICK_ERROR_BACKOFF_SECS: u64 = 60;
 const MAX_ENTRY_QUOTE_WIDTH_RATIO: f64 = 1.0;
 const EXIT_LIMIT_SLIPPAGE: f64 = 0.05;
 
@@ -62,6 +69,8 @@ pub struct TickResult {
     pub skipped: Vec<String>,
     pub monitored_positions: Vec<Value>,
     pub llm_review: Option<Value>,
+    #[serde(default)]
+    pub monitoring: Value,
 }
 
 pub async fn run_agent_loop(
@@ -122,8 +131,14 @@ pub async fn run_agent_loop(
 
     let mut consecutive_errors = 0u32;
     let mut last_logged_error: Option<String> = None;
+    let mut auth_notified = false;
 
     loop {
+        // Soft re-auth probe so a fresh `schwab auth login` is picked up mid-run.
+        if let Err(err) = trader.client().oauth().ensure_access_token().await {
+            tracing::debug!("access token probe: {err}");
+        }
+
         match tick_once(
             runtime,
             rules_path,
@@ -137,7 +152,24 @@ pub async fn run_agent_loop(
         .await
         {
             Ok(result) => {
+                if consecutive_errors > 0 {
+                    let msg = format!(
+                        "agent recovered after {consecutive_errors} failure(s)"
+                    );
+                    let _ = super::paths::append_agent_log(rules_path, &msg);
+                    if let Some(tg) = telegram.as_ref() {
+                        if tg.wants_actions() {
+                            let _ = tg
+                                .send(&format!(
+                                    "schwab [{}]\n✓ AGENT RECOVERED\nafter {consecutive_errors} failure(s) — exits armed again",
+                                    rules.agent_id
+                                ))
+                                .await;
+                        }
+                    }
+                }
                 consecutive_errors = 0;
+                auth_notified = false;
                 state.last_tick = Some(Utc::now());
                 save_state(&state_path, &state)?;
 
@@ -189,25 +221,36 @@ pub async fn run_agent_loop(
             Err(e) => {
                 consecutive_errors += 1;
                 let err_str = format!("{e:#}");
+                // 3-tier classification (Recoverable / AuthFatal / Unexpected) so a real code
+                // bug and a transient network blip get differentiated backoff and alerting,
+                // instead of both falling into a single generic "not auth" bucket.
+                let class = resilience::classify_agent_error(&e);
+                let class_label = resilience::class_label(class);
 
-                if is_fatal_auth_error(&err_str) {
-                    let msg = "agent stopped: Schwab login required (refresh token invalid). Run: schwab auth login";
+                if class == resilience::AgentErrorClass::AuthFatal {
+                    let msg = "agent degraded: Schwab login required (refresh token invalid). Run: schwab auth login — retrying";
                     if last_logged_error.as_deref() != Some(msg) {
                         let _ = super::paths::append_agent_log(rules_path, msg);
+                        last_logged_error = Some(msg.to_string());
                     }
                     if let Some(h) = watch_health.as_ref() {
                         if let Ok(mut g) = h.lock() {
                             g.record_error(msg);
                         }
                     }
-                    notify_auth_required(telegram.as_ref(), msg).await;
+                    if !auth_notified {
+                        notify_auth_required(telegram.as_ref(), msg).await;
+                        auth_notified = true;
+                    }
                     if once {
                         return Err(e);
                     }
-                    break;
+                    let backoff = resilience::backoff_seconds(class, consecutive_errors);
+                    tokio::time::sleep(Duration::from_secs(backoff)).await;
+                    continue;
                 }
 
-                let msg = format!("tick error (#{consecutive_errors}): {err_str}");
+                let msg = format!("tick error ({class_label}, #{consecutive_errors}): {err_str}");
                 if last_logged_error.as_deref() != Some(msg.as_str()) {
                     let _ = super::paths::append_agent_log(rules_path, &msg);
                     last_logged_error = Some(msg.clone());
@@ -217,12 +260,25 @@ pub async fn run_agent_loop(
                         g.record_error(&msg);
                     }
                 }
+                // Avoid Telegram spam: alert on the first failure, then every 10th, so both
+                // Recoverable and Unexpected errors surface without flooding chat.
+                if consecutive_errors == 1 || consecutive_errors % 10 == 0 {
+                    if let Some(tg) = telegram.as_ref() {
+                        if tg.wants_actions() {
+                            let short: String = err_str.chars().take(280).collect();
+                            let _ = tg
+                                .send(&format!(
+                                    "schwab [{}]\n⚠ AGENT DEGRADED ({class_label}) ×{consecutive_errors}\n{short}\nAgent staying up; backing off and retrying",
+                                    rules.agent_id
+                                ))
+                                .await;
+                        }
+                    }
+                }
                 if once {
                     return Err(e);
                 }
-                let backoff = TICK_ERROR_BACKOFF_SECS
-                    .saturating_mul(consecutive_errors.min(5) as u64)
-                    .max(30);
+                let backoff = resilience::backoff_seconds(class, consecutive_errors);
                 tokio::time::sleep(Duration::from_secs(backoff)).await;
             }
         }
@@ -264,6 +320,7 @@ pub async fn tick_once(
         skipped: vec![],
         monitored_positions: vec![],
         llm_review: None,
+        monitoring: Value::Null,
     };
 
     if runtime.simulate {
@@ -274,6 +331,13 @@ pub async fn tick_once(
     } else {
         reconcile_open_positions(trader, state, rules).await?;
         poll_pending_orders(trader, state, rules, &mut result).await?;
+        let protective_summary =
+            protective::reconcile_protective_orders(runtime, trader, rules, state).await;
+        result.monitoring = json!({
+            "unprotected_count": protective_summary.unprotected_count,
+            "protective_orders_placed_this_tick": protective_summary.placed,
+            "protective_orders_failed_this_tick": protective_summary.failed,
+        });
     }
 
     let (market_open, hours) = fetch_option_market_status(market).await?;
@@ -322,9 +386,28 @@ pub async fn tick_once(
     let entries_paused = rules.risk.max_trades_per_day > 0
         && state.trades_capacity_used() >= rules.risk.max_trades_per_day;
     let blocked_events_active = !rules.risk.blocked_events.is_empty();
+    let active_blocked_dates = rules.risk.active_blocked_date_labels(today);
+    let blocked_dates_active = !active_blocked_dates.is_empty();
+    let calendar_or_manual_block = blocked_events_active || blocked_dates_active;
+
+    if let Some(obj) = result.monitoring.as_object_mut() {
+        obj.insert(
+            "blocked_dates_active".into(),
+            json!(active_blocked_dates),
+        );
+        obj.insert(
+            "blocked_events_active".into(),
+            json!(blocked_events_active),
+        );
+    } else {
+        result.monitoring = json!({
+            "blocked_dates_active": active_blocked_dates,
+            "blocked_events_active": blocked_events_active,
+        });
+    }
 
     let mut regime_snap: Option<OptionsRegimeSnapshot> = None;
-    if rules.regime.enabled && !entries_paused && !blocked_events_active {
+    if rules.regime.enabled && !entries_paused && !calendar_or_manual_block {
         match detect_options_regime(market, &rules.regime).await {
             Ok(snap) => {
                 state.last_regime = Some(snap.to_json());
@@ -367,14 +450,18 @@ pub async fn tick_once(
             if !group.legs.is_empty() {
                 result.monitored_positions.push(monitor.snapshot);
             }
-            if let Some(eval) = monitor.exit {
-                if is_thesis_exit_reason(&eval.reason) {
-                    state.redeploy_signal = Some(RedeploySignal {
-                        at: Utc::now(),
-                        reason: eval.reason.clone(),
-                        underlying: Some(tracked.underlying.clone()),
-                    });
-                }
+                if let Some(eval) = monitor.exit {
+                    if is_thesis_exit_reason(&eval.reason) {
+                        state.redeploy_signal = Some(RedeploySignal {
+                            at: Utc::now(),
+                            reason: eval.reason.clone(),
+                            underlying: Some(tracked.underlying.clone()),
+                        });
+                    } else if is_stop_loss_exit_reason(&eval.reason) {
+                        record_stop_loss_exit(state, &tracked.underlying);
+                        state.redeploy_signal = None;
+                        state.entry_proceed_cache = None;
+                    }
                 let exit = exit_signal_json_for_account(&tracked.account_hash, &group, &eval);
                 result.signals.push(exit.clone());
                 if !runtime.dry_run {
@@ -425,6 +512,10 @@ pub async fn tick_once(
                             reason: eval.reason.clone(),
                             underlying: Some(group.underlying.clone()),
                         });
+                    } else if is_stop_loss_exit_reason(&eval.reason) {
+                        record_stop_loss_exit(state, &group.underlying);
+                        state.redeploy_signal = None;
+                        state.entry_proceed_cache = None;
                     }
                     let exit = exit_signal_json_for_account(&account.hash, group, &eval);
                     result.signals.push(exit.clone());
@@ -447,12 +538,35 @@ pub async fn tick_once(
     }
 
     // Entry scan (signals collected; execution after LLM review)
+    let halted_before = state.trading_halted_reason.clone();
+    let drawdown = update_drawdown(state, rules, &result.monitored_positions);
+    if let Some(obj) = result.monitoring.as_object_mut() {
+        obj.insert("drawdown".into(), drawdown_to_json(&drawdown));
+        obj.insert(
+            "trading_halted_reason".into(),
+            json!(state.trading_halted_reason),
+        );
+    } else {
+        result.monitoring = json!({
+            "drawdown": drawdown_to_json(&drawdown),
+            "trading_halted_reason": state.trading_halted_reason,
+        });
+    }
+    if state.trading_halted_reason != halted_before {
+        if let Some(reason) = &state.trading_halted_reason {
+            notify_trading_halted(telegram, rules, reason).await;
+        } else if halted_before.is_some() {
+            notify_trading_recovered(telegram, rules).await;
+        }
+    }
+
     let mut pending_entries: Vec<(String, StrategyKind, Value)> = Vec::new();
     let regime_pause = regime_snap.as_ref().is_some_and(|s| s.pause_entries);
     let preferred = regime_snap
         .as_ref()
         .map(|s| s.preferred_strategy.as_str())
         .unwrap_or("put_credit");
+    let trading_halted = state.trading_halted_reason.is_some();
 
     if entries_paused {
         result.skipped.push(format!(
@@ -460,10 +574,23 @@ pub async fn tick_once(
              (soft churn cap; hard gates are max_open_positions + portfolio/trade risk)",
             rules.risk.max_trades_per_day
         ));
+    } else if trading_halted {
+        result.skipped.push(format!(
+            "new entries paused — {}",
+            state
+                .trading_halted_reason
+                .as_deref()
+                .unwrap_or("trading halted")
+        ));
     } else if blocked_events_active {
         result.skipped.push(format!(
             "new entries paused — blocked_events active: {}",
             rules.risk.blocked_events.join(", ")
+        ));
+    } else if blocked_dates_active {
+        result.skipped.push(format!(
+            "new entries paused — blocked_dates active: {}",
+            active_blocked_dates.join(", ")
         ));
     } else if regime_pause || preferred.eq_ignore_ascii_case("pause") {
         result.skipped.push(format!(
@@ -508,7 +635,6 @@ pub async fn tick_once(
             };
             (want_vertical, want_condor, vertical_type)
         } else {
-            // Legacy: scan configured vertical type + iron condor when enabled.
             (
                 true,
                 true,
@@ -517,60 +643,26 @@ pub async fn tick_once(
         };
 
         for account in rules.enabled_accounts() {
-            for underlying in &scan_watchlist {
-                let sym = underlying.to_uppercase();
-                if !rules.risk.allowed_underlyings.is_empty()
-                    && !rules
-                        .risk
-                        .allowed_underlyings
-                        .iter()
-                        .any(|u| u.eq_ignore_ascii_case(&sym))
-                {
-                    continue;
-                }
-                if underlying_entry_cap_reached(rules, state, &account.hash, &sym) {
-                    continue;
-                }
-
-                if rules.strategies.vertical.enabled && want_vertical {
-                    match evaluate_vertical_entry(
-                        market,
-                        rules,
-                        &sym,
-                        today,
-                        state,
-                        &account.hash,
-                        vertical_type,
-                    )
-                    .await
-                    {
-                        Ok(Some(signal)) => {
-                            pending_entries.push((
-                                account.hash.clone(),
-                                StrategyKind::Vertical,
-                                signal,
-                            ));
-                        }
-                        Ok(None) => {}
-                        Err(e) => result.skipped.push(format!("{sym} vertical: {e:#}")),
+            match scan_entries_for_account(
+                market,
+                rules,
+                state,
+                &account.hash,
+                today,
+                &scan_watchlist,
+                want_vertical,
+                want_condor,
+                vertical_type,
+            )
+            .await
+            {
+                Ok(found) => {
+                    for skip in found.skipped {
+                        result.skipped.push(skip);
                     }
+                    pending_entries.extend(found.entries);
                 }
-
-                if rules.strategies.iron_condor.enabled && want_condor {
-                    match evaluate_condor_entry(market, rules, &sym, today, state, &account.hash)
-                        .await
-                    {
-                        Ok(Some(signal)) => {
-                            pending_entries.push((
-                                account.hash.clone(),
-                                StrategyKind::IronCondor,
-                                signal,
-                            ));
-                        }
-                        Ok(None) => {}
-                        Err(e) => result.skipped.push(format!("{sym} iron_condor: {e:#}")),
-                    }
-                }
+                Err(e) => result.skipped.push(format!("entry scan {}: {e:#}", account.hash)),
             }
         }
         if rules.regime.enabled {
@@ -637,12 +729,18 @@ pub async fn tick_once(
                 "open_playbook": open_playbook_for_llm,
                 "candidate_entries": pending_entries.iter().map(|(_, _, s)| s).collect::<Vec<_>>(),
                 "recent_signals": result.signals,
-                "watchlist": rules.watchlist,
+                "watchlist": rules.watchlist_items(),
+                "entry_policy": {
+                    "mode": format!("{:?}", rules.entry_policy.mode),
+                    "fallback_only_after_primary_exhausted": rules.entry_policy.fallback_only_after_primary_exhausted,
+                },
                 "risk": {
                     "max_trades_per_day": rules.risk.max_trades_per_day,
                     "trades_today": state.trades_today,
                     "max_risk_per_trade_usd": rules.risk.max_risk_per_trade_usd,
                     "max_portfolio_risk_usd": rules.risk.max_portfolio_risk_usd,
+                    "blocked_dates_active": active_blocked_dates,
+                    "blocked_events": rules.risk.blocked_events,
                 },
             });
 
@@ -660,9 +758,23 @@ pub async fn tick_once(
                         && review.should_veto_entries()
                     {
                         llm_veto_entries = true;
+                        state.entry_proceed_cache = None;
                         result
                             .skipped
                             .push(format!("LLM veto entries: {}", review.entry_reasoning));
+                    } else if matches!(phase, LlmPhase::Selection) {
+                        let fingerprints: Vec<String> = pending_entries
+                            .iter()
+                            .filter_map(|(_, _, s)| candidate_fingerprint(s))
+                            .collect();
+                        if review.entry_recommendation.eq_ignore_ascii_case("proceed") {
+                            state.entry_proceed_cache = Some(EntryProceedCache {
+                                at: Utc::now(),
+                                candidate_fingerprints: fingerprints,
+                            });
+                        } else {
+                            state.entry_proceed_cache = None;
+                        }
                     }
 
                     if rules.llm.allow_llm_exits {
@@ -691,6 +803,7 @@ pub async fn tick_once(
                     result.skipped.push(format!("LLM review failed: {e:#}"));
                     if rules.llm.veto_entries && matches!(phase, LlmPhase::Selection) {
                         llm_veto_entries = true;
+                        state.entry_proceed_cache = None;
                         result
                             .skipped
                             .push("LLM selection failed closed — entries deferred".into());
@@ -698,11 +811,30 @@ pub async fn tick_once(
                 }
             }
         }
-    } else if rules.llm.enabled && rules.llm.veto_entries && has_candidates {
+    } else if entry_execution_requires_llm(rules) && has_candidates {
         llm_veto_entries = true;
         result
             .skipped
             .push("LLM selection unavailable — entries deferred".into());
+    }
+
+    let mut entries_blocked = llm_veto_entries;
+    if !entries_blocked && has_candidates && entry_execution_requires_llm(rules) {
+        let fingerprints: Vec<String> = pending_entries
+            .iter()
+            .filter_map(|(_, _, s)| candidate_fingerprint(s))
+            .collect();
+        let cache_ok = state
+            .entry_proceed_cache
+            .as_ref()
+            .is_some_and(|cache| entry_proceed_cache_valid(&rules.entry_policy, cache, &fingerprints));
+        if !cache_ok {
+            entries_blocked = true;
+            result.skipped.push(
+                "entry deferred — awaiting LLM proceed for current candidate (see proceed_cache_minutes)"
+                    .into(),
+            );
+        }
     }
 
     // LLM-requested exits (high urgency only, when enabled)
@@ -744,7 +876,7 @@ pub async fn tick_once(
     }
 
     // Execute pending entries unless LLM vetoed (dry-run never executes)
-    if !llm_veto_entries && !runtime.dry_run {
+    if !entries_blocked && !runtime.dry_run {
         if runtime.simulate {
             for (account_hash, kind, signal) in pending_entries {
                 match record_sim_entry(rules_path, state, rules, &account_hash, kind, &signal) {
@@ -793,8 +925,6 @@ pub async fn tick_once(
                 }
             }
         }
-    } else if llm_veto_entries && !pending_entries.is_empty() && !runtime.dry_run {
-        trade_audio::speak(TradeAudioEvent::EntryDeferred);
     }
 
     Ok(result)
@@ -878,7 +1008,7 @@ async fn tick_overnight(
         "market_closed": true,
         "open_positions": result.monitored_positions,
         "prior_open_playbook": state.open_playbook,
-        "watchlist": rules.watchlist,
+        "watchlist": rules.watchlist_items(),
         "exit_rules": super::exits::exit_rules_summary(&rules.exit_rules),
         "note": "Build open playbook for next session. No chain data. new_entries must be skip.",
     });
@@ -1039,6 +1169,25 @@ async fn poll_pending_orders(
             PendingOrderAction::Exit => {
                 if status == "FILLED" {
                     state.remove_pending_order(&pending_order.order_id);
+                    if let Some(tracked) = state
+                        .open_positions
+                        .get(&pending_order.position_id)
+                        .cloned()
+                    {
+                        let debit = pending_order
+                            .detail
+                            .as_ref()
+                            .and_then(|d| d.pointer("/signal/mark/debit_to_close"))
+                            .or_else(|| {
+                                pending_order
+                                    .detail
+                                    .as_ref()
+                                    .and_then(|d| d.get("limit_price"))
+                            })
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0);
+                        record_live_realized_pnl(state, &tracked, debit);
+                    }
                     state.open_positions.remove(&pending_order.position_id);
                     state.record_action(
                         "exit_filled",
@@ -1130,23 +1279,203 @@ fn track_filled_entry_from_pending(state: &mut AgentState, detail: &Value, pendi
                 .pointer("/market_context/short_delta")
                 .and_then(|v| v.as_f64())
                 .map(f64::abs),
+            ..Default::default()
         });
 }
 
-fn watchlist_for_scan(rules: &RulesConfig, state: &AgentState) -> Vec<String> {
-    let mut wl = rules.watchlist.clone();
+fn watchlist_for_scan(rules: &RulesConfig, state: &AgentState) -> Vec<WatchlistItemConfig> {
+    let mut items = rules.watchlist_items();
     if let Some(sig) = &state.redeploy_signal {
         if let Some(u) = &sig.underlying {
             let key = u.to_uppercase();
             if redeploy_cooldown_active(rules, sig) {
-                wl.retain(|s| !s.eq_ignore_ascii_case(&key));
-            } else {
-                wl.retain(|s| !s.eq_ignore_ascii_case(&key));
-                wl.insert(0, key);
+                items.retain(|i| !i.symbol.eq_ignore_ascii_case(&key));
+            } else if rules.entry_policy.promote_redeploy_symbol {
+                if let Some(pos) = items.iter().position(|i| i.symbol.eq_ignore_ascii_case(&key)) {
+                    let item = items.remove(pos);
+                    items.insert(0, item);
+                }
             }
         }
     }
-    wl
+    items
+}
+
+struct ScanEntriesResult {
+    entries: Vec<(String, StrategyKind, Value)>,
+    skipped: Vec<String>,
+}
+
+async fn scan_entries_for_account(
+    market: &MarketDataApi,
+    rules: &RulesConfig,
+    state: &AgentState,
+    account_hash: &str,
+    today: NaiveDate,
+    scan_watchlist: &[WatchlistItemConfig],
+    want_vertical: bool,
+    want_condor: bool,
+    vertical_type: &str,
+) -> Result<ScanEntriesResult> {
+    let mut result = ScanEntriesResult {
+        entries: Vec::new(),
+        skipped: Vec::new(),
+    };
+    let policy = &rules.entry_policy;
+
+    let mut primary_items: Vec<&WatchlistItemConfig> = Vec::new();
+    let mut fallback_items: Vec<&WatchlistItemConfig> = Vec::new();
+    for item in scan_watchlist {
+        match item.role {
+            WatchlistRole::Primary => primary_items.push(item),
+            WatchlistRole::Fallback => fallback_items.push(item),
+        }
+    }
+
+    scan_watchlist_tier(
+        market,
+        rules,
+        state,
+        account_hash,
+        today,
+        &primary_items,
+        want_vertical,
+        want_condor,
+        vertical_type,
+        &mut result,
+    )
+    .await?;
+
+    let need_fallback = result.entries.is_empty()
+        && policy.fallback_only_after_primary_exhausted
+        && !fallback_items.is_empty();
+    let scan_all_fallbacks = !policy.fallback_only_after_primary_exhausted;
+
+    if need_fallback || scan_all_fallbacks {
+        scan_watchlist_tier(
+            market,
+            rules,
+            state,
+            account_hash,
+            today,
+            &fallback_items,
+            want_vertical,
+            want_condor,
+            vertical_type,
+            &mut result,
+        )
+        .await?;
+    }
+
+    if policy.mode == EntryScanMode::FirstQualifying && result.entries.len() > 1 {
+        result.entries.truncate(1);
+    }
+
+    Ok(result)
+}
+
+async fn scan_watchlist_tier(
+    market: &MarketDataApi,
+    rules: &RulesConfig,
+    state: &AgentState,
+    account_hash: &str,
+    today: NaiveDate,
+    items: &[&WatchlistItemConfig],
+    want_vertical: bool,
+    want_condor: bool,
+    vertical_type: &str,
+    result: &mut ScanEntriesResult,
+) -> Result<()> {
+    let policy = &rules.entry_policy;
+
+    for item in items {
+        if policy.mode == EntryScanMode::FirstQualifying && !result.entries.is_empty() {
+            break;
+        }
+
+        let sym = item.symbol.to_uppercase();
+        if !rules.risk.allowed_underlyings.is_empty()
+            && !rules
+                .risk
+                .allowed_underlyings
+                .iter()
+                .any(|u| u.eq_ignore_ascii_case(&sym))
+        {
+            continue;
+        }
+        if underlying_entry_cap_reached(rules, state, account_hash, &sym) {
+            continue;
+        }
+        if let Some(group_name) = correlation_group_cap_reached(rules, state, account_hash, &sym) {
+            result.skipped.push(format!(
+                "correlation group cap — skip {sym} (group {group_name})"
+            ));
+            continue;
+        }
+        if let Some(days) = stop_loss_re_entry_blocked(rules, state, &sym) {
+            result.skipped.push(format!(
+                "stop-loss re-entry cooldown — skip {sym} for ~{days}d"
+            ));
+            continue;
+        }
+
+        let vertical_rules = rules.effective_vertical_entry(&sym);
+
+        if rules.strategies.vertical.enabled && want_vertical {
+            match evaluate_vertical_entry(
+                market,
+                rules,
+                &vertical_rules,
+                &sym,
+                today,
+                state,
+                account_hash,
+                vertical_type,
+            )
+            .await
+            {
+                Ok(Some(signal)) => {
+                    result.entries.push((
+                        account_hash.to_string(),
+                        StrategyKind::Vertical,
+                        signal,
+                    ));
+                    if policy.mode == EntryScanMode::FirstQualifying {
+                        break;
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => result.skipped.push(format!("{sym} vertical: {e:#}")),
+            }
+        }
+
+        if policy.mode == EntryScanMode::FirstQualifying && !result.entries.is_empty() {
+            break;
+        }
+
+        if rules.strategies.iron_condor.enabled && want_condor {
+            match evaluate_condor_entry(market, rules, &sym, today, state, account_hash).await {
+                Ok(Some(signal)) => {
+                    result.entries.push((
+                        account_hash.to_string(),
+                        StrategyKind::IronCondor,
+                        signal,
+                    ));
+                    if policy.mode == EntryScanMode::FirstQualifying {
+                        break;
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => result.skipped.push(format!("{sym} iron_condor: {e:#}")),
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn entry_execution_requires_llm(rules: &RulesConfig) -> bool {
+    rules.llm.enabled && rules.llm.veto_entries && rules.entry_policy.require_llm_proceed
 }
 
 fn redeploy_cooldown_active(rules: &RulesConfig, sig: &RedeploySignal) -> bool {
@@ -1175,6 +1504,26 @@ fn underlying_entry_cap_reached(
     open + pending >= cap
 }
 
+/// Returns the group name when opening `underlying` would exceed that group's `max_open`.
+fn correlation_group_cap_reached(
+    rules: &RulesConfig,
+    state: &AgentState,
+    account_hash: &str,
+    underlying: &str,
+) -> Option<String> {
+    let group = rules.risk.correlation_group_for(underlying)?;
+    if group.max_open == 0 {
+        return None;
+    }
+    let open = state.count_open_in_symbol_set(account_hash, &group.symbols);
+    let pending = state.pending_entry_count_in_symbol_set(account_hash, &group.symbols);
+    if open + pending >= group.max_open {
+        Some(group.name.clone())
+    } else {
+        None
+    }
+}
+
 fn maybe_clear_stale_redeploy(state: &mut AgentState) {
     let Some(sig) = &state.redeploy_signal else {
         return;
@@ -1186,6 +1535,36 @@ fn maybe_clear_stale_redeploy(state: &mut AgentState) {
 
 fn clear_redeploy_after_entry(state: &mut AgentState) {
     state.redeploy_signal = None;
+}
+
+async fn notify_trading_halted(
+    telegram: Option<&TelegramNotifier>,
+    rules: &RulesConfig,
+    reason: &str,
+) {
+    let Some(tg) = telegram else { return };
+    if !tg.wants_actions() {
+        return;
+    }
+    let _ = tg
+        .send(&format!(
+            "schwab [{}]\n⚠ TRADING HALTED\n{reason}\nExits still armed.",
+            rules.agent_id
+        ))
+        .await;
+}
+
+async fn notify_trading_recovered(telegram: Option<&TelegramNotifier>, rules: &RulesConfig) {
+    let Some(tg) = telegram else { return };
+    if !tg.wants_actions() {
+        return;
+    }
+    let _ = tg
+        .send(&format!(
+            "schwab [{}]\n✓ TRADING RESUMED\nDrawdown halt cleared — new entries allowed.",
+            rules.agent_id
+        ))
+        .await;
 }
 
 async fn notify_at_open(
@@ -1364,13 +1743,13 @@ async fn notify_llm(
 async fn evaluate_vertical_entry(
     market: &MarketDataApi,
     rules: &RulesConfig,
+    entry: &VerticalEntryRules,
     underlying: &str,
     today: NaiveDate,
     state: &AgentState,
     account_hash: &str,
     spread_type: &str,
 ) -> Result<Option<Value>> {
-    let entry = &rules.entry_rules.vertical;
     let open_count = state.count_open_for_strategy(account_hash, StrategyKind::Vertical);
     if open_count + state.pending_entry_count() >= entry.max_open_positions {
         return Ok(None);
@@ -1389,7 +1768,7 @@ async fn evaluate_vertical_entry(
         .get(&ChainQuery {
             symbol: underlying,
             contract_type: Some(contract_type),
-            strike_count: Some(50),
+            strike_count: Some(120),
             include_underlying_quote: Some(true),
             ..Default::default()
         })
@@ -1416,14 +1795,23 @@ async fn evaluate_vertical_entry(
     .or_else(|| pick_otm_strike(&strike_map, underlying_price, 0.05, is_put).ok())
     .context("no suitable short strike")?;
     let long_strike = pick_wing_strike(&strike_map, short_strike, entry.max_width, is_put)?;
+    let width = (short_strike - long_strike).abs();
+    if width < entry.max_width * 0.5 {
+        return Ok(None);
+    }
     let credit = estimate_spread_credit(&strike_map, short_strike, long_strike)?;
     if credit < entry.min_credit {
         return Ok(None);
     }
-    let width = (short_strike - long_strike).abs();
     if !entry_quality_ok(&strike_map, short_strike, long_strike, width, credit, entry) {
         return Ok(None);
     }
+
+    let lookback = rules.regime.realized_vol_lookback.max(5);
+    let realized_vol_pct = fetch_realized_vol_pct(market, underlying, lookback)
+        .await
+        .ok()
+        .flatten();
 
     let market_context = vertical_entry_market_context(
         &chain,
@@ -1437,6 +1825,7 @@ async fn evaluate_vertical_entry(
         credit,
         entry.max_contracts_per_trade as f64,
         is_put,
+        realized_vol_pct,
     );
 
     let analytics = analytics_from_json(market_context.get("analytics").unwrap_or(&json!({})));
@@ -1447,6 +1836,9 @@ async fn evaluate_vertical_entry(
         if candidate_fails_thesis_gates(rules, a).is_some() {
             return Ok(None);
         }
+    } else if entry.reject_short_inside_1sigma || entry.min_iv_rv_ratio.is_some() {
+        // Analytics unavailable but gates require it — fail closed.
+        return Ok(None);
     }
 
     let right = if is_put { 'P' } else { 'C' };
@@ -1548,6 +1940,20 @@ async fn evaluate_condor_entry(
     if total_credit < entry.min_credit {
         return Ok(None);
     }
+
+    if entry.min_iv_rv_ratio.is_some() {
+        let lookback = rules.regime.realized_vol_lookback.max(5);
+        let realized_vol_pct = fetch_realized_vol_pct(market, underlying, lookback)
+            .await
+            .ok()
+            .flatten();
+        let chain_iv = chain.get("volatility").and_then(|v| v.as_f64());
+        let ratio = iv_rv_ratio(chain_iv, realized_vol_pct);
+        if !passes_min_iv_rv_ratio(entry.min_iv_rv_ratio, ratio) {
+            return Ok(None);
+        }
+    }
+
     let candidate_id = candidate_position_id(
         account_hash,
         underlying,
@@ -1633,7 +2039,29 @@ fn pick_wing_strike(strike_map: &Value, short_strike: f64, width: f64, puts: boo
     } else {
         short_strike + width
     };
-    pick_nearest_strike(strike_map, target)
+    let obj = strike_map.as_object().context("strike map not object")?;
+    let candidates: Vec<f64> = obj
+        .keys()
+        .filter_map(|k| k.parse::<f64>().ok())
+        .filter(|s| {
+            if puts {
+                *s < short_strike - f64::EPSILON
+            } else {
+                *s > short_strike + f64::EPSILON
+            }
+        })
+        .collect();
+    if candidates.is_empty() {
+        anyhow::bail!("no wing strikes beyond short {short_strike}");
+    }
+    candidates
+        .into_iter()
+        .min_by(|a, b| {
+            ((*a - target).abs())
+                .partial_cmp(&(*b - target).abs())
+                .unwrap()
+        })
+        .context("no wing strike candidates")
 }
 
 fn pick_nearest_strike(strike_map: &Value, target: f64) -> Result<f64> {
@@ -1896,6 +2324,18 @@ async fn maybe_execute_entry(
         })));
     }
 
+    if let Some(remaining) =
+        entry_attempt_cooldown_active(&rules.entry_policy, state, &position_id)
+    {
+        return Ok(Some(json!({
+            "fill_status": "SKIPPED",
+            "reason": "entry_attempt_cooldown",
+            "remaining_minutes": remaining,
+            "position_id": position_id,
+            "signal": signal,
+        })));
+    }
+
     require_trading_approval(
         runtime,
         "agent entry",
@@ -1905,6 +2345,8 @@ async fn maybe_execute_entry(
     ensure_option_buying_power(trader, account_hash, margin).await?;
     let order = build_order_for_strategy(kind, &params)?;
     runtime.safety.validate_order(&order, None, None)?;
+
+    record_entry_attempt(state, &position_id);
 
     let place = execute_trading_order(runtime, trader, account_hash, &order).await?;
 
@@ -2003,6 +2445,7 @@ async fn maybe_execute_entry(
         .max(1.0) as u32;
     let new_credit = signal.get("estimated_credit").and_then(|v| v.as_f64());
 
+    let total_contracts;
     if let Some(existing) = state.open_positions.get_mut(&position_id) {
         let prev_contracts = existing.contracts.max(1);
         existing.contracts = prev_contracts + order_contracts;
@@ -2012,7 +2455,9 @@ async fn maybe_execute_entry(
                 + credit * order_contracts as f64;
             existing.entry_credit = Some(blended / existing.contracts as f64);
         }
+        total_contracts = existing.contracts;
     } else {
+        total_contracts = order_contracts;
         state.open_positions.insert(
             position_id.clone(),
             TrackedPosition {
@@ -2034,11 +2479,43 @@ async fn maybe_execute_entry(
                     .pointer("/market_context/short_delta")
                     .and_then(|v| v.as_f64())
                     .map(f64::abs),
+                ..Default::default()
             },
         );
     }
     clear_redeploy_after_entry(state);
+    state.entry_proceed_cache = None;
     state.record_action("entry", signal.clone());
+
+    // Rebuild the order for the position's TOTAL contract count (not just this fill's
+    // incremental contracts) so a top-up to an existing position gets a protective order
+    // sized for the whole stack, and stash the params so `reconcile_protective_orders` can
+    // rebuild the same order later without needing this local state.
+    let mut full_params = params.clone();
+    full_params["contracts"] = json!(total_contracts);
+    if let Some(p) = state.open_positions.get_mut(&position_id) {
+        p.entry_params = Some(full_params.clone());
+    }
+    match build_order_for_strategy(kind, &full_params) {
+        Ok(full_order) => {
+            place_or_replace_protective_order(
+                runtime,
+                trader,
+                account_hash,
+                rules,
+                &full_order,
+                &position_id,
+                state,
+            )
+            .await;
+        }
+        Err(e) => {
+            tracing::warn!(
+                "could not rebuild full-size order for protective placement on \
+                 {position_id}: {e:#}"
+            );
+        }
+    }
 
     Ok(Some(json!({
         "entry": place,
@@ -2047,6 +2524,94 @@ async fn maybe_execute_entry(
         "position_id": position_id,
         "fill_status": fill_status,
     })))
+}
+
+/// Place (or replace, if this fill added to an existing tracked position) the broker-resident
+/// GTC profit-target close order for `position_id`. Best-effort: failure does not block the
+/// entry, which is already filled — it's recorded on the position for the reconcile pass to
+/// retry (see `reconcile_protective_orders`). Schwab does not support a stop trigger on
+/// multi-leg option orders, so this only ever covers the profit-target side (see
+/// `agent::protective` and `docs/OPTIONS_RULES.md`).
+async fn place_or_replace_protective_order(
+    runtime: &RuntimeConfig,
+    trader: &Arc<TraderApi>,
+    account_hash: &str,
+    rules: &RulesConfig,
+    entry_order: &Value,
+    position_id: &str,
+    state: &mut AgentState,
+) {
+    if !rules.execution.protective_order.enabled {
+        return;
+    }
+
+    if let Some(stale_id) = state
+        .open_positions
+        .get(position_id)
+        .and_then(|p| p.protective_order_id.clone())
+    {
+        if let Err(e) =
+            protective::cancel_protective_order(runtime, trader, account_hash, &stale_id).await
+        {
+            tracing::warn!("failed to cancel stale protective order {stale_id}: {e:#}");
+        }
+        if let Some(p) = state.open_positions.get_mut(position_id) {
+            p.protective_order_id = None;
+            p.protective_order_status = None;
+        }
+    }
+
+    let Some(entry_credit) = state
+        .open_positions
+        .get(position_id)
+        .and_then(|p| p.entry_credit)
+    else {
+        return;
+    };
+
+    let cfg = &rules.execution.protective_order;
+    match protective::place_profit_target_order_with_retry(
+        runtime,
+        trader,
+        account_hash,
+        entry_order,
+        entry_credit,
+        rules.exit_rules.profit_target_pct,
+        cfg.max_attempts,
+        cfg.max_seconds,
+    )
+    .await
+    {
+        Ok(result) => {
+            if let Some(p) = state.open_positions.get_mut(position_id) {
+                p.protective_order_id = result.order_id.clone();
+                p.protective_order_status = Some("WORKING".to_string());
+                p.protective_order_attempts = 0;
+            }
+            state.record_action(
+                "protective_order_placed",
+                json!({
+                    "position_id": position_id,
+                    "order_id": result.order_id,
+                    "attempts": result.attempts,
+                    "order": result.order,
+                }),
+            );
+        }
+        Err(e) => {
+            if let Some(p) = state.open_positions.get_mut(position_id) {
+                p.protective_order_attempts = p.protective_order_attempts.saturating_add(1);
+            }
+            tracing::warn!("protective order placement failed for {position_id}: {e:#}");
+            state.record_action(
+                "protective_order_failed",
+                json!({
+                    "position_id": position_id,
+                    "error": format!("{e:#}"),
+                }),
+            );
+        }
+    }
 }
 
 async fn execute_exit(
@@ -2072,6 +2637,31 @@ async fn execute_exit(
             "position_id": position_id,
             "signal": signal,
         }));
+    }
+
+    // Cancel any resting broker-side profit-target order first, to avoid a race where it
+    // fills at the same time as this mechanical (stop/DTE/thesis) close.
+    if let Some(protective_id) = state
+        .open_positions
+        .get(&position_id)
+        .and_then(|p| p.protective_order_id.clone())
+    {
+        match protective::cancel_protective_order(runtime, trader, account_hash, &protective_id)
+            .await
+        {
+            Ok(_) => {
+                if let Some(p) = state.open_positions.get_mut(&position_id) {
+                    p.protective_order_id = None;
+                    p.protective_order_status = Some("CANCELED".to_string());
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "failed to cancel protective order {protective_id} before exit \
+                     (it may have already filled): {e:#}"
+                );
+            }
+        }
     }
 
     let close_limit = close_limit_from_signal(signal)
@@ -2130,6 +2720,13 @@ async fn execute_exit(
     });
 
     if fill_status == "FILLED" || !rules.execution.wait_for_fill {
+        if let Some(tracked) = state.open_positions.get(&position_id).cloned() {
+            let debit = signal
+                .pointer("/mark/debit_to_close")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(close_limit);
+            record_live_realized_pnl(state, &tracked, debit);
+        }
         state.open_positions.remove(&position_id);
         state.open_positions.remove(&group.id);
         state.record_action("exit", signal.clone());
@@ -2173,9 +2770,9 @@ mod llm_schedule_tests {
     use crate::agent::llm::LlmReview;
     use crate::agent::state::{AgentState, TrackedPosition};
     use crate::rules::{
-        AccountType, EntryRules, ExecutionConfig, ExitRules, LlmConfig, NotifyConfig, RiskConfig,
-        RulesAccount, RulesConfig, ScheduleConfig, StrategiesToggle, StrategyEnabled,
-        VerticalEntryRules,
+        AccountType, EntryPolicyConfig, EntryRules, ExecutionConfig, ExitRules, LlmConfig,
+        NotifyConfig, RiskConfig, RulesAccount, RulesConfig, ScheduleConfig, StrategiesToggle,
+        StrategyEnabled, VerticalEntryRules, WatchlistEntry,
     };
 
     fn test_rules(max_open: u32) -> RulesConfig {
@@ -2196,7 +2793,8 @@ mod llm_schedule_tests {
                 vertical: StrategyEnabled { enabled: true },
                 iron_condor: StrategyEnabled { enabled: false },
             },
-            watchlist: vec!["IWM".into()],
+            watchlist: vec![WatchlistEntry::from("IWM")],
+            entry_policy: EntryPolicyConfig::default(),
             entry_rules: EntryRules {
                 vertical: VerticalEntryRules {
                     max_open_positions: max_open,
@@ -2240,6 +2838,7 @@ mod llm_schedule_tests {
                 peak_profit_pct: None,
                 entry_pop_pct: None,
                 entry_short_delta: None,
+                ..Default::default()
             },
         );
         state
@@ -2315,6 +2914,7 @@ mod llm_schedule_tests {
     #[test]
     fn redeploy_cooldown_removes_underlying_from_scan() {
         let mut rules = test_rules(2);
+        rules.watchlist = vec![WatchlistEntry::from("SPY"), WatchlistEntry::from("IWM")];
         rules.exit_rules.thesis.redeploy_cooldown_minutes = Some(120);
         let mut state = AgentState::default();
         state.redeploy_signal = Some(RedeploySignal {
@@ -2323,7 +2923,7 @@ mod llm_schedule_tests {
             underlying: Some("IWM".into()),
         });
         let wl = watchlist_for_scan(&rules, &state);
-        assert!(!wl.iter().any(|s| s.eq_ignore_ascii_case("IWM")));
+        assert!(!wl.iter().any(|i| i.symbol.eq_ignore_ascii_case("IWM")));
 
         state.redeploy_signal = Some(RedeploySignal {
             at: Utc::now() - chrono::Duration::minutes(121),
@@ -2331,7 +2931,11 @@ mod llm_schedule_tests {
             underlying: Some("IWM".into()),
         });
         let wl = watchlist_for_scan(&rules, &state);
-        assert_eq!(wl.first().map(String::as_str), Some("IWM"));
+        assert_eq!(wl.first().map(|i| i.symbol.as_str()), Some("SPY"));
+
+        rules.entry_policy.promote_redeploy_symbol = true;
+        let wl = watchlist_for_scan(&rules, &state);
+        assert_eq!(wl.first().map(|i| i.symbol.as_str()), Some("IWM"));
     }
 
     #[test]
@@ -2354,6 +2958,22 @@ mod llm_schedule_tests {
             "ACC",
             "SPY"
         ));
+    }
+
+    #[test]
+    fn correlation_group_cap_blocks_second_index() {
+        let mut rules = test_rules(2);
+        rules.risk.correlation_groups = vec![crate::rules::CorrelationGroupConfig {
+            name: "broad_market".into(),
+            symbols: vec!["QQQ".into(), "IWM".into()],
+            max_open: 1,
+        }];
+        let state = state_with_open_position(); // IWM open on ACC
+        assert_eq!(
+            correlation_group_cap_reached(&rules, &state, "ACC", "QQQ").as_deref(),
+            Some("broad_market")
+        );
+        assert!(correlation_group_cap_reached(&rules, &AgentState::default(), "ACC", "QQQ").is_none());
     }
 
     #[test]

@@ -13,6 +13,7 @@ pub mod cli;
 pub mod commands;
 pub mod config;
 pub mod entry;
+pub mod earnings;
 pub mod journal;
 pub mod notify;
 pub mod options_reserve;

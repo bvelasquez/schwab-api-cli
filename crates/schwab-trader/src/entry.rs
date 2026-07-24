@@ -871,6 +871,10 @@ mod tests {
             above_sma_50: None,
             intraday: false,
             history_features: None,
+            last_earnings_date: None,
+            estimated_next_earnings: None,
+            days_until_estimated_earnings: None,
+            earnings_estimate_confidence: None,
         };
         let mut rules_mid = rules;
         rules_mid.execution.entry_limit_basis = "mid".into();

@@ -32,7 +32,7 @@ pub async fn run(runtime: &RuntimeConfig, command: AgentCommands) -> Result<()> 
                     "valid": true,
                     "agent_id": rules.agent_id,
                     "accounts": rules.accounts.len(),
-                    "watchlist": rules.watchlist,
+                    "watchlist": rules.watchlist_items(),
                     "llm_enabled": rules.llm.enabled,
                     "telegram_enabled": rules.notify.telegram.enabled,
                     "simulation": rules.simulation,

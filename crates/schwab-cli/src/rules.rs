@@ -17,8 +17,12 @@ pub struct RulesConfig {
     pub schedule: ScheduleConfig,
     #[serde(default)]
     pub strategies: StrategiesToggle,
+    /// Symbols to scan for entries, in priority order. Each entry may be a ticker string or
+    /// `{ symbol, role, min_credit, ... }` with per-symbol overrides.
     #[serde(default)]
-    pub watchlist: Vec<String>,
+    pub watchlist: Vec<WatchlistEntry>,
+    #[serde(default)]
+    pub entry_policy: EntryPolicyConfig,
     #[serde(default)]
     pub entry_rules: EntryRules,
     #[serde(default)]
@@ -132,6 +136,164 @@ pub struct StrategyEnabled {
     pub enabled: bool,
 }
 
+/// `string` or `{ symbol, role, min_credit, ... }`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum WatchlistEntry {
+    Symbol(String),
+    Item(WatchlistItemConfig),
+}
+
+impl From<&str> for WatchlistEntry {
+    fn from(value: &str) -> Self {
+        Self::Symbol(value.to_string())
+    }
+}
+
+impl From<String> for WatchlistEntry {
+    fn from(value: String) -> Self {
+        Self::Symbol(value)
+    }
+}
+
+impl WatchlistEntry {
+    pub fn to_item(&self) -> WatchlistItemConfig {
+        match self {
+            Self::Symbol(s) => WatchlistItemConfig {
+                symbol: s.clone(),
+                ..Default::default()
+            },
+            Self::Item(item) => item.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct WatchlistItemConfig {
+    pub symbol: String,
+    #[serde(default)]
+    pub role: WatchlistRole,
+    #[serde(flatten)]
+    pub overrides: VerticalEntryOverrides,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WatchlistRole {
+    #[default]
+    Primary,
+    Fallback,
+}
+
+/// Per-symbol vertical entry overrides (merged onto `entry_rules.vertical`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct VerticalEntryOverrides {
+    pub min_credit: Option<f64>,
+    pub max_width: Option<f64>,
+    pub short_delta_min: Option<f64>,
+    pub short_delta_max: Option<f64>,
+    pub min_pop_pct: Option<f64>,
+    pub min_distance_to_be_pct: Option<f64>,
+    pub min_credit_to_width_pct: Option<f64>,
+}
+
+impl VerticalEntryOverrides {
+    pub fn apply_to(&self, mut base: VerticalEntryRules) -> VerticalEntryRules {
+        if let Some(v) = self.min_credit {
+            base.min_credit = v;
+        }
+        if let Some(v) = self.max_width {
+            base.max_width = v;
+        }
+        if let Some(v) = self.short_delta_min {
+            base.short_delta_min = v;
+        }
+        if let Some(v) = self.short_delta_max {
+            base.short_delta_max = v;
+        }
+        if let Some(v) = self.min_pop_pct {
+            base.min_pop_pct = Some(v);
+        }
+        if let Some(v) = self.min_distance_to_be_pct {
+            base.min_distance_to_be_pct = Some(v);
+        }
+        if let Some(v) = self.min_credit_to_width_pct {
+            base.min_credit_to_width_pct = Some(v);
+        }
+        base
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EntryScanMode {
+    /// Stop after the first symbol (in watchlist order) that produces a candidate.
+    FirstQualifying,
+    /// Legacy: queue every symbol that passes mechanical gates.
+    AllQualifying,
+}
+
+impl Default for EntryScanMode {
+    fn default() -> Self {
+        Self::FirstQualifying
+    }
+}
+
+fn default_entry_attempt_cooldown_minutes() -> u32 {
+    30
+}
+
+fn default_proceed_cache_minutes() -> u32 {
+    45
+}
+
+/// Config-driven entry scan behavior (watchlist order, LLM gate, retry limits).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct EntryPolicyConfig {
+    pub mode: EntryScanMode,
+    /// When true, `fallback` role symbols are scanned only if no `primary` produced a candidate.
+    pub fallback_only_after_primary_exhausted: bool,
+    /// Minutes before retrying the same candidate after a non-fill entry attempt.
+    pub entry_attempt_cooldown_minutes: u32,
+    /// When true, after thesis redeploy cooldown the exited symbol is scanned first.
+    pub promote_redeploy_symbol: bool,
+    /// Require LLM `proceed` before live entries (uses proceed_cache_minutes between reviews).
+    pub require_llm_proceed: bool,
+    pub proceed_cache_minutes: u32,
+}
+
+impl Default for EntryPolicyConfig {
+    fn default() -> Self {
+        Self {
+            mode: EntryScanMode::FirstQualifying,
+            fallback_only_after_primary_exhausted: true,
+            entry_attempt_cooldown_minutes: default_entry_attempt_cooldown_minutes(),
+            promote_redeploy_symbol: false,
+            require_llm_proceed: true,
+            proceed_cache_minutes: default_proceed_cache_minutes(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct ReEntryAfterStopLoss {
+    pub enabled: bool,
+    pub cooldown_days: u32,
+}
+
+impl Default for ReEntryAfterStopLoss {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            cooldown_days: 5,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EntryRules {
     #[serde(default)]
@@ -159,6 +321,16 @@ pub struct VerticalEntryRules {
     /// Minimum credit / width ratio (percent). Defaults to 12.5 when omitted.
     #[serde(default)]
     pub min_credit_to_width_pct: Option<f64>,
+    /// Reject candidates whose short strike sits inside the 1σ expected move.
+    /// Entry-only (unlike `exit_rules.thesis.exit_short_inside_1sigma`). Prefer with
+    /// farther OTM deltas (~0.10–0.16) so some strikes still clear the gate.
+    /// When enabled and chain IV is missing, the gate **fails closed** (rejects).
+    #[serde(default)]
+    pub reject_short_inside_1sigma: bool,
+    /// Minimum chain IV / realized-vol ratio. Omit to skip.
+    /// When set, missing IV or RV **fails closed** (rejects). Typical starting value: 1.15.
+    #[serde(default)]
+    pub min_iv_rv_ratio: Option<f64>,
     pub max_open_positions: u32,
     pub max_contracts_per_trade: u32,
 }
@@ -176,6 +348,8 @@ impl Default for VerticalEntryRules {
             min_pop_pct: Some(60.0),
             min_distance_to_be_pct: Some(3.0),
             min_credit_to_width_pct: Some(12.5),
+            reject_short_inside_1sigma: false,
+            min_iv_rv_ratio: None,
             max_open_positions: 3,
             max_contracts_per_trade: 2,
         }
@@ -190,6 +364,9 @@ pub struct IronCondorEntryRules {
     pub min_credit: f64,
     pub wing_width: f64,
     pub short_delta: f64,
+    /// Same meaning as `VerticalEntryRules::min_iv_rv_ratio` (fail-closed when set).
+    #[serde(default)]
+    pub min_iv_rv_ratio: Option<f64>,
     pub max_open_positions: u32,
     pub max_contracts_per_trade: u32,
 }
@@ -202,6 +379,7 @@ impl Default for IronCondorEntryRules {
             min_credit: 1.00,
             wing_width: 5.0,
             short_delta: 0.16,
+            min_iv_rv_ratio: None,
             max_open_positions: 2,
             max_contracts_per_trade: 1,
         }
@@ -256,6 +434,11 @@ impl Default for ThesisExitRules {
 pub struct ExitRules {
     pub profit_target_pct: f64,
     pub stop_loss_pct: f64,
+    /// Arm the credit-multiple stop only when short OTM% is below this.
+    /// While the short is farther OTM than this cushion, ignore mark-based stops
+    /// (profit target, DTE, and thesis exits still apply). `None` = always arm (legacy).
+    #[serde(default)]
+    pub stop_loss_require_short_otm_below_pct: Option<f64>,
     pub dte_close: u32,
     pub thesis: ThesisExitRules,
 }
@@ -265,6 +448,7 @@ impl Default for ExitRules {
         Self {
             profit_target_pct: 50.0,
             stop_loss_pct: 200.0,
+            stop_loss_require_short_otm_below_pct: None,
             dte_close: 21,
             thesis: ThesisExitRules::default(),
         }
@@ -283,7 +467,59 @@ pub struct RiskConfig {
     /// Optional per-symbol open-slot caps (e.g. SPY: 2, IWM: 1). Keys are case-insensitive.
     #[serde(default)]
     pub max_open_per_underlying: std::collections::HashMap<String, u32>,
+    #[serde(default)]
+    pub re_entry_after_stop_loss: ReEntryAfterStopLoss,
+    /// Manual hard pause: any non-empty list blocks **all** new entries until cleared.
+    /// Not a calendar — use `blocked_dates` for FOMC/CPI/NFP blackouts.
     pub blocked_events: Vec<String>,
+    /// Date-aware entry blackout (macro/Fed calendar). Blocks when
+    /// `event_date - lead_days <= today <= event_date` (inclusive).
+    #[serde(default)]
+    pub blocked_dates: Vec<BlockedDate>,
+    /// Correlated underlyings — cap concurrent open positions per group.
+    #[serde(default)]
+    pub correlation_groups: Vec<CorrelationGroupConfig>,
+    /// Halt new entries when sleeve drawdown from HWM reaches this % (e.g. 15.0).
+    /// `null` / omit / `0` = disabled. Exits always continue.
+    #[serde(default)]
+    pub max_drawdown_halt_pct: Option<f64>,
+    /// Sleeve equity base for drawdown HWM. Defaults to `max_portfolio_risk_usd`
+    /// (or sim starting budget). Set to the real options cash sleeve (e.g. 4000).
+    #[serde(default)]
+    pub drawdown_sleeve_usd: Option<f64>,
+}
+
+/// One calendar blackout for new option entries.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BlockedDate {
+    /// Event date `YYYY-MM-DD` (America/New_York calendar day).
+    pub date: String,
+    /// Block starting this many calendar days before `date` (0 = event day only).
+    #[serde(default)]
+    pub lead_days: u32,
+    /// Human label for skip messages / tick JSON (e.g. `FOMC`, `CPI`).
+    #[serde(default)]
+    pub label: String,
+}
+
+/// Correlated symbols — cap concurrent open positions per group.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct CorrelationGroupConfig {
+    pub name: String,
+    pub symbols: Vec<String>,
+    /// Max open positions from this group at once (`0` = no cap for this group).
+    pub max_open: u32,
+}
+
+impl Default for CorrelationGroupConfig {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            symbols: vec![],
+            max_open: 1,
+        }
+    }
 }
 
 impl Default for RiskConfig {
@@ -294,7 +530,12 @@ impl Default for RiskConfig {
             max_trades_per_day: 3,
             allowed_underlyings: vec!["SPY".into(), "QQQ".into(), "IWM".into()],
             max_open_per_underlying: std::collections::HashMap::new(),
+            re_entry_after_stop_loss: ReEntryAfterStopLoss::default(),
             blocked_events: vec![],
+            blocked_dates: vec![],
+            correlation_groups: vec![],
+            max_drawdown_halt_pct: None,
+            drawdown_sleeve_usd: None,
         }
     }
 }
@@ -305,6 +546,36 @@ impl RiskConfig {
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case(underlying))
             .map(|(_, v)| *v)
+    }
+
+    /// Labels of `blocked_dates` entries active on `today` (inclusive lead window).
+    pub fn active_blocked_date_labels(&self, today: chrono::NaiveDate) -> Vec<String> {
+        self.blocked_dates
+            .iter()
+            .filter_map(|b| {
+                let event = chrono::NaiveDate::parse_from_str(b.date.trim(), "%Y-%m-%d").ok()?;
+                let start = event - chrono::Duration::days(b.lead_days as i64);
+                if today >= start && today <= event {
+                    let label = if b.label.trim().is_empty() {
+                        b.date.clone()
+                    } else {
+                        format!("{} ({})", b.label.trim(), b.date)
+                    };
+                    Some(label)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Group containing `underlying`, if any.
+    pub fn correlation_group_for(&self, underlying: &str) -> Option<&CorrelationGroupConfig> {
+        self.correlation_groups.iter().find(|g| {
+            g.symbols
+                .iter()
+                .any(|s| s.eq_ignore_ascii_case(underlying))
+        })
     }
 }
 
@@ -319,9 +590,20 @@ pub struct OptionsRegimeConfig {
     pub vix_high: f64,
     /// Pause all new entries when VIX is at or above this (hostile / crash regime).
     pub pause_entries_vix_above: f64,
+    /// Pause all new entries when VIX is at or below this (crushed-vol / cheap insurance).
+    /// Omit or null to disable. Independent of `vix_low` (classification only).
+    #[serde(default)]
+    pub pause_entries_vix_below: Option<f64>,
+    /// Lookback days for realized-vol used by `min_iv_rv_ratio` entry gates.
+    #[serde(default = "default_realized_vol_lookback")]
+    pub realized_vol_lookback: usize,
     /// regime class → preferred strategy: `put_credit`, `call_credit`, `iron_condor`, `pause`.
     #[serde(default)]
     pub strategy_map: std::collections::HashMap<String, String>,
+}
+
+fn default_realized_vol_lookback() -> usize {
+    20
 }
 
 impl Default for OptionsRegimeConfig {
@@ -340,6 +622,8 @@ impl Default for OptionsRegimeConfig {
             vix_low: 14.0,
             vix_high: 25.0,
             pause_entries_vix_above: 30.0,
+            pause_entries_vix_below: None,
+            realized_vol_lookback: default_realized_vol_lookback(),
             strategy_map,
         }
     }
@@ -352,6 +636,12 @@ pub struct ExecutionConfig {
     pub require_preview: bool,
     pub wait_for_fill: bool,
     pub fill_timeout_seconds: u64,
+    /// Broker-resident GTC profit-target close order, placed after each live entry fill.
+    /// Schwab rejects stop triggers on multi-leg option orders, so this only covers the
+    /// profit-target side of exit protection — stop-loss/DTE-close remain mechanical
+    /// (see docs/OPTIONS_RULES.md).
+    #[serde(default)]
+    pub protective_order: ProtectiveOrderConfig,
 }
 
 impl Default for ExecutionConfig {
@@ -361,6 +651,26 @@ impl Default for ExecutionConfig {
             require_preview: true,
             wait_for_fill: true,
             fill_timeout_seconds: 300,
+            protective_order: ProtectiveOrderConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct ProtectiveOrderConfig {
+    pub enabled: bool,
+    /// Placement attempts before giving up (the reconcile pass keeps retrying afterward).
+    pub max_attempts: u32,
+    pub max_seconds: u64,
+}
+
+impl Default for ProtectiveOrderConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_attempts: 3,
+            max_seconds: 30,
         }
     }
 }
@@ -719,6 +1029,29 @@ impl RulesConfig {
     pub fn enabled_accounts(&self) -> impl Iterator<Item = &RulesAccount> {
         self.accounts.iter().filter(|a| a.enabled)
     }
+
+    pub fn watchlist_items(&self) -> Vec<WatchlistItemConfig> {
+        self.watchlist.iter().map(WatchlistEntry::to_item).collect()
+    }
+
+    pub fn watchlist_symbols(&self) -> Vec<String> {
+        self.watchlist_items()
+            .into_iter()
+            .map(|i| i.symbol.to_uppercase())
+            .collect()
+    }
+
+    pub fn effective_vertical_entry(&self, symbol: &str) -> VerticalEntryRules {
+        let base = self.entry_rules.vertical.clone();
+        if let Some(item) = self
+            .watchlist_items()
+            .into_iter()
+            .find(|i| i.symbol.eq_ignore_ascii_case(symbol))
+        {
+            return item.overrides.apply_to(base);
+        }
+        base
+    }
 }
 
 pub fn rules_json_schema() -> Value {
@@ -768,7 +1101,25 @@ pub fn rules_json_schema() -> Value {
                     "iron_condor": { "type": "object", "properties": { "enabled": { "type": "boolean" } } }
                 }
             },
-            "watchlist": { "type": "array", "items": { "type": "string" } },
+            "watchlist": {
+                "type": "array",
+                "items": {
+                    "oneOf": [
+                        { "type": "string" },
+                        {
+                            "type": "object",
+                            "required": ["symbol"],
+                            "properties": {
+                                "symbol": { "type": "string" },
+                                "role": { "enum": ["primary", "fallback"] },
+                                "min_credit": { "type": "number" },
+                                "min_credit_to_width_pct": { "type": "number" }
+                            }
+                        }
+                    ]
+                }
+            },
+            "entry_policy": { "type": "object" },
             "entry_rules": { "type": "object" },
             "exit_rules": { "type": "object" },
             "risk": { "type": "object" },
@@ -780,6 +1131,31 @@ pub fn rules_json_schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn watchlist_item_overrides_merge_into_vertical_entry() {
+        let yaml = r#"
+version: 1
+agent_id: t
+accounts:
+  - hash: ABC
+    enabled: true
+watchlist:
+  - symbol: SPY
+    role: primary
+    min_credit: 0.12
+  - symbol: IWM
+    role: fallback
+    min_credit: 0.30
+entry_rules:
+  vertical:
+    min_credit: 0.25
+"#;
+        let rules: RulesConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!((rules.effective_vertical_entry("SPY").min_credit - 0.12).abs() < f64::EPSILON);
+        assert!((rules.effective_vertical_entry("IWM").min_credit - 0.30).abs() < f64::EPSILON);
+        assert_eq!(rules.watchlist_items()[1].role, WatchlistRole::Fallback);
+    }
 
     #[test]
     fn validates_minimal_rules() {
@@ -794,7 +1170,8 @@ mod tests {
             }],
             schedule: ScheduleConfig::default(),
             strategies: StrategiesToggle::default(),
-            watchlist: vec!["SPY".into()],
+            watchlist: vec![WatchlistEntry::from("SPY")],
+            entry_policy: EntryPolicyConfig::default(),
             entry_rules: EntryRules::default(),
             exit_rules: ExitRules::default(),
             risk: RiskConfig::default(),
@@ -815,6 +1192,45 @@ mod tests {
             let rules = RulesConfig::load(&path).unwrap();
             assert_eq!(rules.agent_id, "spy-income-v1");
         }
+    }
+
+    #[test]
+    fn blocked_dates_respect_lead_window() {
+        let risk = RiskConfig {
+            blocked_dates: vec![
+                BlockedDate {
+                    date: "2026-09-16".into(),
+                    lead_days: 1,
+                    label: "FOMC".into(),
+                },
+                BlockedDate {
+                    date: "2026-09-11".into(),
+                    lead_days: 0,
+                    label: "CPI".into(),
+                },
+            ],
+            ..Default::default()
+        };
+        let sep15 = chrono::NaiveDate::from_ymd_opt(2026, 9, 15).unwrap();
+        let sep16 = chrono::NaiveDate::from_ymd_opt(2026, 9, 16).unwrap();
+        let sep14 = chrono::NaiveDate::from_ymd_opt(2026, 9, 14).unwrap();
+        let sep11 = chrono::NaiveDate::from_ymd_opt(2026, 9, 11).unwrap();
+        let sep10 = chrono::NaiveDate::from_ymd_opt(2026, 9, 10).unwrap();
+
+        assert!(risk
+            .active_blocked_date_labels(sep15)
+            .iter()
+            .any(|l| l.contains("FOMC")));
+        assert!(risk
+            .active_blocked_date_labels(sep16)
+            .iter()
+            .any(|l| l.contains("FOMC")));
+        assert!(risk.active_blocked_date_labels(sep14).is_empty());
+        assert!(risk
+            .active_blocked_date_labels(sep11)
+            .iter()
+            .any(|l| l.contains("CPI")));
+        assert!(risk.active_blocked_date_labels(sep10).is_empty());
     }
 
     #[test]

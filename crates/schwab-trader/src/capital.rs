@@ -79,6 +79,7 @@ pub async fn compute_capital_check(
             reserved_risk_usd: 0.0,
             source: "simulation".into(),
             state_path: None,
+            state_paths: vec![],
         }
     } else {
         crate::options_reserve::load_options_reserve(rules)

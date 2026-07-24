@@ -167,7 +167,7 @@ impl DashboardContext {
 pub fn rules_summary_json(rules: &RulesConfig) -> Value {
     json!({
         "agent_id": rules.agent_id,
-        "watchlist": rules.watchlist,
+        "watchlist": rules.watchlist_items(),
         "tick_interval_seconds": rules.schedule.tick_interval_seconds,
         "overnight_enabled": rules.schedule.overnight.enabled,
         "vertical_enabled": rules.strategies.vertical.enabled,

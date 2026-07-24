@@ -23,9 +23,23 @@ strategies:
     enabled: true
 
 watchlist:
-  - SPY
-  - QQQ
-  - IWM
+  - symbol: SPY
+    role: primary
+    min_credit: 0.12
+  - symbol: QQQ
+    role: primary
+    min_credit: 0.14
+  - symbol: IWM
+    role: fallback
+    min_credit: 0.28
+
+entry_policy:
+  mode: first_qualifying
+  fallback_only_after_primary_exhausted: true
+  require_llm_proceed: true
+  proceed_cache_minutes: 45
+  entry_attempt_cooldown_minutes: 30
+  promote_redeploy_symbol: false
 
 entry_rules:
   vertical:
@@ -39,6 +53,8 @@ entry_rules:
     min_pop_pct: 60
     min_distance_to_be_pct: 3
     min_credit_to_width_pct: 12.5
+    # reject_short_inside_1sigma: true   # fail-closed when chain IV missing
+    # min_iv_rv_ratio: 1.15              # fail-closed when IV or RV missing
     max_open_positions: 3
     max_contracts_per_trade: 2
   iron_condor:
@@ -47,6 +63,7 @@ entry_rules:
     min_credit: 1.00
     wing_width: 5
     short_delta: 0.16
+    # min_iv_rv_ratio: 1.15
     max_open_positions: 2
     max_contracts_per_trade: 1
 
@@ -64,7 +81,22 @@ risk:
     - SPY
     - QQQ
     - IWM
+  # correlation_groups:
+  #   - name: broad_market
+  #     symbols: [SPY, QQQ, IWM]
+  #     max_open: 1
+  # max_drawdown_halt_pct: 15.0
+  # drawdown_sleeve_usd: 4000
+  re_entry_after_stop_loss:
+    enabled: true
+    cooldown_days: 5
   blocked_events: []
+  # Date-aware macro blackout (inclusive lead window). Keep blocked_events empty
+  # unless you want a manual hard pause of *all* entries.
+  # blocked_dates:
+  #   - date: "2026-09-16"
+  #     lead_days: 1
+  #     label: FOMC
 
 # Optional: map market regime → put_credit | call_credit | iron_condor | pause
 # regime:
@@ -73,7 +105,9 @@ risk:
 #   vix_symbol: $VIX
 #   vix_low: 14.0
 #   vix_high: 25.0
+#   pause_entries_vix_below: 14.0
 #   pause_entries_vix_above: 30.0
+#   realized_vol_lookback: 20
 #   strategy_map:
 #     low_vol_trend: put_credit
 #     elevated_vol: put_credit
@@ -87,6 +121,14 @@ execution:
   require_preview: true
   wait_for_fill: true
   fill_timeout_seconds: 300
+  # Broker-resident GTC profit-target close order placed after each live entry fill — the
+  # one piece of exit protection that survives the agent process being down. Stop-loss and
+  # DTE-close remain mechanical (Schwab rejects stop triggers on multi-leg option orders).
+  # See docs/OPTIONS_RULES.md#broker-side-protection-what-survives-if-the-agent-is-down
+  protective_order:
+    enabled: true
+    max_attempts: 3
+    max_seconds: 30
 
 llm:
   enabled: false

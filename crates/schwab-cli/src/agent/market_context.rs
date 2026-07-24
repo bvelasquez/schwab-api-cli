@@ -21,6 +21,7 @@ pub fn vertical_entry_market_context(
     credit: f64,
     contracts: f64,
     is_put_spread: bool,
+    realized_vol_pct: Option<f64>,
 ) -> Value {
     let underlying_quote = chain.get("underlying").cloned().unwrap_or(json!({}));
     let underlying_price = chain
@@ -50,6 +51,7 @@ pub fn vertical_entry_market_context(
         credit,
         dte,
         chain_iv_pct: chain_iv.or(short_iv),
+        realized_vol_pct,
         short_delta,
         long_delta,
         short_theta,
@@ -68,8 +70,10 @@ pub fn vertical_entry_market_context(
         "underlying_ask": underlying_quote.pointer("/ask").and_then(|v| v.as_f64()),
         "underlying_change_pct": underlying_quote.pointer("/percentChange").and_then(|v| v.as_f64()),
         "chain_iv": chain_iv,
+        "realized_vol_pct": analytics.realized_vol_pct,
+        "iv_rv_ratio": analytics.iv_rv_ratio,
         "ivr_available": false,
-        "ivr_note": "Schwab chain provides current IV (chain_iv), not IV Rank",
+        "ivr_note": "Schwab chain provides current IV (chain_iv); realized_vol_pct enables IV/RV gate. True IV Rank needs history.",
         "expiry": expiry.to_string(),
         "dte": dte,
         "spread_type": if is_put_spread { "put_credit" } else { "call_credit" },
@@ -146,6 +150,7 @@ pub fn vertical_open_position_context(
         credit,
         dte,
         chain_iv_pct: chain_iv.or(short_iv),
+        realized_vol_pct: None,
         short_delta,
         long_delta,
         short_theta,
@@ -284,6 +289,7 @@ mod tests {
             0.30,
             1.0,
             true,
+            Some(20.0),
         );
         assert_eq!(ctx["underlying_price"], 298.0);
         assert_eq!(ctx["chain_iv"], 29.0);

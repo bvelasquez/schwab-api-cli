@@ -168,7 +168,7 @@ fn render_rules_panel(ctx: &DashboardContext, inner: usize) -> String {
         ctx.monitor_interval_minutes()
     ));
 
-    let watch = rules.watchlist.join(", ");
+    let watch = rules.watchlist_symbols().join(", ");
     lines.push(format!("  watchlist  {}", dim.apply_to(&watch)));
 
     let mut strategies = Vec::new();
