@@ -86,6 +86,18 @@ exit_rules:
     max_rolls_per_day: 1
 ```
 
+## Historical backtest (synthetic)
+
+Schwab does not provide historical option chains. `schwab agent backtest` replays your rules over **daily underlying bars** and prices verticals/condors with **Black–Scholes**, using **VIX as the IV proxy**. Use it to research gates (delta/DTE/IV-RV/VIX pause/blackouts), not as OPRA-realistic expectancy.
+
+```bash
+schwab agent backtest prefetch --rules-file rules/options-pilot-8709.yaml --from 2025-01-01
+schwab agent backtest run --rules-file rules/options-pilot-8709.yaml --from 2025-01-01 --fresh --json
+schwab agent backtest report --rules-file rules/options-pilot-8709.yaml --json
+```
+
+LLM selection is off in backtest (mechanical gates only). Fill model: daily close. Artifacts next to the rules file: `.options-backtest-cache-*.json`, `agent-backtest-state-*.json`, `agent-backtest-journal-*.jsonl`.
+
 ## Broker-side protection (what survives if the agent is down)
 
 All three exit rules above are evaluated by the agent's own tick loop — if the process is

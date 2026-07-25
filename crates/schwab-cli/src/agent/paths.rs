@@ -41,6 +41,24 @@ pub fn sim_journal_path(rules_path: &Path) -> PathBuf {
     dir.join(format!("agent-sim-journal-{stem}.jsonl"))
 }
 
+pub fn backtest_cache_path(rules_path: &Path) -> PathBuf {
+    let dir = rules_runtime_dir(rules_path);
+    let stem = rules_runtime_stem(rules_path);
+    dir.join(format!(".options-backtest-cache-{stem}.json"))
+}
+
+pub fn backtest_state_path(rules_path: &Path) -> PathBuf {
+    let dir = rules_runtime_dir(rules_path);
+    let stem = rules_runtime_stem(rules_path);
+    dir.join(format!("agent-backtest-state-{stem}.json"))
+}
+
+pub fn backtest_journal_path(rules_path: &Path) -> PathBuf {
+    let dir = rules_runtime_dir(rules_path);
+    let stem = rules_runtime_stem(rules_path);
+    dir.join(format!("agent-backtest-journal-{stem}.jsonl"))
+}
+
 pub fn active_state_path(rules_path: &Path, simulate: bool) -> PathBuf {
     if simulate {
         sim_state_path(rules_path)

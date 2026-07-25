@@ -611,6 +611,44 @@ pub enum AgentCommands {
         #[command(subcommand)]
         command: AgentSimCommands,
     },
+    /// Historical options backtest (synthetic BS marks over Schwab daily bars)
+    Backtest {
+        #[command(subcommand)]
+        command: AgentBacktestCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AgentBacktestCommands {
+    /// Download daily OHLCV (watchlist + SPY + VIX) into a local cache
+    Prefetch {
+        #[arg(long)]
+        rules_file: PathBuf,
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long)]
+        force: bool,
+    },
+    /// Replay trading days with synthetic vertical/condor marks
+    Run {
+        #[arg(long)]
+        rules_file: PathBuf,
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long)]
+        fresh: bool,
+    },
+    /// Analysis report from backtest journal + ledger
+    Report {
+        #[arg(long)]
+        rules_file: PathBuf,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

@@ -10,7 +10,7 @@ use crate::agent::{
     pid_path, reset_sim, run_agent_loop, save_state, sim_journal_path, sim_state_path,
     spawn_background, state_summary, stop_daemon,
 };
-use crate::cli::{AgentCommands, AgentSimCommands};
+use crate::cli::{AgentBacktestCommands, AgentCommands, AgentSimCommands};
 use crate::config::RuntimeConfig;
 use crate::flatten::{build_agent_options_flatten_plan, execute_agent_options_flatten};
 use crate::output::{OutputFormat, ResponseEnvelope};
@@ -18,6 +18,12 @@ use crate::rules::{rules_json_schema, RulesConfig};
 use crate::ui::context::DashboardContext;
 use crate::ui::dashboard::render_dashboard;
 use crate::ui::discover::resolve_rules_file;
+
+use crate::agent::backtest::{
+    build_backtest_report, prefetch_daily_bars, run_backtest, BacktestRunOptions,
+};
+use crate::agent::backtest::prefetch::{default_from_to, parse_ymd};
+use crate::agent::paths::backtest_cache_path;
 
 pub async fn run(runtime: &RuntimeConfig, command: AgentCommands) -> Result<()> {
     match command {
@@ -119,6 +125,65 @@ pub async fn run(runtime: &RuntimeConfig, command: AgentCommands) -> Result<()> 
             runtime.emit(ResponseEnvelope::ok("agent close-all", data));
         }
         AgentCommands::Sim { command } => run_sim(runtime, command).await?,
+        AgentCommands::Backtest { command } => run_backtest_cmd(runtime, command).await?,
+    }
+    Ok(())
+}
+
+async fn run_backtest_cmd(runtime: &RuntimeConfig, command: AgentBacktestCommands) -> Result<()> {
+    match command {
+        AgentBacktestCommands::Prefetch {
+            rules_file,
+            from,
+            to,
+            force,
+        } => {
+            let rules = RulesConfig::load(&rules_file)?;
+            let from_d = from.as_deref().map(parse_ymd).transpose()?;
+            let to_d = to.as_deref().map(parse_ymd).transpose()?;
+            let (from, to) = default_from_to(from_d, to_d)?;
+            let market = runtime.build_market_api()?;
+            let cache =
+                prefetch_daily_bars(&market, &rules, &rules_file, from, to, force).await?;
+            runtime.emit(ResponseEnvelope::ok(
+                "agent backtest prefetch",
+                json!({
+                    "cache_path": backtest_cache_path(&rules_file),
+                    "from": from.to_string(),
+                    "to": to.to_string(),
+                    "symbols": cache.symbols.keys().cloned().collect::<Vec<_>>(),
+                    "bars": cache.symbols.iter().map(|(k,v)| json!({k: v.len()})).collect::<Vec<_>>(),
+                }),
+            ));
+        }
+        AgentBacktestCommands::Run {
+            rules_file,
+            from,
+            to,
+            fresh,
+        } => {
+            let rules = RulesConfig::load(&rules_file)?;
+            let from_d = from.as_deref().map(parse_ymd).transpose()?;
+            let to_d = to.as_deref().map(parse_ymd).transpose()?;
+            let (from, to) = default_from_to(from_d, to_d)?;
+            let result = run_backtest(
+                &rules_file,
+                &rules,
+                BacktestRunOptions { from, to, fresh },
+            )?;
+            runtime.emit(ResponseEnvelope::ok("agent backtest run", result));
+        }
+        AgentBacktestCommands::Report { rules_file, output } => {
+            let rules = RulesConfig::load(&rules_file)?;
+            let report = build_backtest_report(&rules_file, &rules)?;
+            if let Some(path) = output {
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(&path, serde_json::to_string_pretty(&report)?)?;
+            }
+            runtime.emit(ResponseEnvelope::ok("agent backtest report", report));
+        }
     }
     Ok(())
 }
