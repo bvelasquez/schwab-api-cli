@@ -429,6 +429,43 @@ impl Default for ThesisExitRules {
     }
 }
 
+/// Defensive roll when a credit vertical hits the mechanical stop.
+/// Close then reopen farther OTM / later DTE (two sequential orders). Off by default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RollConfig {
+    pub enabled: bool,
+    /// Minimum DTE remaining on the tested position to attempt a roll.
+    pub min_dte_remaining: u32,
+    /// Short must still be at least this % OTM (do not roll already-ITM / near-ITM shorts).
+    pub min_short_otm_pct: f64,
+    /// Prefer expiry at least this many calendar days beyond the closed DTE.
+    pub min_dte_extension: u32,
+    /// Cap |short_delta| on the replacement (also tightened vs original short delta − 0.04).
+    pub target_short_delta_max: f64,
+    /// Allow net debit up to this % of entry credit: `new_credit - close_debit >= -entry * pct/100`.
+    pub max_debit_pct_of_entry_credit: f64,
+    /// Max successful rolls for a single lineage (`TrackedPosition.rolls_used`).
+    pub max_rolls_per_position: u32,
+    /// Soft account-wide cap on successful rolls per calendar day.
+    pub max_rolls_per_day: u32,
+}
+
+impl Default for RollConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            min_dte_remaining: 21,
+            min_short_otm_pct: 0.5,
+            min_dte_extension: 7,
+            target_short_delta_max: 0.12,
+            max_debit_pct_of_entry_credit: 25.0,
+            max_rolls_per_position: 1,
+            max_rolls_per_day: 1,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExitRules {
@@ -441,6 +478,9 @@ pub struct ExitRules {
     pub stop_loss_require_short_otm_below_pct: Option<f64>,
     pub dte_close: u32,
     pub thesis: ThesisExitRules,
+    /// Prefer a managed roll over a hard stop when eligible (verticals only).
+    #[serde(default)]
+    pub roll: RollConfig,
 }
 
 impl Default for ExitRules {
@@ -451,6 +491,7 @@ impl Default for ExitRules {
             stop_loss_require_short_otm_below_pct: None,
             dte_close: 21,
             thesis: ThesisExitRules::default(),
+            roll: RollConfig::default(),
         }
     }
 }

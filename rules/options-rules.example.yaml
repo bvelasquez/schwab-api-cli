@@ -71,6 +71,17 @@ exit_rules:
   profit_target_pct: 50
   stop_loss_pct: 200
   dte_close: 21
+  # Defensive roll on mechanical stop (verticals only). Off by default —
+  # enable after a --simulate soak. Successful rolls skip stop-loss re-entry cooldown.
+  # roll:
+  #   enabled: false
+  #   min_dte_remaining: 21
+  #   min_short_otm_pct: 0.5
+  #   min_dte_extension: 7
+  #   target_short_delta_max: 0.12
+  #   max_debit_pct_of_entry_credit: 25
+  #   max_rolls_per_position: 1
+  #   max_rolls_per_day: 1
 
 risk:
   max_portfolio_risk_usd: 10000
