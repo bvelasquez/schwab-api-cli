@@ -165,6 +165,26 @@ pub fn format_market_open_telegram(playbook: Option<&Value>, open_position_count
 
 /// Returns `None` when the action should not be pushed to Telegram (internal/skip).
 pub fn format_action_telegram(kind: &str, detail: &Value) -> Option<String> {
+    if kind.contains("ROLL") || detail.get("type").and_then(|v| v.as_str()) == Some("defensive_roll")
+    {
+        let underlying = detail
+            .get("underlying")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
+        let closed = detail
+            .get("closed_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
+        let new_id = detail.get("new_id").and_then(|v| v.as_str()).unwrap_or("?");
+        let net = detail.get("net").and_then(|v| v.as_f64());
+        let mut msg = format!(
+            "Defensive roll: {underlying}\nClosed → reopened farther OTM\n{closed} → {new_id}"
+        );
+        if let Some(n) = net {
+            msg.push_str(&format!("\nNet credit/debit: ${n:.2}"));
+        }
+        return Some(msg);
+    }
     if let Some(fill) = detail.get("fill_status").and_then(|v| v.as_str()) {
         return format_order_telegram(kind, fill, detail);
     }
@@ -181,6 +201,7 @@ pub fn format_action_telegram(kind: &str, detail: &Value) -> Option<String> {
             "profit_target" => "profit target hit",
             "stop_loss" => "stop loss hit",
             "dte_close" => "approaching expiration",
+            "defensive_roll" | "rolled" => "defensive roll",
             r if r.starts_with("thesis_") => "thesis deterioration (mechanical exit)",
             "llm_recommendation" => "advisor recommendation",
             other => other,

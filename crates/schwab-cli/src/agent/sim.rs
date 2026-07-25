@@ -160,6 +160,7 @@ pub fn reset_sim(state: &mut AgentState, rules: &RulesConfig) {
     state.pending_orders.clear();
     state.pending_order_ids.clear();
     state.trades_today = 0;
+    state.rolls_today = 0;
     state.sim = Some(SimLedger {
         starting_budget_usd: start,
         realized_pnl_usd: 0.0,
@@ -175,7 +176,12 @@ pub fn record_sim_entry(
     kind: StrategyKind,
     signal: &Value,
 ) -> Result<Value> {
-    if rules.risk.max_trades_per_day > 0
+    let roll_replacement = signal
+        .get("roll_replacement")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if !roll_replacement
+        && rules.risk.max_trades_per_day > 0
         && state.trades_capacity_used() >= rules.risk.max_trades_per_day
     {
         return Ok(json!({
@@ -244,7 +250,18 @@ pub fn record_sim_entry(
         .max(1.0) as u32;
 
     ensure_ledger(state, rules);
-    state.trades_today += 1;
+    if !roll_replacement {
+        state.trades_today += 1;
+    }
+    let rolls_used = signal
+        .get("rolls_used")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    let last_roll_at = if roll_replacement {
+        Some(Utc::now())
+    } else {
+        None
+    };
     state.open_positions.insert(
         position_id.clone(),
         TrackedPosition {
@@ -266,6 +283,8 @@ pub fn record_sim_entry(
                 .pointer("/market_context/short_delta")
                 .and_then(|v| v.as_f64())
                 .map(f64::abs),
+            rolls_used,
+            last_roll_at,
             ..Default::default()
         },
     );

@@ -10,6 +10,7 @@ pub mod paths;
 pub mod protective;
 pub mod resilience;
 pub mod risk;
+pub mod roll;
 pub mod sim;
 pub mod volatility;
 pub mod runner;

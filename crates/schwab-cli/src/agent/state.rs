@@ -16,6 +16,9 @@ pub struct AgentState {
     pub last_tick: Option<DateTime<Utc>>,
     pub trades_today: u32,
     pub trades_day: Option<NaiveDate>,
+    /// Successful defensive rolls today (reset with `trades_day`).
+    #[serde(default)]
+    pub rolls_today: u32,
     pub open_positions: HashMap<String, TrackedPosition>,
     pub last_actions: Vec<AgentAction>,
     #[serde(default)]
@@ -133,6 +136,12 @@ pub struct TrackedPosition {
     /// Consecutive failed attempts to place the protective order (drives reconcile retry/backoff).
     #[serde(default)]
     pub protective_order_attempts: u32,
+    /// Successful defensive rolls applied to this lineage (carried onto replacement).
+    #[serde(default)]
+    pub rolls_used: u32,
+    /// When the last defensive roll opened this position (if any).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_roll_at: Option<DateTime<Utc>>,
 }
 
 pub fn update_peak_profit_pct(position: &mut TrackedPosition, profit_pct: f64) {
@@ -254,6 +263,8 @@ impl Default for TrackedPosition {
             protective_order_id: None,
             protective_order_status: None,
             protective_order_attempts: 0,
+            rolls_used: 0,
+            last_roll_at: None,
         }
     }
 }
@@ -311,6 +322,7 @@ impl AgentState {
     pub fn reset_daily_if_needed(&mut self, today: NaiveDate) {
         if self.trades_day != Some(today) {
             self.trades_today = 0;
+            self.rolls_today = 0;
             self.trades_day = Some(today);
         }
     }

@@ -32,11 +32,17 @@ use crate::trade_audio::{self, TradeAudioEvent};
 use super::exits::{
     candidate_fails_thesis_gates, evaluate_position_monitor, exit_signal_json_for_account,
     find_tracked_position, option_group_from_tracked, reconcile_open_positions, stable_position_key,
+    ExitEvaluation,
 };
+use super::journal;
 use super::llm::OpenRouterClient;
 use super::market_context::{market_context_summary_for_llm, vertical_entry_market_context};
 use super::regime::{detect_options_regime, OptionsRegimeSnapshot};
 use super::risk::{drawdown_to_json, record_live_realized_pnl, update_drawdown};
+use super::roll::{
+    original_width_from_params, roll_biased_entry_rules, roll_eligible, roll_money_ok, roll_net,
+    spread_type_from_tracked, RollEligibility,
+};
 use super::spread_analytics::{analytics_from_json, entry_analytics_pass, passes_min_iv_rv_ratio};
 use super::volatility::{fetch_realized_vol_pct, iv_rv_ratio};
 use super::paths::{active_state_path, load_agent_state, load_sim_agent_state};
@@ -457,43 +463,112 @@ pub async fn tick_once(
                             reason: eval.reason.clone(),
                             underlying: Some(tracked.underlying.clone()),
                         });
-                    } else if is_stop_loss_exit_reason(&eval.reason) {
-                        record_stop_loss_exit(state, &tracked.underlying);
-                        state.redeploy_signal = None;
-                        state.entry_proceed_cache = None;
                     }
-                let exit = exit_signal_json_for_account(&tracked.account_hash, &group, &eval);
-                result.signals.push(exit.clone());
-                if !runtime.dry_run {
-                    match record_sim_exit(
-                        rules_path,
-                        state,
-                        rules,
-                        &position_id,
-                        &eval.reason,
-                        &eval.mark,
-                        &exit,
-                    ) {
-                        Ok(action) => {
-                            result.actions.push(action);
-                            notify_action(telegram, "SIM EXIT", &exit).await;
+
+                    let mut handled_as_roll = false;
+                    if is_stop_loss_exit_reason(&eval.reason) && !runtime.dry_run {
+                        match try_defensive_roll(
+                            runtime,
+                            trader,
+                            market,
+                            rules_path,
+                            rules,
+                            state,
+                            today,
+                            &tracked.account_hash,
+                            &position_id,
+                            &tracked,
+                            &group,
+                            &eval,
+                            monitor.analytics.as_ref().and_then(|a| a.short_otm_pct),
+                            true,
+                            telegram,
+                        )
+                        .await
+                        {
+                            Ok(DefensiveRollOutcome::Success(detail)) => {
+                                handled_as_roll = true;
+                                result.signals.push(detail.clone());
+                                result.actions.push(detail.clone());
+                                result.skipped.push(format!("rolled {position_id}"));
+                                notify_action(telegram, "DEFENSIVE ROLL", &detail).await;
+                            }
+                            Ok(DefensiveRollOutcome::NotAttempted { reason }) => {
+                                result.skipped.push(format!(
+                                    "roll skipped {position_id}: {reason} — stop_loss"
+                                ));
+                            }
+                            Ok(DefensiveRollOutcome::StopCompleted { detail, reason }) => {
+                                handled_as_roll = true;
+                                record_stop_loss_exit(state, &tracked.underlying);
+                                state.redeploy_signal = None;
+                                state.entry_proceed_cache = None;
+                                result.skipped.push(format!(
+                                    "roll aborted after close {position_id}: {reason} — stop_loss"
+                                ));
+                                if let Some(d) = detail {
+                                    result.actions.push(d);
+                                }
+                                let exit =
+                                    exit_signal_json_for_account(&tracked.account_hash, &group, &eval);
+                                result.signals.push(exit.clone());
+                                notify_action(telegram, "SIM EXIT", &exit).await;
+                            }
+                            Err(err) => {
+                                result.skipped.push(format!(
+                                    "roll error {position_id}: {err:#} — stop_loss"
+                                ));
+                            }
                         }
-                        Err(err) => {
-                            result
-                                .skipped
-                                .push(format!("sim exit failed {position_id}: {err:#}"));
+                    }
+
+                    if !handled_as_roll {
+                        if is_stop_loss_exit_reason(&eval.reason) {
+                            record_stop_loss_exit(state, &tracked.underlying);
+                            state.redeploy_signal = None;
+                            state.entry_proceed_cache = None;
+                        }
+                        let exit =
+                            exit_signal_json_for_account(&tracked.account_hash, &group, &eval);
+                        result.signals.push(exit.clone());
+                        if !runtime.dry_run {
+                            match record_sim_exit(
+                                rules_path,
+                                state,
+                                rules,
+                                &position_id,
+                                &eval.reason,
+                                &eval.mark,
+                                &exit,
+                            ) {
+                                Ok(action) => {
+                                    result.actions.push(action);
+                                    notify_action(telegram, "SIM EXIT", &exit).await;
+                                }
+                                Err(err) => {
+                                    result
+                                        .skipped
+                                        .push(format!("sim exit failed {position_id}: {err:#}"));
+                                }
+                            }
                         }
                     }
                 }
-            }
         }
     } else {
         for account in rules.enabled_accounts() {
             let legs = list_option_positions(trader, Some(&account.hash)).await?;
             let groups = group_option_legs(&legs);
             for group in &groups {
-                let tracked = find_tracked_position(state, &account.hash, group);
-                let monitor = evaluate_position_monitor(market, group, rules, today, tracked).await?;
+                let tracked_owned = find_tracked_position(state, &account.hash, group).cloned();
+                let monitor = evaluate_position_monitor(
+                    market,
+                    group,
+                    rules,
+                    today,
+                    tracked_owned.as_ref(),
+                )
+                .await?;
                 let position_id = stable_position_key(&account.hash, group);
                 if let Some(profit) = monitor.mark.as_ref().map(|m| m.profit_pct) {
                     if let Some(p) = state.open_positions.get_mut(&position_id) {
@@ -512,24 +587,97 @@ pub async fn tick_once(
                             reason: eval.reason.clone(),
                             underlying: Some(group.underlying.clone()),
                         });
-                    } else if is_stop_loss_exit_reason(&eval.reason) {
-                        record_stop_loss_exit(state, &group.underlying);
-                        state.redeploy_signal = None;
-                        state.entry_proceed_cache = None;
                     }
-                    let exit = exit_signal_json_for_account(&account.hash, group, &eval);
-                    result.signals.push(exit.clone());
-                    if state.has_pending_position(&position_id) {
-                        result
-                            .skipped
-                            .push(format!("exit already pending for {position_id}"));
-                    } else if !runtime.dry_run {
-                        if let Ok(action) =
-                            execute_exit(runtime, trader, &account.hash, rules, group, &exit, state)
-                                .await
+
+                    let mut handled_as_roll = false;
+                    if is_stop_loss_exit_reason(&eval.reason)
+                        && !runtime.dry_run
+                        && tracked_owned.is_some()
+                        && !state.has_pending_position(&position_id)
+                    {
+                        let tracked_ref = tracked_owned.as_ref().expect("checked is_some");
+                        match try_defensive_roll(
+                            runtime,
+                            trader,
+                            market,
+                            rules_path,
+                            rules,
+                            state,
+                            today,
+                            &account.hash,
+                            &position_id,
+                            tracked_ref,
+                            group,
+                            &eval,
+                            monitor.analytics.as_ref().and_then(|a| a.short_otm_pct),
+                            false,
+                            telegram,
+                        )
+                        .await
                         {
-                            result.actions.push(action);
-                            notify_action(telegram, "EXIT", &exit).await;
+                            Ok(DefensiveRollOutcome::Success(detail)) => {
+                                handled_as_roll = true;
+                                result.signals.push(detail.clone());
+                                result.actions.push(detail.clone());
+                                result.skipped.push(format!("rolled {position_id}"));
+                                notify_action(telegram, "DEFENSIVE ROLL", &detail).await;
+                            }
+                            Ok(DefensiveRollOutcome::NotAttempted { reason }) => {
+                                result.skipped.push(format!(
+                                    "roll skipped {position_id}: {reason} — stop_loss"
+                                ));
+                            }
+                            Ok(DefensiveRollOutcome::StopCompleted { detail, reason }) => {
+                                handled_as_roll = true;
+                                record_stop_loss_exit(state, &group.underlying);
+                                state.redeploy_signal = None;
+                                state.entry_proceed_cache = None;
+                                result.skipped.push(format!(
+                                    "roll aborted after close {position_id}: {reason} — stop_loss"
+                                ));
+                                if let Some(d) = detail {
+                                    result.actions.push(d);
+                                }
+                                let exit =
+                                    exit_signal_json_for_account(&account.hash, group, &eval);
+                                result.signals.push(exit.clone());
+                                notify_action(telegram, "EXIT", &exit).await;
+                            }
+                            Err(err) => {
+                                result.skipped.push(format!(
+                                    "roll error {position_id}: {err:#} — stop_loss"
+                                ));
+                            }
+                        }
+                    }
+
+                    if !handled_as_roll {
+                        if is_stop_loss_exit_reason(&eval.reason) {
+                            record_stop_loss_exit(state, &group.underlying);
+                            state.redeploy_signal = None;
+                            state.entry_proceed_cache = None;
+                        }
+                        let exit = exit_signal_json_for_account(&account.hash, group, &eval);
+                        result.signals.push(exit.clone());
+                        if state.has_pending_position(&position_id) {
+                            result
+                                .skipped
+                                .push(format!("exit already pending for {position_id}"));
+                        } else if !runtime.dry_run {
+                            if let Ok(action) = execute_exit(
+                                runtime,
+                                trader,
+                                &account.hash,
+                                rules,
+                                group,
+                                &exit,
+                                state,
+                            )
+                            .await
+                            {
+                                result.actions.push(action);
+                                notify_action(telegram, "EXIT", &exit).await;
+                            }
                         }
                     }
                 }
@@ -2271,7 +2419,13 @@ async fn maybe_execute_entry(
         return Ok(None);
     }
 
-    if rules.risk.max_trades_per_day > 0
+    let roll_replacement = signal
+        .get("roll_replacement")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if !roll_replacement
+        && rules.risk.max_trades_per_day > 0
         && state.trades_capacity_used() >= rules.risk.max_trades_per_day
     {
         return Ok(Some(json!({
@@ -2327,13 +2481,15 @@ async fn maybe_execute_entry(
     if let Some(remaining) =
         entry_attempt_cooldown_active(&rules.entry_policy, state, &position_id)
     {
-        return Ok(Some(json!({
-            "fill_status": "SKIPPED",
-            "reason": "entry_attempt_cooldown",
-            "remaining_minutes": remaining,
-            "position_id": position_id,
-            "signal": signal,
-        })));
+        if !roll_replacement {
+            return Ok(Some(json!({
+                "fill_status": "SKIPPED",
+                "reason": "entry_attempt_cooldown",
+                "remaining_minutes": remaining,
+                "position_id": position_id,
+                "signal": signal,
+            })));
+        }
     }
 
     require_trading_approval(
@@ -2426,7 +2582,9 @@ async fn maybe_execute_entry(
         return Ok(Some(detail));
     }
 
-    state.trades_today += 1;
+    if !roll_replacement {
+        state.trades_today += 1;
+    }
     let underlying = params
         .get("underlying")
         .and_then(|v| v.as_str())
@@ -2444,6 +2602,15 @@ async fn maybe_execute_entry(
         .round()
         .max(1.0) as u32;
     let new_credit = signal.get("estimated_credit").and_then(|v| v.as_f64());
+    let rolls_used = signal
+        .get("rolls_used")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    let last_roll_at = if roll_replacement {
+        Some(Utc::now())
+    } else {
+        None
+    };
 
     let total_contracts;
     if let Some(existing) = state.open_positions.get_mut(&position_id) {
@@ -2479,6 +2646,8 @@ async fn maybe_execute_entry(
                     .pointer("/market_context/short_delta")
                     .and_then(|v| v.as_f64())
                     .map(f64::abs),
+                rolls_used,
+                last_roll_at,
                 ..Default::default()
             },
         );
@@ -2612,6 +2781,313 @@ async fn place_or_replace_protective_order(
             );
         }
     }
+}
+
+enum DefensiveRollOutcome {
+    /// Close + open succeeded; do not record stop_loss cooldown.
+    Success(Value),
+    /// Eligibility failed — caller should take the normal stop path.
+    NotAttempted { reason: String },
+    /// Close already applied (filled/pending) but replacement failed — no second exit.
+    StopCompleted {
+        detail: Option<Value>,
+        reason: String,
+    },
+}
+
+/// Intercept mechanical `stop_loss` with a managed vertical roll when eligible.
+#[allow(clippy::too_many_arguments)]
+async fn try_defensive_roll(
+    runtime: &RuntimeConfig,
+    trader: &Arc<TraderApi>,
+    market: &MarketDataApi,
+    rules_path: &std::path::Path,
+    rules: &RulesConfig,
+    state: &mut AgentState,
+    today: NaiveDate,
+    account_hash: &str,
+    position_id: &str,
+    tracked: &TrackedPosition,
+    group: &crate::options::OptionPositionGroup,
+    eval: &ExitEvaluation,
+    short_otm_pct: Option<f64>,
+    simulate: bool,
+    _telegram: Option<&TelegramNotifier>,
+) -> Result<DefensiveRollOutcome> {
+    let roll_cfg = &rules.exit_rules.roll;
+    if let Err(skip) = roll_eligible(
+        roll_cfg,
+        &RollEligibility {
+            tracked,
+            mark_dte: eval.mark.dte,
+            short_otm_pct,
+            rolls_today: state.rolls_today,
+            reserved_risk_usd: state.reserved_risk_usd(),
+            max_portfolio_risk_usd: rules.risk.max_portfolio_risk_usd,
+        },
+    ) {
+        return Ok(DefensiveRollOutcome::NotAttempted {
+            reason: skip.as_str().to_string(),
+        });
+    }
+
+    let Some(spread_type) = spread_type_from_tracked(tracked) else {
+        return Ok(DefensiveRollOutcome::NotAttempted {
+            reason: "roll_missing_spread_type".into(),
+        });
+    };
+    if !spread_type.eq_ignore_ascii_case("put_credit")
+        && !spread_type.eq_ignore_ascii_case("call_credit")
+    {
+        return Ok(DefensiveRollOutcome::NotAttempted {
+            reason: "roll_not_credit_vertical".into(),
+        });
+    }
+
+    let close_debit = eval.mark.debit_to_close;
+    let entry_credit = tracked
+        .entry_credit
+        .unwrap_or(eval.mark.entry_credit)
+        .max(0.0);
+    if entry_credit <= f64::EPSILON {
+        return Ok(DefensiveRollOutcome::NotAttempted {
+            reason: "roll_missing_entry_credit".into(),
+        });
+    }
+
+    // Close first (cancels protective GTC via execute_exit / removes sim position).
+    let exit_signal = exit_signal_json_for_account(account_hash, group, eval);
+    let close_detail = if simulate {
+        match record_sim_exit(
+            rules_path,
+            state,
+            rules,
+            position_id,
+            "defensive_roll",
+            &eval.mark,
+            &exit_signal,
+        ) {
+            Ok(d) => d,
+            Err(e) => {
+                return Ok(DefensiveRollOutcome::NotAttempted {
+                    reason: format!("roll_close_failed:{e:#}"),
+                });
+            }
+        }
+    } else {
+        match execute_exit(
+            runtime,
+            trader,
+            account_hash,
+            rules,
+            group,
+            &exit_signal,
+            state,
+        )
+        .await
+        {
+            Ok(d) => d,
+            Err(e) => {
+                return Ok(DefensiveRollOutcome::NotAttempted {
+                    reason: format!("roll_close_failed:{e:#}"),
+                });
+            }
+        }
+    };
+
+    let close_fill = close_detail
+        .get("fill_status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let close_ok = close_fill.eq_ignore_ascii_case("FILLED")
+        || (!rules.execution.wait_for_fill && !close_fill.eq_ignore_ascii_case("SKIPPED"));
+    if !close_ok {
+        return Ok(DefensiveRollOutcome::StopCompleted {
+            detail: Some(close_detail),
+            reason: format!("close_not_filled:{close_fill}"),
+        });
+    }
+
+    let original_width = tracked
+        .entry_params
+        .as_ref()
+        .and_then(original_width_from_params);
+    let biased = roll_biased_entry_rules(
+        &rules.entry_rules.vertical,
+        roll_cfg,
+        eval.mark.dte,
+        tracked.entry_short_delta,
+        original_width,
+        tracked.contracts.max(1),
+    );
+
+    let candidate = match evaluate_vertical_entry(
+        market,
+        rules,
+        &biased,
+        &tracked.underlying,
+        today,
+        state,
+        account_hash,
+        &spread_type,
+    )
+    .await
+    {
+        Ok(Some(mut signal)) => {
+            let new_credit = signal
+                .get("estimated_credit")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            if !roll_money_ok(
+                entry_credit,
+                close_debit,
+                new_credit,
+                roll_cfg.max_debit_pct_of_entry_credit,
+            ) {
+                return Ok(DefensiveRollOutcome::StopCompleted {
+                    detail: Some(close_detail),
+                    reason: format!(
+                        "roll_debit_too_large:net={:.3}",
+                        roll_net(close_debit, new_credit)
+                    ),
+                });
+            }
+            let next_rolls = tracked.rolls_used.saturating_add(1);
+            if let Some(obj) = signal.as_object_mut() {
+                obj.insert("roll_replacement".into(), json!(true));
+                obj.insert("rolls_used".into(), json!(next_rolls));
+                obj.insert("closed_position_id".into(), json!(position_id));
+                obj.insert("roll_close_debit".into(), json!(close_debit));
+                obj.insert(
+                    "roll_net".into(),
+                    json!(roll_net(close_debit, new_credit)),
+                );
+            }
+            signal
+        }
+        Ok(None) => {
+            return Ok(DefensiveRollOutcome::StopCompleted {
+                detail: Some(close_detail),
+                reason: "no_roll_candidate".into(),
+            });
+        }
+        Err(e) => {
+            return Ok(DefensiveRollOutcome::StopCompleted {
+                detail: Some(close_detail),
+                reason: format!("roll_candidate_error:{e:#}"),
+            });
+        }
+    };
+
+    let new_credit = candidate
+        .get("estimated_credit")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let new_id = candidate
+        .get("position_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let open_detail = if simulate {
+        match record_sim_entry(
+            rules_path,
+            state,
+            rules,
+            account_hash,
+            StrategyKind::Vertical,
+            &candidate,
+        ) {
+            Ok(d) => d,
+            Err(e) => {
+                return Ok(DefensiveRollOutcome::StopCompleted {
+                    detail: Some(close_detail),
+                    reason: format!("roll_open_failed:{e:#}"),
+                });
+            }
+        }
+    } else {
+        match maybe_execute_entry(
+            runtime,
+            trader,
+            account_hash,
+            StrategyKind::Vertical,
+            &candidate,
+            rules,
+            state,
+        )
+        .await
+        {
+            Ok(Some(d)) => d,
+            Ok(None) => {
+                return Ok(DefensiveRollOutcome::StopCompleted {
+                    detail: Some(close_detail),
+                    reason: "roll_open_dry_or_none".into(),
+                });
+            }
+            Err(e) => {
+                return Ok(DefensiveRollOutcome::StopCompleted {
+                    detail: Some(close_detail),
+                    reason: format!("roll_open_failed:{e:#}"),
+                });
+            }
+        }
+    };
+
+    let open_fill = open_detail
+        .get("fill_status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if !open_fill.eq_ignore_ascii_case("FILLED")
+        && !(open_fill.is_empty() && !rules.execution.wait_for_fill)
+    {
+        // Working/skipped after close — treat as stop completed (position already closed).
+        if open_fill.eq_ignore_ascii_case("SKIPPED")
+            || open_fill.eq_ignore_ascii_case("REJECTED")
+            || open_fill.eq_ignore_ascii_case("CANCELED")
+        {
+            return Ok(DefensiveRollOutcome::StopCompleted {
+                detail: Some(json!({
+                    "close": close_detail,
+                    "open": open_detail,
+                })),
+                reason: format!("roll_open_status:{open_fill}"),
+            });
+        }
+        // WORKING: replacement pending — still count as roll in progress; bump rolls_today
+        // only on FILLED. Treat working as incomplete stop path so cooldown applies.
+        if !open_fill.eq_ignore_ascii_case("FILLED") {
+            return Ok(DefensiveRollOutcome::StopCompleted {
+                detail: Some(json!({
+                    "close": close_detail,
+                    "open": open_detail,
+                })),
+                reason: format!("roll_open_not_filled:{open_fill}"),
+            });
+        }
+    }
+
+    state.rolls_today = state.rolls_today.saturating_add(1);
+    let net = roll_net(close_debit, new_credit);
+    let detail = json!({
+        "type": "defensive_roll",
+        "fill_status": "FILLED",
+        "reason": "rolled",
+        "closed_id": position_id,
+        "new_id": new_id,
+        "close_debit": close_debit,
+        "new_credit": new_credit,
+        "net": net,
+        "underlying": tracked.underlying,
+        "rolls_used": tracked.rolls_used.saturating_add(1),
+        "close": close_detail,
+        "open": open_detail,
+        "signal": candidate,
+    });
+    state.record_action("defensive_roll", detail.clone());
+    let _ = journal::append_event(rules_path, simulate, "defensive_roll", detail.clone());
+    Ok(DefensiveRollOutcome::Success(detail))
 }
 
 async fn execute_exit(

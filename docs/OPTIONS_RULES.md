@@ -50,10 +50,41 @@ schwab agent stop rules/options-rules.example.yaml --json
 | `stop_loss_pct` | 200 | Close when debit to close ≥ 2× entry credit |
 | `stop_loss_require_short_otm_below_pct` | unset | If set, arm the mark stop only when short OTM% is below this (gives time while far from strike) |
 | `dte_close` | 21 | Close when DTE ≤ 21 regardless |
+| `roll.enabled` | `false` | Prefer a managed vertical roll over a hard stop when eligible (see Defensive rolling) |
 
 Exits run **before** entry scans each regular tick. Marks come from live option chain **`debit_to_close`** (not Schwab `net_market_value`).
 
 Monitor LLM context includes `mechanical_rules.stop_triggered` — only treat a stop as hit when that field is `true`. See [LLM_SCHEMA_REFERENCE.md](LLM_SCHEMA_REFERENCE.md#field-reference--exit_rules-mechanical--authoritative).
+
+### Defensive rolling
+
+When a **credit vertical** hits the mechanical `stop_loss`, the agent can attempt a **managed roll** (close the tested spread, then open a farther-OTM / later-DTE replacement) instead of eating a full stop. Iron condors, thesis exits, and DTE closes are out of scope for v1. Rolls are mechanical (same class as stops — they bypass `require_llm_proceed`) and use **two sequential orders** (close then open), not Schwab `VERTICAL_ROLL`.
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `enabled` | `false` | Must opt in; soak with `--simulate` before live |
+| `min_dte_remaining` | 21 | Skip roll if mark DTE is below this |
+| `min_short_otm_pct` | 0.5 | Do not roll already-ITM / near-ITM shorts |
+| `min_dte_extension` | 7 | Prefer expiry ≥ closed DTE + this many days |
+| `target_short_delta_max` | 0.12 | Cap \|short_delta\| (also ≤ original short delta − 0.04) |
+| `max_debit_pct_of_entry_credit` | 25 | Allow limited debit: `new_credit − close_debit ≥ −entry × pct/100` |
+| `max_rolls_per_position` | 1 | Per lineage (`TrackedPosition.rolls_used`) |
+| `max_rolls_per_day` | 1 | Soft account-wide daily cap |
+
+A **successful** roll does **not** call `record_stop_loss_exit` (no stop re-entry cooldown). If the roll is ineligible or the replacement fails after close, the normal stop path / cooldown applies. Tick `skipped` strings distinguish `rolled` vs `stop_loss`. Journal / Telegram event type: `defensive_roll`.
+
+```yaml
+exit_rules:
+  roll:
+    enabled: false
+    min_dte_remaining: 21
+    min_short_otm_pct: 0.5
+    min_dte_extension: 7
+    target_short_delta_max: 0.12
+    max_debit_pct_of_entry_credit: 25
+    max_rolls_per_position: 1
+    max_rolls_per_day: 1
+```
 
 ## Broker-side protection (what survives if the agent is down)
 

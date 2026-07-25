@@ -77,7 +77,7 @@ pub fn update_drawdown(
     let sleeve_base = sleeve_base_usd(state, rules);
     let realized = realized_pnl_usd(state);
     let unrealized = unrealized_pnl_from_monitors(monitored);
-    let current = sleeve_base + realized + unrealized;
+    let current = compute_sleeve_equity(state, rules, monitored);
 
     if state.sleeve_peak_equity_usd <= 0.0 {
         state.sleeve_peak_equity_usd = current.max(sleeve_base);

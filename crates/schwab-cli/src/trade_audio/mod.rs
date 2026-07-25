@@ -143,6 +143,11 @@ pub fn speak_exit_reason(reason: &str) {
 
 /// Map options-agent Telegram action payloads to spoken cues.
 pub fn speak_from_action(kind: &str, detail: &Value) {
+    if kind.contains("ROLL") || detail.get("type").and_then(|v| v.as_str()) == Some("defensive_roll")
+    {
+        speak(TradeAudioEvent::EntryOpened);
+        return;
+    }
     if let Some(fill) = detail.get("fill_status").and_then(|v| v.as_str()) {
         speak_from_order_status(kind, fill, detail);
         return;
