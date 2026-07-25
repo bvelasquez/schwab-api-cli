@@ -43,10 +43,13 @@ rules/trader-journal-*.jsonl
 rules/trader-*.pid
 rules/trader-*.log
 
-# Backtest artifacts (regenerate: schwab-trader backtest prefetch / run)
+# Backtest artifacts (regenerate: schwab-trader / schwab agent backtest prefetch / run)
 rules/.backtest-cache-*.json
+rules/.options-backtest-cache-*.json
 rules/trader-backtest-state-*.json
 rules/trader-backtest-journal-*.jsonl
+rules/agent-backtest-state-*.json
+rules/agent-backtest-journal-*.jsonl
 rules/prefetch-*.sh
 
 # Local rule tuning / comparison copies (committed examples: *-example.yaml)
