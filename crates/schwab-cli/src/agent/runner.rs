@@ -1934,14 +1934,16 @@ async fn evaluate_vertical_entry(
         return Ok(None);
     }
 
-    let short_strike = pick_strike_by_delta(
+    // Never fall back to a fixed % OTM strike — that bypasses the delta band and
+    // recreates ~20–25Δ "cheap premium" picks (QQQ 655/650 Jul 2026 post-mortem).
+    let Some(short_strike) = pick_strike_by_delta(
         &strike_map,
         entry.short_delta_min,
         entry.short_delta_max,
         is_put,
-    )
-    .or_else(|| pick_otm_strike(&strike_map, underlying_price, 0.05, is_put).ok())
-    .context("no suitable short strike")?;
+    ) else {
+        return Ok(None);
+    };
     let long_strike = pick_wing_strike(&strike_map, short_strike, entry.max_width, is_put)?;
     let width = (short_strike - long_strike).abs();
     if width < entry.max_width * 0.5 {
@@ -1984,8 +1986,8 @@ async fn evaluate_vertical_entry(
         if candidate_fails_thesis_gates(rules, a).is_some() {
             return Ok(None);
         }
-    } else if entry.reject_short_inside_1sigma || entry.min_iv_rv_ratio.is_some() {
-        // Analytics unavailable but gates require it — fail closed.
+    } else {
+        // Analytics unavailable — cannot verify delta band / 1σ / IV-RV gates.
         return Ok(None);
     }
 

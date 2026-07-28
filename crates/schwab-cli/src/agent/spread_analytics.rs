@@ -236,6 +236,17 @@ pub fn spread_win_score(
 }
 
 pub fn entry_analytics_pass(entry: &crate::rules::VerticalEntryRules, a: &SpreadAnalytics) -> bool {
+    // Delta band is mandatory. Fail closed when greeks are missing — never accept a
+    // short whose |Δ| we cannot verify (OTM-% fallbacks used to sneak ~0.22Δ shorts in).
+    match a.short_delta {
+        Some(d) => {
+            let abs = d.abs();
+            if abs < entry.short_delta_min || abs > entry.short_delta_max {
+                return false;
+            }
+        }
+        None => return false,
+    }
     if let Some(min) = entry.min_pop_pct {
         if a.spread_pop_pct.unwrap_or(0.0) < min {
             return false;
@@ -243,6 +254,11 @@ pub fn entry_analytics_pass(entry: &crate::rules::VerticalEntryRules, a: &Spread
     }
     if let Some(min) = entry.min_distance_to_be_pct {
         if a.distance_to_be_pct.unwrap_or(0.0) < min {
+            return false;
+        }
+    }
+    if let Some(min_otm) = entry.min_short_otm_pct {
+        if a.short_otm_pct.unwrap_or(0.0) < min_otm {
             return false;
         }
     }
@@ -258,6 +274,15 @@ pub fn entry_analytics_pass(entry: &crate::rules::VerticalEntryRules, a: &Spread
         match a.iv_rv_ratio {
             Some(ratio) if ratio >= min_ratio => {}
             _ => return false, // missing IV/RV or ratio too low — fail closed
+        }
+    }
+    // Skip selling premium into an already-adverse day (puts on a selloff / calls on a rip).
+    if let Some(max_adverse) = entry.max_adverse_day_change_pct {
+        if let Some(chg) = a.underlying_change_pct {
+            let adverse = if a.is_put_spread { -chg } else { chg };
+            if adverse > max_adverse {
+                return false;
+            }
         }
     }
     true
@@ -437,12 +462,16 @@ mod tests {
         entry.min_distance_to_be_pct = Some(1.0);
         entry.min_credit_to_width_pct = Some(5.0);
         entry.reject_short_inside_1sigma = true;
+        entry.short_delta_min = 0.10;
+        entry.short_delta_max = 0.25;
 
         let mut a = SpreadAnalytics {
             spread_pop_pct: Some(70.0),
             distance_to_be_pct: Some(5.0),
             credit_to_width_pct: Some(15.0),
             short_strike_inside_1sigma: Some(true),
+            short_delta: Some(-0.18),
+            is_put_spread: true,
             ..Default::default()
         };
         assert!(!entry_analytics_pass(&entry, &a));
@@ -462,12 +491,16 @@ mod tests {
         entry.min_distance_to_be_pct = Some(1.0);
         entry.min_credit_to_width_pct = Some(5.0);
         entry.reject_short_inside_1sigma = true;
+        entry.short_delta_min = 0.10;
+        entry.short_delta_max = 0.25;
 
         let a = SpreadAnalytics {
             spread_pop_pct: Some(70.0),
             distance_to_be_pct: Some(5.0),
             credit_to_width_pct: Some(15.0),
             short_strike_inside_1sigma: None,
+            short_delta: Some(-0.18),
+            is_put_spread: true,
             ..Default::default()
         };
         assert!(!entry_analytics_pass(&entry, &a));
@@ -480,6 +513,9 @@ mod tests {
         entry.min_distance_to_be_pct = Some(1.0);
         entry.min_credit_to_width_pct = Some(5.0);
         entry.min_iv_rv_ratio = Some(1.15);
+        entry.short_delta_min = 0.10;
+        entry.short_delta_max = 0.25;
+        entry.reject_short_inside_1sigma = false;
 
         let mut a = SpreadAnalytics {
             spread_pop_pct: Some(70.0),
@@ -487,6 +523,8 @@ mod tests {
             credit_to_width_pct: Some(15.0),
             short_strike_inside_1sigma: Some(false),
             iv_rv_ratio: Some(1.05),
+            short_delta: Some(-0.18),
+            is_put_spread: true,
             ..Default::default()
         };
         assert!(!entry_analytics_pass(&entry, &a));
@@ -496,5 +534,68 @@ mod tests {
 
         a.iv_rv_ratio = None;
         assert!(!entry_analytics_pass(&entry, &a));
+    }
+
+    #[test]
+    fn entry_analytics_rejects_hot_short_delta() {
+        let mut entry = crate::rules::VerticalEntryRules::default();
+        entry.short_delta_min = 0.10;
+        entry.short_delta_max = 0.16;
+        entry.min_pop_pct = Some(50.0);
+        entry.min_distance_to_be_pct = Some(1.0);
+        entry.min_credit_to_width_pct = Some(5.0);
+        entry.reject_short_inside_1sigma = false;
+
+        let mut a = SpreadAnalytics {
+            spread_pop_pct: Some(77.0),
+            distance_to_be_pct: Some(5.9),
+            credit_to_width_pct: Some(15.6),
+            short_strike_inside_1sigma: Some(true),
+            short_delta: Some(-0.228),
+            short_otm_pct: Some(5.79),
+            underlying_change_pct: Some(-1.43),
+            is_put_spread: true,
+            ..Default::default()
+        };
+        // QQQ 655/650-style pick: delta above band.
+        assert!(!entry_analytics_pass(&entry, &a));
+
+        a.short_delta = Some(-0.14);
+        assert!(entry_analytics_pass(&entry, &a));
+
+        a.short_delta = None;
+        assert!(!entry_analytics_pass(&entry, &a));
+    }
+
+    #[test]
+    fn entry_analytics_rejects_adverse_day_and_thin_otm() {
+        let mut entry = crate::rules::VerticalEntryRules::default();
+        entry.short_delta_min = 0.10;
+        entry.short_delta_max = 0.16;
+        entry.min_pop_pct = Some(50.0);
+        entry.min_distance_to_be_pct = Some(1.0);
+        entry.min_credit_to_width_pct = Some(5.0);
+        entry.min_short_otm_pct = Some(6.0);
+        entry.max_adverse_day_change_pct = Some(1.0);
+        entry.reject_short_inside_1sigma = false;
+
+        let mut a = SpreadAnalytics {
+            spread_pop_pct: Some(77.0),
+            distance_to_be_pct: Some(6.5),
+            credit_to_width_pct: Some(15.0),
+            short_delta: Some(-0.14),
+            short_otm_pct: Some(5.5),
+            underlying_change_pct: Some(-0.2),
+            is_put_spread: true,
+            ..Default::default()
+        };
+        assert!(!entry_analytics_pass(&entry, &a)); // thin OTM
+
+        a.short_otm_pct = Some(6.5);
+        a.underlying_change_pct = Some(-1.43);
+        assert!(!entry_analytics_pass(&entry, &a)); // adverse day
+
+        a.underlying_change_pct = Some(-0.5);
+        assert!(entry_analytics_pass(&entry, &a));
     }
 }

@@ -224,7 +224,10 @@ Mechanical filters on vertical candidates (`entry_rules.vertical`):
 
 | Gate | Behavior |
 |------|----------|
+| `short_delta_min` / `short_delta_max` | Short leg **must** fall in this \|Δ\| band. Missing greeks **fail closed**. The engine never falls back to a fixed % OTM strike. |
 | `min_pop_pct` / `min_distance_to_be_pct` / `min_credit_to_width_pct` | Reject weak POP / BE cushion / credit-to-width |
+| `min_short_otm_pct` | Reject when short strike OTM % of spot is below threshold |
+| `max_adverse_day_change_pct` | Reject puts on a down day (or calls on an up day) beyond this % move |
 | `reject_short_inside_1sigma` | Reject shorts inside 1σ expected move. **Fail-closed** when chain IV is missing (never silently passes). |
 | `min_iv_rv_ratio` | Reject when `chain_iv / realized_vol <` threshold (e.g. `1.15`). Realized vol uses `regime.realized_vol_lookback` (default 20). **Fail-closed** when IV or RV is missing. |
 
