@@ -331,6 +331,13 @@ pub struct VerticalEntryRules {
     /// When set, missing IV or RV **fails closed** (rejects). Typical starting value: 1.15.
     #[serde(default)]
     pub min_iv_rv_ratio: Option<f64>,
+    /// Minimum short-strike OTM cushion (% of spot). Omit to skip.
+    #[serde(default)]
+    pub min_short_otm_pct: Option<f64>,
+    /// Reject when the underlying has already moved against the credit structure today
+    /// by more than this many percent (puts: down day; calls: up day). Omit to skip.
+    #[serde(default)]
+    pub max_adverse_day_change_pct: Option<f64>,
     pub max_open_positions: u32,
     pub max_contracts_per_trade: u32,
 }
@@ -343,13 +350,16 @@ impl Default for VerticalEntryRules {
             dte_max: 45,
             min_credit: 0.50,
             max_width: 5.0,
-            short_delta_min: 0.15,
-            short_delta_max: 0.30,
-            min_pop_pct: Some(60.0),
-            min_distance_to_be_pct: Some(3.0),
+            // Prefer quality shorts; widen only explicitly in rules YAML.
+            short_delta_min: 0.10,
+            short_delta_max: 0.20,
+            min_pop_pct: Some(65.0),
+            min_distance_to_be_pct: Some(4.0),
             min_credit_to_width_pct: Some(12.5),
             reject_short_inside_1sigma: false,
             min_iv_rv_ratio: None,
+            min_short_otm_pct: None,
+            max_adverse_day_change_pct: None,
             max_open_positions: 3,
             max_contracts_per_trade: 2,
         }
