@@ -31,12 +31,38 @@ pub fn compute_sleeve_equity(state: &TraderState) -> f64 {
 }
 
 pub fn update_drawdown(state: &mut TraderState, rules: &TraderRules) -> DrawdownStatus {
+    let live_flat = state.sim.is_none()
+        && state.open_positions.is_empty()
+        && state.pending_buys.is_empty();
     let current = if state.sim.is_some() {
         compute_sleeve_equity(state)
     } else {
         // Live: deployed capital is the best proxy until reconcile marks positions.
         state.equity_deployed_usd()
     };
+
+    // Live + flat: deployed-proxy equity is $0, which would read as a 100%
+    // drawdown and trip a PERMANENT halt (auto-clear requires drawdown <
+    // threshold — impossible while flat). Realized P/L isn't tracked in live
+    // state, so there is no honest drawdown signal when flat: skip evaluation
+    // and clear any stale drawdown halt instead.
+    if live_flat {
+        if state
+            .trading_halted_reason
+            .as_deref()
+            .is_some_and(|r| r.starts_with("drawdown halt"))
+        {
+            state.trading_halted_reason = None;
+        }
+        let peak = state.sleeve_peak_equity_usd.max(rules.capital.fixed_sleeve_cap_usd);
+        return DrawdownStatus {
+            current_equity_usd: current,
+            peak_equity_usd: peak,
+            drawdown_pct: 0.0,
+            halt_threshold_pct: rules.risk.max_drawdown_halt_pct,
+            halted: false,
+        };
+    }
 
     if state.sleeve_peak_equity_usd <= 0.0 {
         state.sleeve_peak_equity_usd = current.max(rules.capital.fixed_sleeve_cap_usd);
@@ -191,5 +217,47 @@ mod tests {
         let status = update_drawdown(&mut state, &rules);
         assert!(status.drawdown_pct >= 10.0);
         assert!(status.halted);
+    }
+
+    #[test]
+    fn live_flat_does_not_permanent_halt() {
+        let rules = TraderRules::default();
+        let mut state = TraderState::default(); // live (no sim ledger), no positions
+        state.sleeve_peak_equity_usd = 4000.0;
+        state.trading_halted_reason = Some("drawdown halt: 100.0% >= 10.0%".into());
+
+        let status = update_drawdown(&mut state, &rules);
+        assert!(!status.halted, "flat live sleeve must not read as 100% DD");
+        assert_eq!(status.drawdown_pct, 0.0);
+        assert_eq!(state.trading_halted_reason, None, "stale halt must clear");
+    }
+
+    #[test]
+    fn live_with_positions_still_halts() {
+        let rules = TraderRules::default();
+        let mut state = TraderState::default();
+        state.sleeve_peak_equity_usd = 4000.0;
+        state.open_positions.insert(
+            "P|2026".into(),
+            crate::agent::state::SwingPosition {
+                position_id: "P|2026".into(),
+                symbol: "X".into(),
+                account_hash: "h".into(),
+                quantity: 10.0,
+                entry_price: 100.0,
+                opened_at: chrono::Utc::now(),
+                stop_price: 90.0,
+                profit_limit: 110.0,
+                stop_risk_usd: 100.0,
+                market_value_usd: 3000.0,
+                oco_order_id: None,
+                exit_plan_version: 1,
+                peak_profit_pct: None,
+                entry_rs_vs_benchmark_30d: None,
+            },
+        );
+        let status = update_drawdown(&mut state, &rules);
+        assert!(status.halted);
+        assert!(state.trading_halted_reason.is_some());
     }
 }

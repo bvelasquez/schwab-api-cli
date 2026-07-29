@@ -645,6 +645,10 @@ pub struct OptionsRegimeConfig {
     /// Omit or null to disable. Independent of `vix_low` (classification only).
     #[serde(default)]
     pub pause_entries_vix_below: Option<f64>,
+    /// Fail-closed: pause new entries when the VIX quote is unavailable.
+    /// Without this, all VIX-based gates silently pass when the quote misses.
+    #[serde(default = "default_pause_on_missing_vix")]
+    pub pause_on_missing_vix: bool,
     /// Lookback days for realized-vol used by `min_iv_rv_ratio` entry gates.
     #[serde(default = "default_realized_vol_lookback")]
     pub realized_vol_lookback: usize,
@@ -655,6 +659,10 @@ pub struct OptionsRegimeConfig {
 
 fn default_realized_vol_lookback() -> usize {
     20
+}
+
+fn default_pause_on_missing_vix() -> bool {
+    true
 }
 
 impl Default for OptionsRegimeConfig {
@@ -674,6 +682,7 @@ impl Default for OptionsRegimeConfig {
             vix_high: 25.0,
             pause_entries_vix_above: 30.0,
             pause_entries_vix_below: None,
+            pause_on_missing_vix: true,
             realized_vol_lookback: default_realized_vol_lookback(),
             strategy_map,
         }

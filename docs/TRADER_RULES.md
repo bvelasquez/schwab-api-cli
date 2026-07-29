@@ -197,6 +197,21 @@ adaptation:
     realized_vol_lookback: 20      # days (default)
     realized_vol_history: 60     # comparison window (default)
     realized_vol_high_percentile: 70.0
+    # Dwell hysteresis: consecutive detections that must agree before the
+    # active profile switches (default 20 ≈ 30 min at a 90s tick; 0 = instant).
+    # Prevents VIX hovering at vix_low from flipping low_vol_trend ↔
+    # elevated_vol (and with it stop/target geometry) several times a day.
+    profile_switch_min_dwell_ticks: 20
+    # Note: a missing VIX quote fails closed → elevated_vol (never
+    # low_vol_trend/neutral full-risk profiles on missing data).
+
+# Backtest fidelity notes (engine behavior, not config):
+# - Daily bars; entries at same-day close; stop checked on bar low, target on
+#   bar high (stop first on both-hit days); no fees/slippage.
+# - Thesis exits (giveback / below-SMA / RS / regime) ARE replayed: intrabar
+#   OCO stop/target first, then thesis on the close; peak profit tracked from
+#   daily highs. Live-only flows (LLM selection, web picks, dynamic watchlist)
+#   are not replayed, so live entry sequences can differ from backtest.
 
   monitor_adjustments:
     enabled: true                  # live only — OCO cancel/replace

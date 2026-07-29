@@ -162,13 +162,46 @@ pub fn apply_regime_profile(state: &mut TraderState, rules: &TraderRules, regime
     if !rules.adaptation.profiles.contains_key(&regime.recommended_profile) {
         return;
     }
-    state.active_profile = Some(regime.recommended_profile.clone());
+    state.last_regime = Some(regime.to_json());
+
+    let recommended = regime.recommended_profile.as_str();
+    if state.active_profile.as_deref() == Some(recommended) {
+        state.regime_profile_pending = None;
+        return;
+    }
+
+    // Dwell hysteresis: require the recommendation to persist across
+    // consecutive detections before switching. Without this, a benchmark/VIX
+    // hovering at a threshold flips profiles (and with them stop/target
+    // geometry and sizing) several times a day.
+    let dwell = rules.adaptation.regime.profile_switch_min_dwell_ticks;
+    if dwell > 0 {
+        let ticks = match state.regime_profile_pending.as_mut() {
+            Some(p) if p.profile == recommended => {
+                p.consecutive_ticks += 1;
+                p.consecutive_ticks
+            }
+            _ => {
+                state.regime_profile_pending =
+                    Some(crate::agent::state::PendingProfileSwitch {
+                        profile: recommended.to_string(),
+                        consecutive_ticks: 1,
+                    });
+                1
+            }
+        };
+        if ticks < dwell {
+            return;
+        }
+        state.regime_profile_pending = None;
+    }
+
+    state.active_profile = Some(recommended.to_string());
     state.active_profile_source = Some("regime".into());
     state.active_profile_reason = Some(format!(
         "regime={} vix={:?} rv_pctile={:.0}",
         regime.class, regime.vix, regime.realized_vol_percentile
     ));
-    state.last_regime = Some(regime.to_json());
 }
 
 pub fn apply_llm_profile_selection(
@@ -365,5 +398,77 @@ mod tests {
         assert!((effective.playbook.exit.profit_target_pct - 10.0).abs() < 0.01);
         assert_eq!(effective.playbook.entry.max_new_entries_per_day, 0);
         assert!((rules.playbook.exit.profit_target_pct - 8.0).abs() < 0.01);
+    }
+
+    fn regime_snapshot(recommended: &str) -> crate::regime::RegimeSnapshot {
+        crate::regime::RegimeSnapshot {
+            class: "elevated_vol".into(),
+            benchmark_symbol: "SPY".into(),
+            vix_symbol: "$VIX".into(),
+            benchmark_last: 100.0,
+            vix: Some(20.0),
+            above_sma_50: true,
+            above_sma_200: true,
+            realized_vol_annualized_pct: 15.0,
+            realized_vol_percentile: 50.0,
+            recommended_profile: recommended.into(),
+            signals: json!({}),
+        }
+    }
+
+    #[test]
+    fn regime_profile_switch_respects_dwell() {
+        let mut rules = sample_rules();
+        rules.adaptation.regime_auto_select = true;
+        rules.adaptation.regime.profile_switch_min_dwell_ticks = 3;
+        rules
+            .adaptation
+            .profiles
+            .insert("elevated_vol".into(), TradingProfile {
+                description: "t".into(),
+                overrides: Default::default(),
+            });
+
+        let mut state = TraderState::default();
+        state.active_profile = Some("baseline".into());
+
+        // Ticks 1-2: recommendation noted but no switch.
+        apply_regime_profile(&mut state, &rules, &regime_snapshot("elevated_vol"));
+        assert_eq!(state.active_profile.as_deref(), Some("baseline"));
+        apply_regime_profile(&mut state, &rules, &regime_snapshot("elevated_vol"));
+        assert_eq!(state.active_profile.as_deref(), Some("baseline"));
+        // Tick 3: dwell satisfied → switch.
+        apply_regime_profile(&mut state, &rules, &regime_snapshot("elevated_vol"));
+        assert_eq!(state.active_profile.as_deref(), Some("elevated_vol"));
+
+        // A single-tick flip to something else must not switch.
+        apply_regime_profile(&mut state, &rules, &regime_snapshot("baseline"));
+        assert_eq!(state.active_profile.as_deref(), Some("elevated_vol"));
+        assert_eq!(
+            state.regime_profile_pending.as_ref().map(|p| p.consecutive_ticks),
+            Some(1)
+        );
+        // Recommending the already-active profile clears the pending switch.
+        apply_regime_profile(&mut state, &rules, &regime_snapshot("elevated_vol"));
+        assert_eq!(state.active_profile.as_deref(), Some("elevated_vol"));
+        assert!(state.regime_profile_pending.is_none());
+    }
+
+    #[test]
+    fn regime_profile_switch_immediate_when_dwell_zero() {
+        let mut rules = sample_rules();
+        rules.adaptation.regime_auto_select = true;
+        rules.adaptation.regime.profile_switch_min_dwell_ticks = 0;
+        rules
+            .adaptation
+            .profiles
+            .insert("elevated_vol".into(), TradingProfile {
+                description: "t".into(),
+                overrides: Default::default(),
+            });
+        let mut state = TraderState::default();
+        state.active_profile = Some("baseline".into());
+        apply_regime_profile(&mut state, &rules, &regime_snapshot("elevated_vol"));
+        assert_eq!(state.active_profile.as_deref(), Some("elevated_vol"));
     }
 }

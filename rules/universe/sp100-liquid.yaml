@@ -42,3 +42,18 @@ symbols:
   - XLE
   - XLV
   - XLI
+  # Defensive ballast (added 2026-07-28): gives the weekly screen somewhere to
+  # rotate in risk-off/chop tapes, when growth/semis fail the SMA20/50 trend
+  # gates. Utilities, staples, gold, low-vol — the sectors that historically
+  # hold uptrends while SPY is below its 50DMA.
+  - XLU
+  - NEE
+  - SO
+  - DUK
+  - XLP
+  - PG
+  - KO
+  - PEP
+  - GLD
+  - NEM
+  - USMV

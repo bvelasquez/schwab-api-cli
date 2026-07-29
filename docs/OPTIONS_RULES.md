@@ -209,12 +209,19 @@ When `regime.enabled: true`, the agent classifies SPY trend + VIX and scans **on
 |--------|-------------|
 | `low_vol_trend` / `elevated_vol` / `neutral` | `put_credit` |
 | `bearish_trend` (below SMA50 and SMA200) | `call_credit` |
-| `high_vol_chop` | `iron_condor` |
+| `high_vol_chop` (incl. below SMA50 but above SMA200, any VIX) | `iron_condor` |
 | `hostile` or VIX ≥ `pause_entries_vix_above` | pause new entries |
 | VIX ≤ `pause_entries_vix_below` (when set) | pause new entries |
+| VIX quote missing, `pause_on_missing_vix: true` (default) | pause new entries |
+
+Below the 50DMA never classifies as `neutral` — soft tape maps to
+`high_vol_chop`/`bearish_trend` regardless of how calm VIX looks, so the agent
+never sells put credits into a downtrend because "POP looks high."
 
 `vix_low` / `vix_high` only **classify** regimes. Entry pauses use the explicit
 `pause_entries_vix_above` / `pause_entries_vix_below` knobs (floor is optional).
+Set `pause_on_missing_vix: false` to restore the legacy fail-open behavior when
+the VIX quote is unavailable.
 
 Requires `strategies.iron_condor.enabled: true` for condor regimes. Vertical call credits use the same delta/width rules as puts.
 

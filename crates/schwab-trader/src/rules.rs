@@ -81,6 +81,12 @@ pub struct RegimeConfig {
     pub realized_vol_lookback: usize,
     pub realized_vol_history: usize,
     pub realized_vol_high_percentile: f64,
+    /// Consecutive regime detections that must agree before the active profile
+    /// switches. Hysteresis against VIX hovering near a threshold (e.g. VIX
+    /// oscillating around vix_low flipping low_vol_trend ↔ elevated_vol several
+    /// times a day, which also flips stop/target geometry mid-trade).
+    /// 20 ticks ≈ 30 min at a 90s tick interval. 0 = switch immediately.
+    pub profile_switch_min_dwell_ticks: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,6 +281,11 @@ pub struct PositionSizeConfig {
 pub struct ProfitGivebackExit {
     pub peak_profit_min_pct: f64,
     pub exit_if_below_pct: f64,
+    /// Optional fraction-of-peak floor: exit when profit falls below
+    /// max(exit_if_below_pct, peak × peak_fraction). Locks in more of a big
+    /// run while keeping the fixed floor for small ones. None = fixed floor.
+    #[serde(default)]
+    pub peak_fraction: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -313,6 +324,12 @@ pub struct ExitConfig {
     /// Cap profit target at `atr_multiple × ATR%` when enabled (uses min with profit_target_pct).
     pub profit_target_atr_cap: ProfitTargetAtrCapConfig,
     pub stop_loss_pct: f64,
+    /// Cap stop distance at `atr_multiple × ATR%` when enabled (uses min with
+    /// stop_loss_pct). Lets low-vol names (utilities/staples) trade with a
+    /// noise-scaled stop instead of a tech-calibrated fixed %, which keeps the
+    /// min_reward_risk gate self-consistent across vol regimes.
+    #[serde(default)]
+    pub stop_loss_atr_cap: StopLossAtrCapConfig,
     pub use_oco_at_entry: bool,
     pub trailing: TrailingConfig,
     pub time_stop_days: u32,
@@ -332,10 +349,29 @@ pub struct ProfitTargetAtrCapConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
+pub struct StopLossAtrCapConfig {
+    pub enabled: bool,
+    /// Effective stop % = min(stop_loss_pct, atr_multiple × daily ATR%).
+    /// Keep atr_multiple ≥ filters.min_stop_atr_multiple so the noise floor
+    /// and the cap cannot contradict each other.
+    pub atr_multiple: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TrailingConfig {
     pub enabled: bool,
     pub activate_after_profit_pct: f64,
     pub trail_atr_multiple: f64,
+    /// Once peak profit reaches this %, ratchet the stop to at least
+    /// breakeven (entry × (1 + breakeven_buffer_pct/100)). Closes the gap
+    /// where a +2–5% winner could round-trip to a full stop-loss because the
+    /// ATR trail still sat below entry. None = disabled.
+    #[serde(default)]
+    pub breakeven_after_profit_pct: Option<f64>,
+    /// Buffer above entry for the breakeven floor (covers fees/slippage).
+    #[serde(default)]
+    pub breakeven_buffer_pct: f64,
 }
 
 /// Correlated symbols — cap concurrent open positions per group.
@@ -750,12 +786,22 @@ impl Default for ProfitTargetAtrCapConfig {
     }
 }
 
+impl Default for StopLossAtrCapConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            atr_multiple: 2.0,
+        }
+    }
+}
+
 impl Default for ExitConfig {
     fn default() -> Self {
         Self {
             profit_target_pct: 8.0,
             profit_target_atr_cap: ProfitTargetAtrCapConfig::default(),
             stop_loss_pct: 4.0,
+            stop_loss_atr_cap: StopLossAtrCapConfig::default(),
             use_oco_at_entry: true,
             trailing: TrailingConfig::default(),
             time_stop_days: 30,
@@ -772,6 +818,8 @@ impl Default for TrailingConfig {
             enabled: true,
             activate_after_profit_pct: 5.0,
             trail_atr_multiple: 2.0,
+            breakeven_after_profit_pct: None,
+            breakeven_buffer_pct: 0.1,
         }
     }
 }
@@ -993,6 +1041,7 @@ impl Default for RegimeConfig {
             realized_vol_lookback: 20,
             realized_vol_history: 60,
             realized_vol_high_percentile: 70.0,
+            profile_switch_min_dwell_ticks: 20,
         }
     }
 }

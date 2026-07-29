@@ -279,7 +279,9 @@ pub fn passes_entry_filters(
     }
 
     if let Some(min_rr) = rules.playbook.filters.min_reward_risk.filter(|v| *v > 0.0) {
-        let stop_pct = rules.playbook.exit.stop_loss_pct;
+        // Use the stop the position would actually get (ATR-capped when
+        // configured) so the R:R gate is consistent with live brackets.
+        let stop_pct = crate::capital::effective_stop_loss_pct(snap.last, rules, snap.atr_14);
         if stop_pct <= 0.0 {
             return Some("stop_loss_pct must be > 0 for min_reward_risk".into());
         }
@@ -299,7 +301,7 @@ pub fn passes_entry_filters(
         .min_stop_atr_multiple
         .filter(|v| *v > 0.0)
     {
-        let stop_pct = rules.playbook.exit.stop_loss_pct;
+        let stop_pct = crate::capital::effective_stop_loss_pct(snap.last, rules, snap.atr_14);
         match snap.atr_14 {
             Some(atr) if atr > 0.0 && snap.last > 0.0 => {
                 let atr_pct = (atr / snap.last) * 100.0;
