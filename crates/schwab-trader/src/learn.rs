@@ -281,6 +281,27 @@ fn write_path(rules: &mut TraderRules, path: &str, value: &Value) -> Result<()> 
     Ok(())
 }
 
+/// Built-in safety rails for LLM-adaptable numeric paths. These clamp even
+/// when `llm.adaptation_bounds` is not configured (default: empty) — without
+/// them a sim/backtest auto-apply could set stop_loss_pct: 0.5 or
+/// profit_target_pct: 200 unchallenged.
+fn safety_rail(key: &str) -> (f64, f64) {
+    match key {
+        "profit_target_pct" => (2.0, 20.0),
+        "stop_loss_pct" => (1.5, 10.0),
+        "trail_atr_multiple" => (1.0, 4.0),
+        "activate_after_profit_pct" => (1.0, 10.0),
+        "time_stop_days" => (3.0, 60.0),
+        "time_stop_minutes" => (0.0, 240.0),
+        "max_new_entries_per_day" => (0.0, 5.0),
+        "risk_per_trade_pct" => (0.1, 2.0),
+        "min_relative_volume" => (0.5, 5.0),
+        "momentum_rsi_min" => (40.0, 70.0),
+        "rsi_14_range" => (30.0, 80.0),
+        _ => (f64::NEG_INFINITY, f64::INFINITY),
+    }
+}
+
 fn bound_value(
     rules: &TraderRules,
     path: &str,
@@ -330,6 +351,10 @@ fn bound_value(
             if let Some(v) = b.get("max_high").and_then(|x| x.as_f64()) {
                 high = high.min(v);
             }
+        } else {
+            // No configured bounds — apply built-in safety rails.
+            low = low.clamp(30.0, 60.0);
+            high = high.clamp(55.0, 80.0);
         }
         anyhow::ensure!(low < high, "rsi low must be < high");
         return Ok(json!([low, high]));
@@ -341,15 +366,16 @@ fn bound_value(
     {
         let new = proposed.as_u64().context("integer patch value")? as f64;
         let cur = current.as_u64().map(|v| v as f64).unwrap_or(new);
+        let (rail_min, rail_max) = safety_rail(bounds_key.unwrap_or(""));
         let bounds = bounds_key.and_then(|k| rules.llm.adaptation_bounds.get(k));
         let min = bounds
             .and_then(|b| b.get("min"))
             .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
+            .unwrap_or(rail_min);
         let max = bounds
             .and_then(|b| b.get("max"))
             .and_then(|v| v.as_f64())
-            .unwrap_or(new);
+            .unwrap_or(rail_max);
         let mut v = new.clamp(min, max);
         if let Some(delta) = bounds
             .and_then(|b| b.get("max_delta_per_change"))
@@ -367,14 +393,15 @@ fn bound_value(
         return Ok(json!(new));
     };
     let bounds = rules.llm.adaptation_bounds.get(key);
+    let (rail_min, rail_max) = safety_rail(key);
     let min = bounds
         .and_then(|b| b.get("min"))
         .and_then(|v| v.as_f64())
-        .unwrap_or(new);
+        .unwrap_or(rail_min);
     let max = bounds
         .and_then(|b| b.get("max"))
         .and_then(|v| v.as_f64())
-        .unwrap_or(new);
+        .unwrap_or(rail_max);
     let mut v = new.clamp(min, max);
     if let Some(delta) = bounds
         .and_then(|b| b.get("max_delta_per_change"))
@@ -469,6 +496,49 @@ mod tests {
         .unwrap();
         assert_eq!(applied.len(), 1);
         assert!((rules.playbook.exit.profit_target_pct - 9.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn safety_rails_clamp_when_no_bounds_configured() {
+        // Default rules: llm.adaptation_bounds is empty — before rails, any
+        // proposal passed through unclamped.
+        let rules = TraderRules::default();
+        let v = bound_value(
+            &rules,
+            "playbook.exit.stop_loss_pct",
+            &json!(0.5),
+            &json!(4.0),
+        )
+        .unwrap();
+        assert_eq!(v.as_f64().unwrap(), 1.5, "stop floor rail");
+
+        let v = bound_value(
+            &rules,
+            "playbook.exit.profit_target_pct",
+            &json!(200.0),
+            &json!(8.0),
+        )
+        .unwrap();
+        assert_eq!(v.as_f64().unwrap(), 20.0, "target ceiling rail");
+
+        let v = bound_value(
+            &rules,
+            "playbook.entry.max_new_entries_per_day",
+            &json!(99),
+            &json!(2),
+        )
+        .unwrap();
+        assert_eq!(v.as_u64().unwrap(), 5, "entries ceiling rail");
+
+        // In-range proposals pass through untouched.
+        let v = bound_value(
+            &rules,
+            "playbook.exit.stop_loss_pct",
+            &json!(4.5),
+            &json!(4.0),
+        )
+        .unwrap();
+        assert_eq!(v.as_f64().unwrap(), 4.5);
     }
 
     #[test]

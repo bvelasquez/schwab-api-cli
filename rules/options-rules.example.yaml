@@ -72,19 +72,37 @@ entry_rules:
 
 exit_rules:
   profit_target_pct: 50
-  stop_loss_pct: 200
+  # stop_loss_pct is a MARK MULTIPLE: 250 = stop at debit_to_close ≥ 2.5× credit
+  # (−150% of credit). Do not tighten below ~200: backtests show tighter stops
+  # convert recoverable mark drawdowns into realized losses at these deltas.
+  stop_loss_pct: 250
   dte_close: 21
-  # Defensive roll on mechanical stop (verticals only). Off by default —
-  # enable after a --simulate soak. Successful rolls skip stop-loss re-entry cooldown.
-  # roll:
-  #   enabled: false
-  #   min_dte_remaining: 21
-  #   min_short_otm_pct: 0.5
-  #   min_dte_extension: 7
-  #   target_short_delta_max: 0.12
-  #   max_debit_pct_of_entry_credit: 25
-  #   max_rolls_per_position: 1
-  #   max_rolls_per_day: 1
+  thesis:
+    enabled: true
+    # Let the protective order / overnight settle before thesis can fire.
+    min_hold_minutes: 30
+    # Exit early when the short is threatened — at ~3.5% OTM the close debit is
+    # roughly half what a 2% OTM exit costs. This is the big loss-size lever.
+    min_short_otm_pct: 3.0
+    # Bank partial wins that never reach the 50% target.
+    profit_giveback:
+      peak_profit_min_pct: 40
+      exit_if_below_pct: 10
+    # Don't re-sell the same name immediately after a thesis exit.
+    redeploy_cooldown_minutes: 240
+  # Defensive roll on mechanical stop (verticals only). Stop-triggered only —
+  # do NOT wire to thesis exits; the money check correctly refuses rolls when
+  # the short is already being run over. Soak with --simulate before trusting.
+  # Successful rolls skip stop-loss re-entry cooldown.
+  roll:
+    enabled: true
+    min_dte_remaining: 21
+    min_short_otm_pct: 0.5
+    min_dte_extension: 7
+    target_short_delta_max: 0.12
+    max_debit_pct_of_entry_credit: 25
+    max_rolls_per_position: 1
+    max_rolls_per_day: 1
 
 risk:
   max_portfolio_risk_usd: 10000
@@ -95,10 +113,11 @@ risk:
     - SPY
     - QQQ
     - IWM
-  # correlation_groups:
-  #   - name: broad_market
-  #     symbols: [SPY, QQQ, IWM]
-  #     max_open: 1
+  # SPY/QQQ/IWM put credits are effectively one position — cap the group.
+  correlation_groups:
+    - name: broad_market
+      symbols: [SPY, QQQ, IWM]
+      max_open: 1
   # max_drawdown_halt_pct: 15.0
   # drawdown_sleeve_usd: 4000
   re_entry_after_stop_loss:
@@ -112,23 +131,26 @@ risk:
   #     lead_days: 1
   #     label: FOMC
 
-# Optional: map market regime → put_credit | call_credit | iron_condor | pause
-# regime:
-#   enabled: true
-#   benchmark_symbol: SPY
-#   vix_symbol: $VIX
-#   vix_low: 14.0
-#   vix_high: 25.0
-#   pause_entries_vix_below: 14.0
-#   pause_entries_vix_above: 30.0
-#   realized_vol_lookback: 20
-#   strategy_map:
-#     low_vol_trend: put_credit
-#     elevated_vol: put_credit
-#     high_vol_chop: iron_condor
-#     bearish_trend: call_credit
-#     hostile: pause
-#     neutral: put_credit
+# Map market regime → put_credit | call_credit | iron_condor | pause.
+# Below the 50DMA now classifies as high_vol_chop (never Neutral → put_credit),
+# and a missing VIX quote pauses entries (fail-closed) unless you opt out.
+regime:
+  enabled: true
+  benchmark_symbol: SPY
+  vix_symbol: $VIX
+  vix_low: 14.0
+  vix_high: 25.0
+  pause_entries_vix_below: 14.0
+  pause_entries_vix_above: 30.0
+  pause_on_missing_vix: true
+  realized_vol_lookback: 20
+  strategy_map:
+    low_vol_trend: put_credit
+    elevated_vol: put_credit
+    high_vol_chop: iron_condor
+    bearish_trend: call_credit
+    hostile: pause
+    neutral: put_credit   # only reachable above the 50DMA now
 
 execution:
   order_type: limit

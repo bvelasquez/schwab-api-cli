@@ -10,7 +10,6 @@ use schwab_api::TraderApi;
 use serde_json::{json, Value};
 
 use crate::agent::state::{save_state, SwingPosition, TraderState};
-use crate::capital::exit_prices;
 use crate::config::TraderRuntime;
 use crate::journal;
 use crate::market_ctx::MarketCtx;
@@ -166,7 +165,9 @@ pub async fn process_closure_exits(
         };
 
         if let Some(p) = state.open_positions.get_mut(&pos_id) {
-            p.market_value_usd = p.quantity * last.max(pos.entry_price);
+            // True mark-to-market — flooring at entry price hides unrealized
+            // losses from sleeve equity, drawdown, and cap accounting.
+            p.market_value_usd = p.quantity * last.max(0.0);
             crate::thesis_exit::update_peak_profit_pct(p, last);
         }
 
@@ -275,6 +276,55 @@ async fn process_oco_status_exits(
     Ok(exits)
 }
 
+/// Breakeven floor stop for a position whose peak profit reached the
+/// configured threshold: entry × (1 + buffer). Applies regardless of the ATR
+/// trail — a proven winner should not become a loser.
+pub fn breakeven_floor_stop(
+    rules: &TraderRules,
+    pos: &SwingPosition,
+    current_profit_pct: f64,
+) -> Option<f64> {
+    let threshold = rules.playbook.exit.trailing.breakeven_after_profit_pct?;
+    if pos.entry_price <= 0.0 {
+        return None;
+    }
+    let peak = pos
+        .peak_profit_pct
+        .unwrap_or(current_profit_pct)
+        .max(current_profit_pct);
+    if peak < threshold {
+        return None;
+    }
+    let buffer = rules.playbook.exit.trailing.breakeven_buffer_pct.max(0.0);
+    Some(pos.entry_price * (1.0 + buffer / 100.0))
+}
+
+/// Combined trailing candidate: the higher of the ATR trail (when activated
+/// and ATR available) and the breakeven floor (when peak reached threshold).
+pub fn trailing_stop_candidate(
+    rules: &TraderRules,
+    pos: &SwingPosition,
+    last: f64,
+    atr_14: Option<f64>,
+) -> Option<f64> {
+    if pos.entry_price <= 0.0 || last <= 0.0 {
+        return None;
+    }
+    let profit_pct = ((last - pos.entry_price) / pos.entry_price) * 100.0;
+    let mut candidate: Option<f64> = None;
+
+    let trailing = &rules.playbook.exit.trailing;
+    if profit_pct >= trailing.activate_after_profit_pct {
+        if let Some(atr) = atr_14.filter(|a| *a > 0.0) {
+            candidate = Some(last - trailing.trail_atr_multiple * atr);
+        }
+    }
+    if let Some(floor) = breakeven_floor_stop(rules, pos, profit_pct) {
+        candidate = Some(candidate.map_or(floor, |c| c.max(floor)));
+    }
+    candidate
+}
+
 async fn process_trailing_stops(
     runtime: &TraderRuntime,
     rules_path: &Path,
@@ -302,27 +352,19 @@ async fn process_trailing_stops(
 
         let snap = fetch_technical_snapshot(market, rules, &pos.symbol).await?;
         let last = snap.last;
-        if last <= 0.0 || pos.entry_price <= 0.0 {
-            continue;
-        }
 
-        let profit_pct = ((last - pos.entry_price) / pos.entry_price) * 100.0;
-        if profit_pct < rules.playbook.exit.trailing.activate_after_profit_pct {
+        let Some(new_stop) = trailing_stop_candidate(rules, &pos, last, snap.atr_14) else {
             continue;
-        }
-
-        let atr = snap.atr_14.unwrap_or(0.0);
-        if atr <= 0.0 {
-            continue;
-        }
-
-        let trail = rules.playbook.exit.trailing.trail_atr_multiple;
-        let new_stop = last - trail * atr;
+        };
         if new_stop <= pos.stop_price {
             continue;
         }
+        let profit_pct = ((last - pos.entry_price) / pos.entry_price) * 100.0;
 
-        let (_, _, stop_limit) = exit_prices(pos.entry_price, rules, None);
+        // Stop-limit tracks the NEW trailing stop. Clamping to the original
+        // entry stop-limit (an old .min() here) pinned the limit far below a
+        // ratcheted-up stop, silently degrading the trailing stop to
+        // stop-market in a gap-down.
         let new_stop_limit = new_stop * 0.995;
 
         let bracket = replace_oco_bracket(
@@ -334,7 +376,7 @@ async fn process_trailing_stops(
             pos.quantity,
             pos.profit_limit,
             new_stop,
-            new_stop_limit.min(stop_limit),
+            new_stop_limit,
             &rules.execution.oco_duration,
         )
         .await?;
@@ -458,6 +500,18 @@ async fn flatten_live_position(
         },
     )
     .await?;
+
+    // Never report a flatten as filled when the sell did not complete.
+    // Callers remove the position from state + journal exit_filled on Ok —
+    // doing that on an unfilled sell abandons a naked live position (its OCO
+    // was already cancelled above) with a fabricated exit price.
+    if !wait.met {
+        anyhow::bail!(
+            "flatten sell for {} not filled (status: {}) — position kept in state; bracket recovery will re-protect it",
+            pos.symbol,
+            wait.final_status.unwrap_or_else(|| "unknown".into())
+        );
+    }
 
     let fill_price = wait
         .order
@@ -584,6 +638,49 @@ pub async fn flatten_all_live_positions(
 mod tests {
     use super::*;
     use chrono::Utc;
+
+    #[test]
+    fn breakeven_floor_and_trail_combine() {
+        let mut rules = TraderRules::default();
+        rules.playbook.exit.trailing.enabled = true;
+        rules.playbook.exit.trailing.activate_after_profit_pct = 4.0;
+        rules.playbook.exit.trailing.trail_atr_multiple = 2.0;
+        rules.playbook.exit.trailing.breakeven_after_profit_pct = Some(2.5);
+        rules.playbook.exit.trailing.breakeven_buffer_pct = 0.1;
+
+        let mut pos = SwingPosition {
+            position_id: "P".into(),
+            symbol: "X".into(),
+            account_hash: "h".into(),
+            quantity: 1.0,
+            entry_price: 100.0,
+            opened_at: Utc::now(),
+            stop_price: 95.0,
+            profit_limit: 108.0,
+            stop_risk_usd: 5.0,
+            market_value_usd: 100.0,
+            oco_order_id: None,
+            exit_plan_version: 1,
+            peak_profit_pct: None,
+            entry_rs_vs_benchmark_30d: None,
+        };
+
+        // Below activation AND below breakeven threshold → no candidate.
+        assert_eq!(trailing_stop_candidate(&rules, &pos, 102.0, Some(2.0)), None);
+
+        // Peak ≥ 2.5% → breakeven floor 100.1 even without ATR / below trail activation.
+        pos.peak_profit_pct = Some(2.6);
+        let c = trailing_stop_candidate(&rules, &pos, 102.0, None).unwrap();
+        assert!((c - 100.1).abs() < 0.01);
+
+        // Activated trail (105 − 2×2 = 101) beats the breakeven floor.
+        let c = trailing_stop_candidate(&rules, &pos, 105.0, Some(2.0)).unwrap();
+        assert!((c - 101.0).abs() < 0.01);
+
+        // Weak trail (104 − 2×3 = 98) loses to the breakeven floor.
+        let c = trailing_stop_candidate(&rules, &pos, 104.0, Some(3.0)).unwrap();
+        assert!((c - 100.1).abs() < 0.01);
+    }
 
     #[test]
     fn manual_exit_reasons_are_time_based() {

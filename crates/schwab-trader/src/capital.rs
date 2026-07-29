@@ -242,6 +242,21 @@ pub fn effective_profit_target_pct(
     base.min(cap.atr_multiple * atr_pct)
 }
 
+/// Effective stop distance % = min(stop_loss_pct, cap multiple × ATR%) when
+/// stop_loss_atr_cap is enabled; otherwise the fixed stop_loss_pct.
+pub fn effective_stop_loss_pct(entry_price: f64, rules: &TraderRules, atr_14: Option<f64>) -> f64 {
+    let base = rules.playbook.exit.stop_loss_pct;
+    let cap = &rules.playbook.exit.stop_loss_atr_cap;
+    if !cap.enabled {
+        return base;
+    }
+    let Some(atr) = atr_14.filter(|a| *a > 0.0 && entry_price > 0.0) else {
+        return base;
+    };
+    let atr_pct = (atr / entry_price) * 100.0;
+    base.min(cap.atr_multiple * atr_pct)
+}
+
 pub fn exit_prices(
     entry_price: f64,
     rules: &TraderRules,
@@ -249,7 +264,8 @@ pub fn exit_prices(
 ) -> (f64, f64, f64) {
     let profit_pct = effective_profit_target_pct(entry_price, rules, atr_14);
     let profit = entry_price * (1.0 + profit_pct / 100.0);
-    let stop = entry_price * (1.0 - rules.playbook.exit.stop_loss_pct / 100.0);
+    let stop_pct = effective_stop_loss_pct(entry_price, rules, atr_14);
+    let stop = entry_price * (1.0 - stop_pct / 100.0);
     let stop_limit = stop * 0.995;
     (profit, stop, stop_limit)
 }
@@ -292,6 +308,36 @@ mod tests {
         let (profit, stop, _) = exit_prices(100.0, &rules, None);
         assert!((profit - 108.0).abs() < 0.01);
         assert!((stop - 96.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn exit_prices_stop_atr_cap_tightens_low_vol_stop() {
+        let mut rules = TraderRules {
+            version: 1,
+            trader_id: "t".into(),
+            accounts: vec![],
+            ..TraderRules::default()
+        };
+        rules.playbook.exit.stop_loss_pct = 5.0;
+        rules.playbook.exit.stop_loss_atr_cap.enabled = true;
+        rules.playbook.exit.stop_loss_atr_cap.atr_multiple = 2.0;
+
+        // Low-vol name: ATR 1.5% → stop capped at 3.0% (not the fixed 5%).
+        let (_, stop, _) = exit_prices(100.0, &rules, Some(1.5));
+        assert!((stop - 97.0).abs() < 0.01);
+
+        // High-vol name: ATR 5% → 2.0×ATR = 10% > fixed 5% → fixed wins.
+        let (_, stop, _) = exit_prices(100.0, &rules, Some(5.0));
+        assert!((stop - 95.0).abs() < 0.01);
+
+        // Missing ATR → fixed fallback.
+        let (_, stop, _) = exit_prices(100.0, &rules, None);
+        assert!((stop - 95.0).abs() < 0.01);
+
+        // Disabled → fixed.
+        rules.playbook.exit.stop_loss_atr_cap.enabled = false;
+        let (_, stop, _) = exit_prices(100.0, &rules, Some(1.5));
+        assert!((stop - 95.0).abs() < 0.01);
     }
 
     #[test]

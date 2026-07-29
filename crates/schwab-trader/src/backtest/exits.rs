@@ -47,21 +47,18 @@ pub async fn process_backtest_trailing(
     for pos in positions {
         let snap = fetch_technical_snapshot(market, rules, &pos.symbol).await?;
         let last = snap.last;
-        if last <= 0.0 || pos.entry_price <= 0.0 {
+        if pos.entry_price <= 0.0 {
             continue;
         }
-        let profit_pct = ((last - pos.entry_price) / pos.entry_price) * 100.0;
-        if profit_pct < rules.playbook.exit.trailing.activate_after_profit_pct {
+        let Some(new_stop) =
+            crate::closure::trailing_stop_candidate(rules, &pos, last, snap.atr_14)
+        else {
             continue;
-        }
-        let atr = snap.atr_14.unwrap_or(0.0);
-        if atr <= 0.0 {
-            continue;
-        }
-        let new_stop = last - rules.playbook.exit.trailing.trail_atr_multiple * atr;
+        };
         if new_stop <= pos.stop_price {
             continue;
         }
+        let profit_pct = ((last - pos.entry_price) / pos.entry_price) * 100.0;
         let old_stop = pos.stop_price;
         if let Some(p) = state.open_positions.get_mut(&pos.position_id) {
             p.stop_price = new_stop;
@@ -121,9 +118,35 @@ pub async fn process_backtest_exits(
 
         if let Some(p) = state.open_positions.get_mut(&pos.position_id) {
             p.market_value_usd = p.quantity * bar.close;
+            // Track peak from the day's high so giveback/SMA thesis exits can
+            // fire (live updates peak from every tick; the high approximates).
+            crate::thesis_exit::update_peak_profit_pct(p, bar.high.max(bar.close));
         }
 
-        let Some(reason) = exit_reason_for_bar(rules, &pos, &bar, now) else {
+        // Thesis exits now evaluated (they were previously absent from
+        // backtests, silently inflating both wins and losses vs live).
+        // Ordering: intrabar OCO stop/target first — those are broker bracket
+        // fills at known prices — then thesis on the close.
+        let pos = state
+            .open_positions
+            .get(&pos.position_id)
+            .cloned()
+            .unwrap_or(pos);
+        let thesis_reason = match fetch_technical_snapshot(market, rules, &pos.symbol).await {
+            Ok(snap) => crate::thesis_exit::thesis_exit_reason(
+                rules,
+                &pos,
+                bar.close,
+                &snap,
+                regime_class.as_deref(),
+            ),
+            Err(err) => {
+                tracing::debug!(symbol = %pos.symbol, "backtest thesis snapshot failed: {err}");
+                None
+            }
+        };
+
+        let Some(reason) = exit_reason_for_bar(rules, &pos, &bar, now).or(thesis_reason) else {
             continue;
         };
 

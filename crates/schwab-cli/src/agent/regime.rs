@@ -62,6 +62,21 @@ impl OptionsRegimeSnapshot {
     }
 }
 
+/// Entry pause decision: hostile class, VIX outside pause bands, or (fail-closed)
+/// a missing VIX quote when `pause_on_missing_vix` is set.
+pub fn regime_pause_entries(
+    cfg: &OptionsRegimeConfig,
+    class: OptionsRegimeClass,
+    vix: Option<f64>,
+) -> bool {
+    class == OptionsRegimeClass::Hostile
+        || vix.is_some_and(|v| v >= cfg.pause_entries_vix_above)
+        || cfg
+            .pause_entries_vix_below
+            .is_some_and(|floor| vix.is_some_and(|v| v <= floor))
+        || (cfg.pause_on_missing_vix && vix.is_none())
+}
+
 pub async fn detect_options_regime(
     market: &MarketDataApi,
     cfg: &OptionsRegimeConfig,
@@ -75,11 +90,7 @@ pub async fn detect_options_regime(
     let vix = fetch_vix(market, &cfg.vix_symbol).await.ok();
 
     let class = classify_options_regime(cfg, vix, above_sma_50, above_sma_200);
-    let pause_entries = class == OptionsRegimeClass::Hostile
-        || vix.is_some_and(|v| v >= cfg.pause_entries_vix_above)
-        || cfg
-            .pause_entries_vix_below
-            .is_some_and(|floor| vix.is_some_and(|v| v <= floor));
+    let pause_entries = regime_pause_entries(cfg, class, vix);
     let preferred = preferred_strategy(cfg, class);
 
     Ok(OptionsRegimeSnapshot {
@@ -114,8 +125,13 @@ pub fn classify_options_regime(
     if !above_sma_50 && !above_sma_200 {
         return OptionsRegimeClass::BearishTrend;
     }
+    // Below the 50DMA (but above the 200) is a soft tape regardless of how calm
+    // VIX looks — never let this fall through to Neutral → put_credit.
+    if !above_sma_50 {
+        return OptionsRegimeClass::HighVolChop;
+    }
     let high_vix = vix.is_some_and(|v| v >= cfg.vix_high);
-    if high_vix || (!above_sma_50 && vix.is_some_and(|v| v > cfg.vix_low)) {
+    if high_vix {
         return OptionsRegimeClass::HighVolChop;
     }
     if vix.is_some_and(|v| v > cfg.vix_low && v < cfg.vix_high) {
@@ -231,6 +247,41 @@ mod tests {
             classify_options_regime(&cfg, Some(18.0), false, false),
             OptionsRegimeClass::BearishTrend
         );
+    }
+
+    #[test]
+    fn below_50dma_is_chop_even_with_calm_vix() {
+        // Regression: soft tape + low VIX used to fall through to Neutral → put_credit.
+        let cfg = OptionsRegimeConfig::default();
+        assert_eq!(
+            classify_options_regime(&cfg, Some(13.0), false, true),
+            OptionsRegimeClass::HighVolChop
+        );
+    }
+
+    #[test]
+    fn neutral_only_when_above_50dma() {
+        let cfg = OptionsRegimeConfig::default();
+        // Above both SMAs but VIX quote missing → Neutral (pause handles entries).
+        assert_eq!(
+            classify_options_regime(&cfg, None, true, true),
+            OptionsRegimeClass::Neutral
+        );
+    }
+
+    #[test]
+    fn pauses_when_vix_missing_and_fail_closed() {
+        let cfg = OptionsRegimeConfig::default(); // pause_on_missing_vix: true
+        assert!(regime_pause_entries(&cfg, OptionsRegimeClass::Neutral, None));
+        let mut open = cfg.clone();
+        open.pause_on_missing_vix = false;
+        assert!(!regime_pause_entries(
+            &open,
+            OptionsRegimeClass::LowVolTrend,
+            None
+        ));
+        // Bands still apply when the quote is present.
+        assert!(regime_pause_entries(&open, OptionsRegimeClass::Hostile, Some(31.0)));
     }
 
     #[test]

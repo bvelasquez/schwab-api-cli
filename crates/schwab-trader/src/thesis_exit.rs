@@ -33,7 +33,13 @@ pub fn thesis_exit_reason(
     let peak = pos.peak_profit_pct.unwrap_or(profit_pct);
 
     if let Some(gb) = &thesis.profit_giveback {
-        if peak >= gb.peak_profit_min_pct && profit_pct < gb.exit_if_below_pct {
+        // Fraction-of-peak floor (when configured) locks in proportionally
+        // more of a bigger run; the fixed pct is the absolute floor.
+        let floor = match gb.peak_fraction {
+            Some(f) if f > 0.0 => gb.exit_if_below_pct.max(peak * f),
+            _ => gb.exit_if_below_pct,
+        };
+        if peak >= gb.peak_profit_min_pct && profit_pct < floor {
             return Some("thesis_profit_giveback");
         }
     }
@@ -113,6 +119,7 @@ mod tests {
         rules.playbook.exit.thesis.profit_giveback = Some(crate::rules::ProfitGivebackExit {
             peak_profit_min_pct: 6.0,
             exit_if_below_pct: 2.0,
+            peak_fraction: None,
         });
         rules
     }
@@ -146,6 +153,54 @@ mod tests {
         };
         assert_eq!(
             thesis_exit_reason(&rules, &pos, 101.5, &snap, None),
+            Some("thesis_profit_giveback")
+        );
+    }
+
+    #[test]
+    fn giveback_peak_fraction_locks_more_of_big_runs() {
+        let mut rules = rules_with_thesis();
+        rules.playbook.exit.thesis.profit_giveback = Some(crate::rules::ProfitGivebackExit {
+            peak_profit_min_pct: 4.0,
+            exit_if_below_pct: 2.0,
+            peak_fraction: Some(0.5),
+        });
+        let snap = TechnicalSnapshot {
+            symbol: "AAPL".into(),
+            last: 0.0,
+            bid: None,
+            ask: None,
+            spread_pct: None,
+            sma_9: None,
+            sma_20: None,
+            sma_50: None,
+            rsi_14: None,
+            atr_14: None,
+            volume_sma_20: None,
+            relative_volume: None,
+            above_sma_9: None,
+            above_sma_20: None,
+            above_sma_50: None,
+            intraday: false,
+            history_features: None,
+            last_earnings_date: None,
+            estimated_next_earnings: None,
+            days_until_estimated_earnings: None,
+            earnings_estimate_confidence: None,
+        };
+        let mut pos = sample_pos();
+        pos.peak_profit_pct = Some(8.0);
+        // Floor = max(2%, 8% × 0.5) = 4% → 3.5% current exits…
+        assert_eq!(
+            thesis_exit_reason(&rules, &pos, 103.5, &snap, None),
+            Some("thesis_profit_giveback")
+        );
+        // …while 4.5% current holds.
+        assert_eq!(thesis_exit_reason(&rules, &pos, 104.5, &snap, None), None);
+        // Small peak (5%): floor = max(2%, 2.5%) = 2.5% → 2.2% exits.
+        pos.peak_profit_pct = Some(5.0);
+        assert_eq!(
+            thesis_exit_reason(&rules, &pos, 102.2, &snap, None),
             Some("thesis_profit_giveback")
         );
     }

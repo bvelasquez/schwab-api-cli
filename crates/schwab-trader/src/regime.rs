@@ -131,6 +131,13 @@ pub fn classify_regime(
     if high_realized || vix.is_some_and(|v| v > cfg.vix_low && v < cfg.vix_high) {
         return RegimeClass::ElevatedVol;
     }
+    // Fail closed when the VIX quote is unavailable: without it, VIX-based
+    // branches above silently no-op and calm conditions would fall through to
+    // low_vol_trend/neutral (full-risk profiles). Treat missing VIX as at
+    // least elevated so sizing/entries stay defensive until quotes recover.
+    if vix.is_none() {
+        return RegimeClass::ElevatedVol;
+    }
     if low_vix && above_sma_50 && above_sma_200 {
         return RegimeClass::LowVolTrend;
     }
@@ -234,5 +241,20 @@ mod tests {
         let cfg = RegimeConfig::default();
         let class = classify_regime(&cfg, Some(18.0), false, false, 80.0);
         assert_eq!(class, RegimeClass::HighVolChop);
+    }
+
+    #[test]
+    fn missing_vix_fails_closed_to_elevated() {
+        let cfg = RegimeConfig::default();
+        // Calm realized vol + uptrend but no VIX quote: must NOT reach
+        // low_vol_trend/neutral (full-risk profiles) on missing data.
+        assert_eq!(
+            classify_regime(&cfg, None, true, true, 30.0),
+            RegimeClass::ElevatedVol
+        );
+        assert_eq!(
+            classify_regime(&cfg, None, false, true, 30.0),
+            RegimeClass::ElevatedVol
+        );
     }
 }

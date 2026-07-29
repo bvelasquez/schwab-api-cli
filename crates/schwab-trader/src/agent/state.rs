@@ -9,6 +9,12 @@ use serde_json::{json, Value};
 
 use crate::agent::paths::{backtest_state_path, state_path};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingProfileSwitch {
+    pub profile: String,
+    pub consecutive_ticks: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TraderState {
     pub trader_id: String,
@@ -71,6 +77,9 @@ pub struct TraderState {
     pub active_profile_reason: Option<String>,
     #[serde(default)]
     pub last_regime: Option<Value>,
+    /// Regime-recommended profile awaiting dwell confirmation before switching.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regime_profile_pending: Option<PendingProfileSwitch>,
     /// Consecutive entries where max_position_pct (not risk_pct) bound sizing — sim diagnostics.
     #[serde(default)]
     pub sizing_max_pct_binding_streak: u32,

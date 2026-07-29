@@ -58,6 +58,21 @@ pub async fn reconcile_tick(
     // Resolve pending buys
     let pending: Vec<PendingBuy> = state.pending_buys.clone();
     for pending_buy in pending {
+        // "pending" is a pre-placement placeholder persisted before the order
+        // id exists (crash window). Polling it errors and would fail the whole
+        // reconcile tick — skip gracefully; entry completion will replace it
+        // with the real id or the placeholder is aged out below.
+        if pending_buy.order_id == "pending" {
+            tracing::warn!(symbol = %pending_buy.symbol, "reconcile: skipping placeholder pending buy");
+            report.mismatches.push(json!({
+                "type": "placeholder_pending_buy",
+                "symbol": pending_buy.symbol,
+            }));
+            state.pending_buys.retain(|p| {
+                !(p.order_id == "pending" && p.symbol == pending_buy.symbol)
+            });
+            continue;
+        }
         let order = api
             .orders()
             .get(account_hash, &pending_buy.order_id)

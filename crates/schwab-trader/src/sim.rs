@@ -135,6 +135,20 @@ pub fn record_sim_entry_at(
     opened_at: DateTime<Utc>,
     atr_14: Option<f64>,
 ) -> Result<()> {
+    // Duplicate-fill guard: position_ids are SYMBOL|date, so a replayed entry
+    // (stale state, double-approved candidate) would otherwise overwrite the
+    // existing position AND deduct cash a second time — silently losing the
+    // first lot's shares, cost basis, and stop tracking. Refuse the dupe.
+    if let Some(existing) = state.open_positions.get(position_id) {
+        tracing::warn!(
+            position_id,
+            existing_qty = existing.quantity,
+            dup_qty = quantity,
+            "sim: refusing duplicate entry fill for existing position"
+        );
+        anyhow::bail!("simulation: position {position_id} already exists (duplicate fill)");
+    }
+
     let cost = quantity * fill_price;
     let ledger = ensure_ledger(state, rules);
     anyhow::ensure!(
@@ -185,25 +199,16 @@ pub async fn process_sim_trailing_stops(
     for pos in positions {
         let snap = fetch_technical_snapshot(market, rules, &pos.symbol).await?;
         let last = snap.last;
-        if last <= 0.0 || pos.entry_price <= 0.0 {
-            continue;
-        }
 
-        let profit_pct = ((last - pos.entry_price) / pos.entry_price) * 100.0;
-        if profit_pct < rules.playbook.exit.trailing.activate_after_profit_pct {
+        let Some(new_stop) =
+            crate::closure::trailing_stop_candidate(rules, &pos, last, snap.atr_14)
+        else {
             continue;
-        }
-
-        let atr = snap.atr_14.unwrap_or(0.0);
-        if atr <= 0.0 {
-            continue;
-        }
-
-        let trail = rules.playbook.exit.trailing.trail_atr_multiple;
-        let new_stop = last - trail * atr;
+        };
         if new_stop <= pos.stop_price {
             continue;
         }
+        let profit_pct = ((last - pos.entry_price) / pos.entry_price) * 100.0;
 
         if let Some(p) = state.open_positions.get_mut(&pos.position_id) {
             p.stop_price = new_stop;
@@ -514,6 +519,21 @@ pub fn reset_ledger(state: &mut TraderState, rules: &TraderRules) {
 mod tests {
     use super::*;
     use crate::rules::TraderRules;
+
+    #[test]
+    fn sim_duplicate_entry_fill_is_refused() {
+        let rules = TraderRules::default();
+        let mut state = TraderState::default();
+        record_sim_entry(&mut state, &rules, "h", "XLI", 1.0, 100.0, "XLI|2026-01-01")
+            .expect("first fill ok");
+        let cash_after_first = state.sim.as_ref().unwrap().cash_usd;
+        let err = record_sim_entry(&mut state, &rules, "h", "XLI", 1.0, 100.0, "XLI|2026-01-01");
+        assert!(err.is_err(), "duplicate fill must be refused");
+        // Cash and the original position must be untouched.
+        assert_eq!(state.sim.as_ref().unwrap().cash_usd, cash_after_first);
+        assert_eq!(state.open_positions.len(), 1);
+        assert_eq!(state.open_positions["XLI|2026-01-01"].quantity, 1.0);
+    }
 
     #[test]
     fn sim_tradable_budget_respects_cap() {
