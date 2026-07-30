@@ -132,7 +132,10 @@ pub fn adaptable_playbook_snapshot(rules: &TraderRules) -> Value {
     json!({
         "exit": {
             "profit_target_pct": rules.playbook.exit.profit_target_pct,
+            "profit_target_atr_cap": rules.playbook.exit.profit_target_atr_cap,
+            "profit_target_horizon_cap": rules.playbook.exit.profit_target_horizon_cap,
             "stop_loss_pct": rules.playbook.exit.stop_loss_pct,
+            "stop_loss_atr_cap": rules.playbook.exit.stop_loss_atr_cap,
             "trailing": {
                 "trail_atr_multiple": rules.playbook.exit.trailing.trail_atr_multiple,
                 "activate_after_profit_pct": rules.playbook.exit.trailing.activate_after_profit_pct,
@@ -145,6 +148,7 @@ pub fn adaptable_playbook_snapshot(rules: &TraderRules) -> Value {
             "max_new_entries_per_day": rules.playbook.entry.max_new_entries_per_day,
             "position_size": rules.playbook.entry.position_size,
         },
+        "holding_period": rules.playbook.holding_period,
         "intraday": rules.playbook.intraday,
     })
 }

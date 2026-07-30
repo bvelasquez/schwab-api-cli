@@ -101,6 +101,7 @@ struct WatchUiState {
     log_scroll: ScrollState,
     llm_scroll: ScrollState,
     positions_scroll: ScrollState,
+    candidates_scroll: ScrollState,
 }
 
 pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
@@ -124,6 +125,7 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
         log_scroll: ScrollState { scroll: 0 },
         llm_scroll: ScrollState { scroll: 0 },
         positions_scroll: ScrollState { scroll: 0 },
+        candidates_scroll: ScrollState { scroll: 0 },
     };
 
     loop {
@@ -235,6 +237,7 @@ fn scroll_tab(tab: WatchTab, state: &mut WatchUiState, delta: i16, ctx: &WatchCo
         WatchTab::Journal => &mut state.journal_scroll.scroll,
         WatchTab::Llm => &mut state.llm_scroll.scroll,
         WatchTab::Overview => &mut state.log_scroll.scroll,
+        WatchTab::Candidates => &mut state.candidates_scroll.scroll,
         _ => return,
     };
     if delta < 0 {
@@ -348,9 +351,13 @@ fn draw_ui(
         ),
         WatchTab::Positions => render_positions_tab(f, content, ctx, scroll, health.exits_armed()),
         WatchTab::Candidates => {
-            f.render_widget(
-                wrap_paragraph(candidate_lines(ctx)).block(panel_block("Scan / Candidates")),
+            render_scroll(
+                f,
                 content,
+                candidate_lines(ctx),
+                scroll.candidates_scroll.scroll,
+                "Scan / Candidates",
+                "j/k scroll · cyan → = ATR/horizon brackets".into(),
             );
         }
         WatchTab::Capital => {

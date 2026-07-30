@@ -410,6 +410,8 @@ mod tests {
             }],
             entry_recommendation: "defer".into(),
             entry_reasoning: "Already have IWM exposure; wait for a better setup.".into(),
+            veto_category: "other".into(),
+            evidence: String::new(),
             risk_alerts: vec!["concentration".into()],
         }
     }

@@ -361,6 +361,68 @@ Only these paths are accepted by `LEARN_ADAPTABLE_PATHS` (others are silently dr
 
 Patches are validated, clamped via `adaptation_bounds`, then applied per [governance](#llm-governance).
 
+## Schema: `playbook.exit` target geometry
+
+Effective profit target % is the **minimum** of:
+
+| Source | Formula | Role |
+|--------|---------|------|
+| Fixed | `profit_target_pct` | Ceiling |
+| ATR cap | `atr_multiple × ATR%` when `profit_target_atr_cap.enabled` | Daily-range scale (how many ATRs is the target?) |
+| Horizon cap | `sqrt_days_multiple × ATR% × √target_days` when `profit_target_horizon_cap.enabled` | Hold-window expected move (`holding_period.target_days`) |
+
+```yaml
+exit:
+  profit_target_pct: 8.0
+  profit_target_atr_cap:
+    enabled: true
+    atr_multiple: 2.5          # min(8%, 2.5 × ATR%)
+  profit_target_horizon_cap:
+    enabled: true
+    sqrt_days_multiple: 1.0    # min(..., ATR% × √target_days)
+  stop_loss_pct: 5.0
+  stop_loss_atr_cap:
+    enabled: true
+    atr_multiple: 2.0          # min(5%, 2.0 × ATR%)
+```
+
+With `target_days: 10`, horizon ≈ `3.16 × ATR%`. The daily ATR cap (2.5×) usually binds first; horizon binds when `target_days` is short or ATR cap is off. Stops use `stop_loss_atr_cap` the same way.
+
+When any ATR/horizon exit cap is enabled, entries **require** `atr_14` (no silent fallback to the fixed %). `min_reward_risk` then rejects names whose capped target / stop collapses below the floor.
+
+### FMP candidate discovery (`sources.fmp`)
+
+While `schwab-trader watch` / agent runs, FMP refreshes `dynamic_watchlist` on a **trading-day cadence** (not every tick, not every 3 days):
+
+1. **Premarket** — once (needs `schedule.premarket_scan: true`)
+2. **At open** — first regular tick after the open
+3. **Periodic** — every `discover_every_minutes` during regular hours (default 90)
+
+```yaml
+schedule:
+  premarket_scan: true
+  premarket_start_et: "08:00"
+sources:
+  fmp:
+    enabled: true
+    discover_every_minutes: 90
+    run_premarket: true
+    run_at_open: true
+    max_add_per_refresh: 5
+```
+
+Requires `FMP_API_KEY` in `.env`. Manual: `schwab-trader watchlist discover --rules-file … --write-pool`.
+
+### Watch TUI
+
+`schwab-trader watch` surfaces this geometry:
+
+| Tab | What you see |
+|-----|----------------|
+| Overview | Cap knobs (`ATR×…` + `horizon √Nd×…`) and exit ceilings |
+| Candidates | Per symbol: ATR%, likely target/stop $, R:R, binding (`[atr]` / `[horizon]` / `[fixed]`) |
+| Positions | Bracket % (+target / −stop); live ATR preview when the symbol is still in the latest scan |
+
 ## Schema: `playbook.entry.position_size`
 
 ```yaml

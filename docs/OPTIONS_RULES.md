@@ -321,8 +321,34 @@ Omit any field to use the built-in default for that phase. Run a separate rules 
 
 | Flag | Default | Effect |
 |------|---------|--------|
-| `veto_entries` | true | Block new entries when LLM says defer/skip |
+| `veto_entries` | true | Allow LLM entry veto — **engine honors only** `veto_category=unexpected_catalyst` with non-empty `evidence` (fail-open on calendar/math/vague defer) |
 | `allow_llm_exits` | false | Execute exits on high-urgency LLM close recommendations |
+| `allow_rule_suggestions` | true | After closes, append human-applied suggestions to `llm-suggestions-<rules-stem>.md` (no auto-mutate) |
+
+### Narrow veto schema
+
+Selection `new_entries` must include:
+
+```json
+{
+  "recommendation": "proceed|defer|skip",
+  "reasoning": "...",
+  "veto_category": "none|unexpected_catalyst|other",
+  "evidence": "concrete catalyst text when unexpected_catalyst"
+}
+```
+
+Monitor phase forces `recommendation=skip` / `veto_category=none` in code so sticky FOMC defers cannot block entries.
+
+### LLM scorecard
+
+Every selection decision is journaled as `llm_entry_decision`. Fills link `llm_decision_id`; exits emit `llm_scorecard_resolve`.
+
+```bash
+schwab agent scorecard --rules-file rules/options-pilot-8709.yaml --json
+```
+
+Watch Overview shows `scorecard: vetoes N · ignored defer M · linked W/L …`. Primary health signal: **ignored defer rate** (noise from calendar/math inventing).
 
 Rule-based profit/stop/DTE exits always run first; LLM adds judgment on top.
 

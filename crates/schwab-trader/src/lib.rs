@@ -14,6 +14,7 @@ pub mod commands;
 pub mod config;
 pub mod entry;
 pub mod earnings;
+pub mod fmp;
 pub mod journal;
 pub mod notify;
 pub mod options_reserve;

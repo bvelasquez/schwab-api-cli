@@ -162,6 +162,11 @@ pub async fn run_agent_loop(
                 }
 
                 state.last_tick_result = Some(outcome.body.clone());
+                if outcome.session == "regular" || outcome.session == "premarket" {
+                    if let Some(scan) = outcome.body.get("scan").cloned() {
+                        state.last_regular_scan = Some(scan);
+                    }
+                }
                 if let Err(err) = save_state(rules_path, &state) {
                     tracing::warn!("save_state after tick failed: {err:#}");
                 }
@@ -567,6 +572,21 @@ async fn tick_premarket(
     )
     .await?;
 
+    let fmp_discover = match crate::fmp::apply_fmp_discover_if_due(
+        state,
+        rules,
+        rules_path,
+        crate::fmp::FmpDiscoverTrigger::Premarket,
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(err) => {
+            tracing::warn!("FMP premarket discover failed: {err:#}");
+            Some(json!({ "error": format!("{err:#}") }))
+        }
+    };
+
     let scan = run_scan_inner(market, rules, state, Some(rules_path)).await?;
     skipped.push("premarket — no entries until regular session".into());
 
@@ -635,6 +655,8 @@ async fn tick_premarket(
         "next_sleep_seconds": transition.sleep_seconds,
         "skipped": skipped,
         "reconcile_report": reconcile_report,
+        "fmp_discover": fmp_discover,
+        "dynamic_watchlist": state.dynamic_watchlist,
         "scan": scan,
         "llm": llm_summary,
         "monitoring": monitoring_metrics(state, rules),
@@ -702,6 +724,25 @@ async fn tick_regular(
     });
     apply_regime_profile(state, rules, &regime);
     let mut tick_rules = effective_rules(rules, state);
+
+    let fmp_discover = match crate::fmp::apply_fmp_discover_if_due(
+        state,
+        &tick_rules,
+        rules_path,
+        if at_open {
+            crate::fmp::FmpDiscoverTrigger::AtOpen
+        } else {
+            crate::fmp::FmpDiscoverTrigger::Periodic
+        },
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(err) => {
+            tracing::warn!("FMP discover failed: {err:#}");
+            Some(json!({ "error": format!("{err:#}") }))
+        }
+    };
 
     let closure_exits = process_closure_exits(
         runtime, rules_path, &tick_rules, state, api, market, account_hash,
@@ -1008,6 +1049,8 @@ async fn tick_regular(
         "monitor_adjustments": monitor_adjustments,
         "monitoring": monitoring_metrics(state, &tick_rules),
         "scan": scan,
+        "fmp_discover": fmp_discover,
+        "dynamic_watchlist": state.dynamic_watchlist,
         "capital_check": capital_check_to_json(&capital),
         "llm": llm_summary,
         "learn": learn_result,

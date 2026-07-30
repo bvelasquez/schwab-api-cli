@@ -126,6 +126,39 @@ pub async fn run(runtime: &RuntimeConfig, command: AgentCommands) -> Result<()> 
         }
         AgentCommands::Sim { command } => run_sim(runtime, command).await?,
         AgentCommands::Backtest { command } => run_backtest_cmd(runtime, command).await?,
+        AgentCommands::Scorecard {
+            rules_file,
+            simulate,
+        } => {
+            let rules = RulesConfig::load(&rules_file)?;
+            let mut state = if simulate {
+                load_sim_agent_state(&rules_file, &rules.agent_id)
+            } else {
+                load_agent_state(&rules_file, &rules.agent_id)
+            };
+            let from_journal =
+                crate::agent::scorecard::aggregate_from_journal(&rules_file, simulate)?;
+            // Prefer journal as authoritative; keep state in sync for TUI.
+            state.llm_scorecard = from_journal.clone();
+            let _ = save_state(
+                &if simulate {
+                    sim_state_path(&rules_file)
+                } else {
+                    crate::agent::paths::default_state_path(&rules_file)
+                },
+                &state,
+            );
+            runtime.emit(ResponseEnvelope::ok(
+                "agent scorecard",
+                json!({
+                    "agent_id": rules.agent_id,
+                    "simulate": simulate,
+                    "scorecard": from_journal.to_json(),
+                    "suggestions_path": crate::agent::paths::suggestions_path(&rules_file),
+                    "last_decision": state.last_llm_entry_decision,
+                }),
+            ));
+        }
     }
     Ok(())
 }

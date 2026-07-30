@@ -768,9 +768,13 @@ pub struct LlmConfig {
     pub web_research_every_reviews: u64,
     pub max_tokens: u32,
     /// When true, LLM can veto new entries when it recommends defer/skip.
+    /// Engine still requires veto_category=unexpected_catalyst + evidence (fail-open otherwise).
     pub veto_entries: bool,
     /// When true, high-urgency LLM close recommendations trigger exits.
     pub allow_llm_exits: bool,
+    /// After closed trades, write human-applied rule suggestions (no auto-mutate).
+    #[serde(default = "default_true")]
+    pub allow_rule_suggestions: bool,
     /// Per-phase role, instructions, and strategy context (configurable per rules file).
     #[serde(default)]
     pub prompts: LlmPromptsConfig,
@@ -819,16 +823,18 @@ pub fn selection_market_context_guardrails() -> &'static str {
      - candidate_entries[] are built only after a successful Schwab chain fetch. Each item \
      includes market_context (underlying_price, short_delta, chain_iv, spread_pop_pct, \
      break_even_price, expected_move_1sigma, credit_to_width_pct, DTE, etc.).\n\
+     - Iron condors also include put_short_delta, call_short_delta, expected_move_1sigma_*, \
+     shorts_outside_1sigma, and max_loss_* — short_delta is the larger-|delta| short leg.\n\
      - ivr_available: false means IV Rank is not provided — NOT missing chain data. Use chain_iv.\n\
      - FORBIDDEN defer/skip reasons: \"lack of live chain data\", \"missing greeks\", \
-     \"no IV data\", or similar vague claims when market_context has underlying_price AND \
-     short_delta.\n\
-     - If you believe data is incomplete, cite the exact null/missing JSON field (e.g. \
-     \"short_theta is null\") and do not veto solely for absent IV Rank, theta, or gamma.\n\
-     - Defer or skip based on macro, event risk, poor premium/delta/strike placement, or \
-     extreme chain_iv — not invented data gaps.\n\
-     - If candidate_entries is empty, recommend skip with \"no mechanical candidates\" — do \
-     not claim chain API failure."
+     \"no IV data\", \"no market context\", FOMC/CPI/NFP calendar timing, or re-litigating \
+     mechanical gates (delta/DTE/IV-RV/1σ) when market_context has underlying_price AND \
+     (short_delta OR put_short_delta/call_short_delta).\n\
+     - Narrow veto only: set recommendation defer/skip with veto_category=unexpected_catalyst \
+     and non-empty evidence for a concrete unexpected catalyst. Otherwise recommendation=proceed \
+     with veto_category=none and evidence=\"\".\n\
+     - Engine ignores calendar/math/vague defers (fail-open). Do not invent data gaps.\n\
+     - If candidate_entries is empty, recommend skip with veto_category=none."
 }
 
 pub fn default_monitor_prompt() -> &'static str {
@@ -922,6 +928,7 @@ impl Default for LlmConfig {
             max_tokens: 2000,
             veto_entries: true,
             allow_llm_exits: false,
+            allow_rule_suggestions: true,
             prompts: LlmPromptsConfig::default(),
         }
     }

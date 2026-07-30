@@ -79,6 +79,12 @@ pub fn log_path(rules_path: &Path) -> PathBuf {
     dir.join(format!("agent-{stem}.log"))
 }
 
+pub fn suggestions_path(rules_path: &Path) -> PathBuf {
+    let dir = rules_runtime_dir(rules_path);
+    let stem = rules_runtime_stem(rules_path);
+    dir.join(format!("llm-suggestions-{stem}.md"))
+}
+
 /// Append a line to the per-rules agent log (used by background daemon stdout and watch-mode ticks).
 pub fn append_agent_log(rules_path: &Path, line: &str) -> std::io::Result<()> {
     use std::io::Write;

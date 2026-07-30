@@ -177,17 +177,31 @@ async fn fetch_vix(market: &MarketDataApi, symbol: &str) -> Result<f64> {
         .get_quote(&sym, Some("quote"), None)
         .await
         .with_context(|| format!("VIX quote for {sym}"))?;
-    let last = quote
-        .pointer("/quote/lastPrice")
-        .or_else(|| quote.pointer("/lastPrice"))
-        .or_else(|| quote.get("lastPrice"))
-        .and_then(|v| v.as_f64())
-        .unwrap_or(0.0);
+    let last = extract_quote_last_price(&quote, &sym).unwrap_or(0.0);
     if last > 0.0 {
         Ok(last)
     } else {
-        anyhow::bail!("missing VIX lastPrice")
+        anyhow::bail!("missing VIX lastPrice for {sym}: {quote}");
     }
+}
+
+/// Schwab single-symbol quotes are usually `{ "SYM": { "quote": { "lastPrice": … } } }`.
+fn extract_quote_last_price(raw: &Value, symbol: &str) -> Option<f64> {
+    let entry = raw
+        .get(symbol)
+        .or_else(|| {
+            // Case / $VIX variants
+            raw.as_object()
+                .and_then(|m| m.values().next())
+        })
+        .unwrap_or(raw);
+    entry
+        .pointer("/quote/lastPrice")
+        .or_else(|| entry.pointer("/extended/lastPrice"))
+        .or_else(|| entry.get("lastPrice"))
+        .or_else(|| raw.pointer("/quote/lastPrice"))
+        .and_then(|v| v.as_f64())
+        .filter(|v| *v > 0.0)
 }
 
 async fn benchmark_trend(market: &MarketDataApi, symbol: &str) -> Result<(f64, bool, bool)> {
@@ -267,6 +281,16 @@ mod tests {
             classify_options_regime(&cfg, None, true, true),
             OptionsRegimeClass::Neutral
         );
+    }
+
+    #[test]
+    fn extracts_vix_last_from_symbol_wrapped_quote() {
+        let raw = json!({
+            "$VIX": {
+                "quote": { "lastPrice": 18.1 }
+            }
+        });
+        assert!((extract_quote_last_price(&raw, "$VIX").unwrap() - 18.1).abs() < 1e-9);
     }
 
     #[test]

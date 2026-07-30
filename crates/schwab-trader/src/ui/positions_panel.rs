@@ -114,10 +114,16 @@ pub fn position_preview_lines(
                 Style::default().fg(pnl_color(m.pnl_pct)),
             ),
             Span::raw(format!(
-                "  last ${:.2}  target ${:.2}",
-                m.last_price, m.profit_limit
+                "  last ${:.2}  target ${:.2} (+{:.1}%)",
+                m.last_price, m.profit_limit, m.target_pct
             )),
         ]));
+        if let Some(geo) = &m.geometry_preview {
+            lines.push(Line::from(Span::styled(
+                format!("    {geo}"),
+                Style::default().fg(Color::Cyan),
+            )));
+        }
     }
     if monitors.len() > 2 {
         lines.push(Line::from(Span::styled(
@@ -253,8 +259,8 @@ fn render_metrics_column(
 
     f.render_widget(
         Paragraph::new(format!(
-            "entry ${:.2}  stop ${:.2}  target ${:.2}",
-            m.entry_price, m.stop_price, m.profit_limit
+            "entry ${:.2}  stop ${:.2} (−{:.1}%)  target ${:.2} (+{:.1}%)",
+            m.entry_price, m.stop_price, m.stop_pct, m.profit_limit, m.target_pct
         ))
         .style(theme::value_style()),
         rows[4],
@@ -315,4 +321,11 @@ fn render_metrics_column(
             .wrap(Wrap { trim: true }),
         rows[7],
     );
+
+    if let Some(geo) = &m.geometry_preview {
+        f.render_widget(
+            Paragraph::new(geo.clone()).style(Style::default().fg(Color::Cyan)),
+            rows[8],
+        );
+    }
 }

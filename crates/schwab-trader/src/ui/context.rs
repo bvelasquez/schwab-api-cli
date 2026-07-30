@@ -61,7 +61,26 @@ impl WatchContext {
     }
 
     pub fn scan(&self) -> Option<&serde_json::Value> {
-        self.last_tick().and_then(|t| t.get("scan"))
+        self.last_tick()
+            .and_then(|t| t.get("scan"))
+            .or(self.state.last_regular_scan.as_ref())
+    }
+
+    /// True when Candidates is showing a preserved regular-hours scan while
+    /// the latest tick is idle/overnight/premarket (no fresh scan this tick).
+    pub fn scan_is_stale(&self) -> bool {
+        let has_live = self
+            .last_tick()
+            .and_then(|t| t.get("scan"))
+            .is_some();
+        !has_live && self.state.last_regular_scan.is_some()
+    }
+
+    pub fn last_session_label(&self) -> &str {
+        self.last_tick()
+            .and_then(|t| t.get("session"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("?")
     }
 
     pub fn llm(&self) -> Option<&serde_json::Value> {

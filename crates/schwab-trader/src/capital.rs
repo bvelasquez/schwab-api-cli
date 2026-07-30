@@ -230,16 +230,125 @@ pub fn effective_profit_target_pct(
     rules: &TraderRules,
     atr_14: Option<f64>,
 ) -> f64 {
-    let base = rules.playbook.exit.profit_target_pct;
-    let cap = &rules.playbook.exit.profit_target_atr_cap;
-    if !cap.enabled {
-        return base;
+    exit_geometry(entry_price, rules, atr_14).effective_target_pct
+}
+
+/// Breakdown of how the effective target/stop were chosen (for CLI / watch UI).
+#[derive(Debug, Clone)]
+pub struct ExitGeometry {
+    pub atr_pct: Option<f64>,
+    pub base_target_pct: f64,
+    pub atr_cap_pct: Option<f64>,
+    pub horizon_cap_pct: Option<f64>,
+    pub effective_target_pct: f64,
+    pub effective_stop_pct: f64,
+    /// Which target source binds: `fixed`, `atr`, or `horizon`.
+    pub target_binding: &'static str,
+    pub target_price: f64,
+    pub stop_price: f64,
+    pub reward_risk: f64,
+}
+
+pub fn exit_geometry(
+    entry_price: f64,
+    rules: &TraderRules,
+    atr_14: Option<f64>,
+) -> ExitGeometry {
+    let base_target = rules.playbook.exit.profit_target_pct;
+    let atr_cap_cfg = &rules.playbook.exit.profit_target_atr_cap;
+    let horizon_cfg = &rules.playbook.exit.profit_target_horizon_cap;
+
+    let atr_pct = atr_14
+        .filter(|a| *a > 0.0 && entry_price > 0.0)
+        .map(|atr| (atr / entry_price) * 100.0);
+
+    let atr_cap_pct = atr_pct.filter(|_| atr_cap_cfg.enabled).map(|p| atr_cap_cfg.atr_multiple * p);
+    let horizon_cap_pct = atr_pct.filter(|_| horizon_cfg.enabled).map(|p| {
+        let days = rules.playbook.holding_period.target_days.max(1) as f64;
+        horizon_cfg.sqrt_days_multiple * p * days.sqrt()
+    });
+
+    let mut effective_target = base_target;
+    let mut target_binding = "fixed";
+    if let Some(cap) = atr_cap_pct {
+        if cap + f64::EPSILON < effective_target {
+            effective_target = cap;
+            target_binding = "atr";
+        }
     }
-    let Some(atr) = atr_14.filter(|a| *a > 0.0 && entry_price > 0.0) else {
-        return base;
+    if let Some(cap) = horizon_cap_pct {
+        if cap + f64::EPSILON < effective_target {
+            effective_target = cap;
+            target_binding = "horizon";
+        }
+    }
+
+    let effective_stop = effective_stop_loss_pct(entry_price, rules, atr_14);
+    let reward_risk = if effective_stop > 0.0 {
+        effective_target / effective_stop
+    } else {
+        0.0
     };
-    let atr_pct = (atr / entry_price) * 100.0;
-    base.min(cap.atr_multiple * atr_pct)
+    let target_price = entry_price * (1.0 + effective_target / 100.0);
+    let stop_price = entry_price * (1.0 - effective_stop / 100.0);
+
+    ExitGeometry {
+        atr_pct,
+        base_target_pct: base_target,
+        atr_cap_pct,
+        horizon_cap_pct,
+        effective_target_pct: effective_target,
+        effective_stop_pct: effective_stop,
+        target_binding,
+        target_price,
+        stop_price,
+        reward_risk,
+    }
+}
+
+/// Compact one-line summary for watch TUI candidate / position cards.
+pub fn format_exit_geometry_brief(g: &ExitGeometry) -> String {
+    let atr = g
+        .atr_pct
+        .map(|p| format!("ATR {p:.1}%"))
+        .unwrap_or_else(|| "ATR —".into());
+    format!(
+        "{atr}  tgt +{:.1}% (${:.2})  stop -{:.1}% (${:.2})  R:R {:.2}  [{}]",
+        g.effective_target_pct,
+        g.target_price,
+        g.effective_stop_pct,
+        g.stop_price,
+        g.reward_risk,
+        g.target_binding
+    )
+}
+
+/// Cap knobs line for overview / rules summary.
+pub fn format_exit_cap_rules(rules: &TraderRules) -> String {
+    let exit = &rules.playbook.exit;
+    let days = rules.playbook.holding_period.target_days;
+    let atr = if exit.profit_target_atr_cap.enabled {
+        format!("ATR×{:.1}", exit.profit_target_atr_cap.atr_multiple)
+    } else {
+        "ATR off".into()
+    };
+    let horizon = if exit.profit_target_horizon_cap.enabled {
+        format!(
+            "horizon √{}d×{:.1}",
+            days, exit.profit_target_horizon_cap.sqrt_days_multiple
+        )
+    } else {
+        "horizon off".into()
+    };
+    let stop = if exit.stop_loss_atr_cap.enabled {
+        format!("stop ATR×{:.1}", exit.stop_loss_atr_cap.atr_multiple)
+    } else {
+        "stop ATR off".into()
+    };
+    format!(
+        "target caps: {atr} + {horizon}  ·  {stop}  ·  ceil +{:.1}% / -{:.1}%",
+        exit.profit_target_pct, exit.stop_loss_pct
+    )
 }
 
 /// Effective stop distance % = min(stop_loss_pct, cap multiple × ATR%) when
@@ -262,12 +371,9 @@ pub fn exit_prices(
     rules: &TraderRules,
     atr_14: Option<f64>,
 ) -> (f64, f64, f64) {
-    let profit_pct = effective_profit_target_pct(entry_price, rules, atr_14);
-    let profit = entry_price * (1.0 + profit_pct / 100.0);
-    let stop_pct = effective_stop_loss_pct(entry_price, rules, atr_14);
-    let stop = entry_price * (1.0 - stop_pct / 100.0);
-    let stop_limit = stop * 0.995;
-    (profit, stop, stop_limit)
+    let g = exit_geometry(entry_price, rules, atr_14);
+    let stop_limit = g.stop_price * 0.995;
+    (g.target_price, g.stop_price, stop_limit)
 }
 
 #[cfg(test)]
@@ -354,5 +460,64 @@ mod tests {
         // ATR 2 on price 100 → ATR% = 2%, cap = 5% < 8%
         let (profit, _, _) = exit_prices(100.0, &rules, Some(2.0));
         assert!((profit - 105.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn exit_prices_horizon_cap_lowers_target_when_tighter_than_atr_cap() {
+        let mut rules = TraderRules {
+            version: 1,
+            trader_id: "t".into(),
+            accounts: vec![],
+            ..TraderRules::default()
+        };
+        rules.playbook.holding_period.target_days = 4; // √4 = 2
+        rules.playbook.exit.profit_target_pct = 8.0;
+        rules.playbook.exit.profit_target_atr_cap.enabled = true;
+        rules.playbook.exit.profit_target_atr_cap.atr_multiple = 5.0; // 5×2% = 10% > base
+        rules.playbook.exit.profit_target_horizon_cap.enabled = true;
+        rules.playbook.exit.profit_target_horizon_cap.sqrt_days_multiple = 1.0;
+        // ATR 2% → horizon = 1.0 × 2% × 2 = 4% < 8%
+        let (profit, _, _) = exit_prices(100.0, &rules, Some(2.0));
+        assert!((profit - 104.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn exit_prices_atr_cap_binds_before_looser_horizon() {
+        let mut rules = TraderRules {
+            version: 1,
+            trader_id: "t".into(),
+            accounts: vec![],
+            ..TraderRules::default()
+        };
+        rules.playbook.holding_period.target_days = 10; // √10 ≈ 3.16
+        rules.playbook.exit.profit_target_pct = 8.0;
+        rules.playbook.exit.profit_target_atr_cap.enabled = true;
+        rules.playbook.exit.profit_target_atr_cap.atr_multiple = 2.5; // 3.75%
+        rules.playbook.exit.profit_target_horizon_cap.enabled = true;
+        rules.playbook.exit.profit_target_horizon_cap.sqrt_days_multiple = 1.0;
+        // ATR 1.5% → atr cap 3.75%, horizon ≈ 4.74% → atr wins
+        let g = exit_geometry(100.0, &rules, Some(1.5));
+        assert!((g.effective_target_pct - 3.75).abs() < 0.01);
+        assert_eq!(g.target_binding, "atr");
+        assert!(g.atr_pct.is_some_and(|p| (p - 1.5).abs() < 0.01));
+    }
+
+    #[test]
+    fn format_exit_geometry_brief_includes_binding() {
+        let mut rules = TraderRules {
+            version: 1,
+            trader_id: "t".into(),
+            accounts: vec![],
+            ..TraderRules::default()
+        };
+        rules.playbook.holding_period.target_days = 4;
+        rules.playbook.exit.profit_target_pct = 8.0;
+        rules.playbook.exit.profit_target_horizon_cap.enabled = true;
+        rules.playbook.exit.profit_target_horizon_cap.sqrt_days_multiple = 1.0;
+        let g = exit_geometry(100.0, &rules, Some(2.0));
+        let s = format_exit_geometry_brief(&g);
+        assert!(s.contains("ATR 2.0%"), "{s}");
+        assert!(s.contains("[horizon]"), "{s}");
+        assert!(s.contains("tgt +4.0%"), "{s}");
     }
 }

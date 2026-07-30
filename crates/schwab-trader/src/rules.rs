@@ -323,6 +323,10 @@ pub struct ExitConfig {
     pub profit_target_pct: f64,
     /// Cap profit target at `atr_multiple × ATR%` when enabled (uses min with profit_target_pct).
     pub profit_target_atr_cap: ProfitTargetAtrCapConfig,
+    /// Cap profit target at hold-horizon expected move:
+    /// `sqrt_days_multiple × ATR% × √target_days` (uses min with other caps).
+    #[serde(default)]
+    pub profit_target_horizon_cap: ProfitTargetHorizonCapConfig,
     pub stop_loss_pct: f64,
     /// Cap stop distance at `atr_multiple × ATR%` when enabled (uses min with
     /// stop_loss_pct). Lets low-vol names (utilities/staples) trade with a
@@ -345,6 +349,15 @@ pub struct ProfitTargetAtrCapConfig {
     pub enabled: bool,
     /// Effective target % = min(profit_target_pct, atr_multiple × daily ATR%).
     pub atr_multiple: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProfitTargetHorizonCapConfig {
+    pub enabled: bool,
+    /// Horizon expected move % = sqrt_days_multiple × ATR% × √target_days.
+    /// `1.0` ≈ one random-walk expected move over the hold window.
+    pub sqrt_days_multiple: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -479,8 +492,33 @@ pub struct WatchlistThematic {
 #[serde(default)]
 pub struct SourcesConfig {
     pub web: WebSourcesConfig,
+    /// Financial Modeling Prep — periodic swing candidate discovery (not every tick).
+    #[serde(default)]
+    pub fmp: FmpSourcesConfig,
     /// User-configured URLs/APIs/RSS feeds prefetched for LLM context.
     pub feeds: Vec<DataFeedSource>,
+}
+
+/// FMP discovery during the trading day: premarket, at open, then periodic.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FmpSourcesConfig {
+    pub enabled: bool,
+    /// Minutes between refreshes during regular hours (default 90).
+    pub discover_every_minutes: u32,
+    /// Run once in premarket (requires `schedule.premarket_scan: true`).
+    pub run_premarket: bool,
+    /// Run on the first regular tick after the open.
+    pub run_at_open: bool,
+    /// Max new FMP symbols kept in `dynamic_watchlist` per refresh.
+    pub max_add_per_refresh: u32,
+    /// Skip paid company-screener; use free movers lists only.
+    pub movers_only: bool,
+    /// Also write `rules/universe/fmp-discovered.yaml` on each refresh.
+    pub write_pool: bool,
+    /// Deprecated: ignored. Kept so older YAML still parses.
+    #[serde(default)]
+    pub discover_every_days: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -786,6 +824,15 @@ impl Default for ProfitTargetAtrCapConfig {
     }
 }
 
+impl Default for ProfitTargetHorizonCapConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            sqrt_days_multiple: 1.0,
+        }
+    }
+}
+
 impl Default for StopLossAtrCapConfig {
     fn default() -> Self {
         Self {
@@ -800,6 +847,7 @@ impl Default for ExitConfig {
         Self {
             profit_target_pct: 8.0,
             profit_target_atr_cap: ProfitTargetAtrCapConfig::default(),
+            profit_target_horizon_cap: ProfitTargetHorizonCapConfig::default(),
             stop_loss_pct: 4.0,
             stop_loss_atr_cap: StopLossAtrCapConfig::default(),
             use_oco_at_entry: true,
@@ -907,7 +955,23 @@ impl Default for SourcesConfig {
     fn default() -> Self {
         Self {
             web: WebSourcesConfig::default(),
+            fmp: FmpSourcesConfig::default(),
             feeds: vec![],
+        }
+    }
+}
+
+impl Default for FmpSourcesConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            discover_every_minutes: 90,
+            run_premarket: true,
+            run_at_open: true,
+            max_add_per_refresh: 5,
+            movers_only: false,
+            write_pool: true,
+            discover_every_days: None,
         }
     }
 }
@@ -1552,5 +1616,20 @@ mod tests {
             let r = TraderRules::load(intraday).expect("intraday rules should parse");
             assert!(r.is_intraday());
         }
+    }
+
+    #[test]
+    fn swing_9947_enables_horizon_cap_and_scales_target() {
+        let path = Path::new("../../rules/trader-swing-9947.yaml");
+        if !path.is_file() {
+            return;
+        }
+        let rules = TraderRules::load(path).expect("swing-9947 rules should parse");
+        assert!(rules.playbook.exit.profit_target_horizon_cap.enabled);
+        assert!((rules.playbook.exit.profit_target_horizon_cap.sqrt_days_multiple - 1.0).abs() < 1e-9);
+        assert_eq!(rules.playbook.holding_period.target_days, 10);
+        // ATR 1.5% → atr cap 3.75% binds before horizon ≈ 4.74%
+        let pct = crate::capital::effective_profit_target_pct(100.0, &rules, Some(1.5));
+        assert!((pct - 3.75).abs() < 0.01);
     }
 }
