@@ -110,45 +110,144 @@ pub fn position_rules_context_lines(ctx: &WatchContext) -> Vec<Line<'static>> {
 
 pub fn candidate_lines(ctx: &WatchContext) -> Vec<Line<'static>> {
     let mut lines = candidate_lines_core(ctx);
+    // Overlay live quotes onto symbol header lines (geometry lines stay put).
     if let (Some(live), Some(scan)) = (ctx.live.as_ref(), ctx.scan()) {
-        if let Some(cands) = scan.get("candidates").and_then(|v| v.as_array()) {
-            for (i, c) in cands.iter().enumerate() {
-                let sym = c
-                    .get("symbol")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("?")
+        let mut line_idx = 0usize;
+        while line_idx < lines.len() {
+            // Find lines that start with "  + SYM" or "  - SYM"
+            let plain = lines[line_idx]
+                .spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<String>();
+            let is_cand = plain.starts_with("  + ");
+            let is_rej = plain.starts_with("  - ");
+            if is_cand || is_rej {
+                let rest = plain.trim_start();
+                let sym = rest
+                    .trim_start_matches("+ ")
+                    .trim_start_matches("- ")
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
                     .to_uppercase();
                 if let Some(q) = live.quotes.get(&sym) {
-                    let rsi = c
-                        .pointer("/technical_context/rsi_14")
-                        .and_then(|v| v.as_f64())
-                        .map(|r| format!("RSI {r:.1}"))
-                        .unwrap_or_default();
-                    // lines 0 = header, then one per candidate
-                    let idx = i + 1;
-                    if idx < lines.len() {
-                        lines[idx] = Line::from(format!(
-                            "  + {sym}  last ${:.2}  {rsi}",
-                            q.last
-                        ));
+                    if is_cand {
+                        let rsi = scan
+                            .get("candidates")
+                            .and_then(|v| v.as_array())
+                            .into_iter()
+                            .flatten()
+                            .find(|c| {
+                                c.get("symbol")
+                                    .and_then(|s| s.as_str())
+                                    .is_some_and(|s| s.eq_ignore_ascii_case(&sym))
+                            })
+                            .and_then(|c| c.pointer("/technical_context/rsi_14"))
+                            .and_then(|v| v.as_f64())
+                            .map(|r| format!("RSI {r:.1}"))
+                            .unwrap_or_default();
+                        lines[line_idx] =
+                            Line::from(format!("  + {sym}  last ${:.2}  {rsi}", q.last));
                     }
                 }
             }
+            line_idx += 1;
         }
     }
     lines
 }
 
+fn geometry_line_for_row(
+    effective: &crate::rules::TraderRules,
+    row: &serde_json::Value,
+    live: Option<&crate::ui::live::WatchLiveSnapshot>,
+) -> Line<'static> {
+    use crate::capital::{exit_geometry, format_exit_geometry_brief};
+
+    let sym = row.get("symbol").and_then(|v| v.as_str()).unwrap_or("?");
+    let last = row
+        .pointer("/technical_context/last")
+        .and_then(|v| v.as_f64())
+        .or_else(|| {
+            live.and_then(|l| l.quotes.get(&sym.to_uppercase()))
+                .map(|q| q.last)
+        })
+        .unwrap_or(0.0);
+    let atr = row
+        .pointer("/technical_context/atr_14")
+        .and_then(|v| v.as_f64());
+    if last > 0.0 {
+        let g = exit_geometry(last, effective, atr);
+        Line::from(vec![Span::styled(
+            format!("      → {}", format_exit_geometry_brief(&g)),
+            Style::default().fg(Color::Cyan),
+        )])
+    } else {
+        Line::from(Span::styled(
+            "      → (no price for target preview)",
+            Style::default().fg(Color::DarkGray),
+        ))
+    }
+}
+
 fn candidate_lines_core(ctx: &WatchContext) -> Vec<Line<'static>> {
+    use crate::adaptation::effective_rules;
+
     let mut lines = Vec::new();
+    let effective = effective_rules(&ctx.rules, &ctx.state);
+
+    let session = ctx.last_session_label();
+    if ctx.scan_is_stale() {
+        lines.push(Line::from(vec![Span::styled(
+            format!(
+                "session={session} — showing last regular-hours scan (market not in regular session)"
+            ),
+            Style::default().fg(Color::Yellow),
+        )]));
+    } else if ctx.scan().is_none() {
+        let hint = match session {
+            "idle" => "Market closed (idle). Scan + FMP discover run in regular hours — check back after the open.",
+            "overnight" => "Overnight session — no scan. Wait for regular hours.",
+            "premarket" => "Premarket — wait for the open for a full scan.",
+            _ => "Waiting for first regular-hours tick…",
+        };
+        lines.push(Line::from(vec![Span::styled(
+            hint.to_string(),
+            Style::default().fg(Color::Yellow),
+        )]));
+        if ctx.rules.sources.fmp.enabled {
+            let last = ctx
+                .state
+                .last_fmp_discover_at
+                .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
+                .unwrap_or_else(|| "never".into());
+            lines.push(Line::from(format!(
+                "FMP every {}m · last {last} · dynamic {:?}",
+                ctx.rules.sources.fmp.discover_every_minutes,
+                ctx.state.fmp_dynamic_symbols
+            )));
+        }
+        return lines;
+    }
+
     if let Some(scan) = ctx.scan() {
         if let Some(cands) = scan.get("candidates").and_then(|v| v.as_array()) {
             lines.push(Line::from(vec![Span::styled(
-                format!("Candidates ({})", cands.len()),
+                format!(
+                    "Candidates ({}) — likely brackets from ATR/horizon",
+                    cands.len()
+                ),
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
             )]));
+            if cands.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    "  (none passed filters — see Rejected brackets below)",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
             for c in cands {
                 let sym = c.get("symbol").and_then(|v| v.as_str()).unwrap_or("?");
                 let rsi = c
@@ -157,18 +256,30 @@ fn candidate_lines_core(ctx: &WatchContext) -> Vec<Line<'static>> {
                     .map(|r| format!("RSI {r:.1}"))
                     .unwrap_or_default();
                 lines.push(Line::from(format!("  + {sym}  {rsi}")));
+                lines.push(geometry_line_for_row(&effective, c, ctx.live.as_ref()));
             }
         }
         if let Some(rej) = scan.get("rejected").and_then(|v| v.as_array()) {
             lines.push(Line::from(""));
             lines.push(Line::from(vec![Span::styled(
-                format!("Rejected ({})", rej.len()),
+                format!("Rejected ({}) — would-be brackets if they passed", rej.len()),
                 Style::default().fg(Color::DarkGray),
             )]));
-            for r in rej.iter().take(8) {
+            for r in rej.iter().take(12) {
                 let sym = r.get("symbol").and_then(|v| v.as_str()).unwrap_or("?");
                 let reason = r.get("reason").and_then(|v| v.as_str()).unwrap_or("");
                 lines.push(Line::from(format!("  - {sym}: {reason}")));
+                if r.pointer("/technical_context/last").is_some()
+                    || r.pointer("/technical_context/atr_14").is_some()
+                {
+                    lines.push(geometry_line_for_row(&effective, r, ctx.live.as_ref()));
+                }
+            }
+            if rej.len() > 12 {
+                lines.push(Line::from(format!(
+                    "  … +{} more rejected",
+                    rej.len() - 12
+                )));
             }
         }
     }
@@ -329,9 +440,14 @@ pub fn rules_summary(ctx: &WatchContext) -> Vec<Line<'static>> {
             ctx.rules.all_watchlist_symbols().len()
         )),
         Line::from(format!(
-            "profit/stop: {:.0}% / {:.0}%",
+            "profit/stop ceil: {:.0}% / {:.0}%",
             ctx.rules.playbook.exit.profit_target_pct,
             ctx.rules.playbook.exit.stop_loss_pct
+        )),
+        Line::from(crate::capital::format_exit_cap_rules(&ctx.rules)),
+        Line::from(format!(
+            "hold target_days: {}",
+            ctx.rules.playbook.holding_period.target_days
         )),
         Line::from(format!(
             "llm: {}",

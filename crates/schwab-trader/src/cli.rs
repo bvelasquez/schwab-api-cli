@@ -308,6 +308,26 @@ pub enum WatchlistCommands {
         #[arg(long)]
         install: bool,
     },
+    /// Discover candidates via Financial Modeling Prep (requires FMP_API_KEY)
+    Discover {
+        #[arg(long)]
+        rules_file: PathBuf,
+        /// Max symbols to keep after filters
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Write YAML pool (default: rules/universe/fmp-discovered.yaml beside rules)
+        #[arg(long)]
+        write_pool: bool,
+        /// Override output pool path
+        #[arg(long)]
+        pool_out: Option<PathBuf>,
+        /// Also point rules watchlists.candidate_pool_file at the written pool
+        #[arg(long)]
+        set_candidate_pool: bool,
+        /// Skip paid company-screener attempt (movers only)
+        #[arg(long)]
+        movers_only: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

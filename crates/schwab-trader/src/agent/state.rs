@@ -24,6 +24,19 @@ pub struct TraderState {
     pub open_positions: HashMap<String, SwingPosition>,
     pub pending_buys: Vec<PendingBuy>,
     pub dynamic_watchlist: Vec<String>,
+    /// Symbols last injected by FMP discover (rotated on each multi-day refresh).
+    #[serde(default)]
+    pub fmp_dynamic_symbols: Vec<String>,
+    #[serde(default)]
+    pub last_fmp_discover_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub last_fmp_discover: Option<Value>,
+    /// Trading day (ET) of last premarket FMP run.
+    #[serde(default)]
+    pub last_fmp_premarket_day: Option<NaiveDate>,
+    /// Trading day (ET) of last at-open FMP run.
+    #[serde(default)]
+    pub last_fmp_open_day: Option<NaiveDate>,
     pub tick_count: u64,
     pub last_llm_review_tick: Option<u64>,
     pub last_llm_summary: Option<Value>,
@@ -32,6 +45,9 @@ pub struct TraderState {
     pub last_actions: Vec<Value>,
     #[serde(default)]
     pub last_tick_result: Option<Value>,
+    /// Last scan payload from a regular-hours tick (survives idle/overnight overwrites).
+    #[serde(default)]
+    pub last_regular_scan: Option<Value>,
     /// Paper-trading ledger when running with --simulate
     #[serde(default)]
     pub sim: Option<crate::sim::SimLedger>,

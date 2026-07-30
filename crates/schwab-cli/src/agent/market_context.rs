@@ -103,6 +103,162 @@ pub fn vertical_entry_market_context(
     })
 }
 
+/// Live chain fields for an iron condor entry signal (LLM selection context).
+#[allow(clippy::too_many_arguments)]
+pub fn iron_condor_entry_market_context(
+    chain: &Value,
+    underlying: &str,
+    expiry: NaiveDate,
+    today: NaiveDate,
+    put_map: &Value,
+    call_map: &Value,
+    put_short: f64,
+    put_long: f64,
+    call_short: f64,
+    call_long: f64,
+    put_credit: f64,
+    call_credit: f64,
+    contracts: f64,
+    realized_vol_pct: Option<f64>,
+) -> Value {
+    let underlying_quote = chain.get("underlying").cloned().unwrap_or(json!({}));
+    let underlying_price = chain
+        .pointer("/underlying/last")
+        .or_else(|| chain.pointer("/underlying/mark"))
+        .or_else(|| chain.pointer("/underlyingPrice"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+
+    let dte = days_to_expiry(expiry, today);
+    let put_short_delta = strike_field(put_map, put_short, "delta");
+    let call_short_delta = strike_field(call_map, call_short, "delta");
+    let put_short_iv = strike_field(put_map, put_short, "volatility");
+    let call_short_iv = strike_field(call_map, call_short, "volatility");
+    let chain_iv = chain.get("volatility").and_then(|v| v.as_f64());
+    let total_credit = put_credit + call_credit;
+    let put_width = (put_short - put_long).abs();
+    let call_width = (call_long - call_short).abs();
+    let max_width = put_width.max(call_width);
+    let max_loss_per_spread =
+        ((max_width - total_credit).max(0.0) * 100.0).max(0.0);
+    let short_delta = match (put_short_delta, call_short_delta) {
+        (Some(p), Some(c)) => {
+            if p.abs() >= c.abs() {
+                Some(p)
+            } else {
+                Some(c)
+            }
+        }
+        (Some(p), None) => Some(p),
+        (None, Some(c)) => Some(c),
+        _ => None,
+    };
+
+    let put_analytics = compute_vertical_analytics(VerticalAnalyticsInput {
+        is_put_spread: true,
+        underlying_price,
+        short_strike: put_short,
+        long_strike: put_long,
+        credit: put_credit,
+        dte,
+        chain_iv_pct: chain_iv.or(put_short_iv),
+        realized_vol_pct,
+        short_delta: put_short_delta,
+        long_delta: strike_field(put_map, put_long, "delta"),
+        short_theta: strike_field(put_map, put_short, "theta"),
+        long_theta: strike_field(put_map, put_long, "theta"),
+        contracts: contracts.max(1.0) as u32,
+        underlying_change_pct: underlying_quote
+            .pointer("/percentChange")
+            .and_then(|v| v.as_f64()),
+    });
+    let call_analytics = compute_vertical_analytics(VerticalAnalyticsInput {
+        is_put_spread: false,
+        underlying_price,
+        short_strike: call_short,
+        long_strike: call_long,
+        credit: call_credit,
+        dte,
+        chain_iv_pct: chain_iv.or(call_short_iv),
+        realized_vol_pct,
+        short_delta: call_short_delta,
+        long_delta: strike_field(call_map, call_long, "delta"),
+        short_theta: strike_field(call_map, call_short, "theta"),
+        long_theta: strike_field(call_map, call_long, "theta"),
+        contracts: contracts.max(1.0) as u32,
+        underlying_change_pct: underlying_quote
+            .pointer("/percentChange")
+            .and_then(|v| v.as_f64()),
+    });
+
+    let expected_move_1sigma_usd = put_analytics
+        .expected_move_1sigma_usd
+        .or(call_analytics.expected_move_1sigma_usd);
+    let expected_move_1sigma_pct = put_analytics
+        .expected_move_1sigma_pct
+        .or(call_analytics.expected_move_1sigma_pct);
+    let shorts_outside_1sigma = match (
+        put_analytics.short_strike_inside_1sigma,
+        call_analytics.short_strike_inside_1sigma,
+    ) {
+        (Some(false), Some(false)) => Some(true),
+        (Some(true), _) | (_, Some(true)) => Some(false),
+        _ => None,
+    };
+    let analytics = json!({
+        "put": analytics_to_json(&put_analytics),
+        "call": analytics_to_json(&call_analytics),
+    });
+
+    json!({
+        "data_source": "schwab_option_chain",
+        "underlying": underlying,
+        "underlying_price": underlying_price,
+        "underlying_bid": underlying_quote.pointer("/bid").and_then(|v| v.as_f64()),
+        "underlying_ask": underlying_quote.pointer("/ask").and_then(|v| v.as_f64()),
+        "underlying_change_pct": underlying_quote.pointer("/percentChange").and_then(|v| v.as_f64()),
+        "spread_type": "iron_condor",
+        "expiry": expiry.to_string(),
+        "dte": dte,
+        "chain_iv": chain_iv,
+        "realized_vol_pct": realized_vol_pct,
+        "iv_rv_ratio": put_analytics.iv_rv_ratio.or(call_analytics.iv_rv_ratio),
+        "ivr_available": false,
+        "ivr_note": "Schwab chain provides current IV (chain_iv); realized_vol_pct enables IV/RV gate. True IV Rank needs history.",
+        "put_short": put_short,
+        "put_long": put_long,
+        "call_short": call_short,
+        "call_long": call_long,
+        "put_width": put_width,
+        "call_width": call_width,
+        "put_credit": put_credit,
+        "call_credit": call_credit,
+        "estimated_credit": total_credit,
+        "credit_to_width_pct": if max_width > 0.0 {
+            (total_credit / max_width) * 100.0
+        } else {
+            0.0
+        },
+        // Guardrails look for short_delta; for IC use the larger |delta| short leg.
+        "short_delta": short_delta,
+        "put_short_delta": put_short_delta,
+        "call_short_delta": call_short_delta,
+        "put_short_otm_pct": put_analytics.short_otm_pct,
+        "call_short_otm_pct": call_analytics.short_otm_pct,
+        "put_break_even_price": put_analytics.break_even_price,
+        "call_break_even_price": call_analytics.break_even_price,
+        "expected_move_1sigma_usd": expected_move_1sigma_usd,
+        "expected_move_1sigma_pct": expected_move_1sigma_pct,
+        "put_short_inside_1sigma": put_analytics.short_strike_inside_1sigma,
+        "call_short_inside_1sigma": call_analytics.short_strike_inside_1sigma,
+        "shorts_outside_1sigma": shorts_outside_1sigma,
+        "max_loss_per_spread_usd": max_loss_per_spread,
+        "max_loss_total_usd": max_loss_per_spread * contracts.max(1.0),
+        "contracts": contracts,
+        "analytics": analytics,
+    })
+}
+
 /// Live chain context for an **open** vertical spread (monitor / LLM phase).
 #[allow(clippy::too_many_arguments)]
 pub fn vertical_open_position_context(
@@ -224,7 +380,7 @@ pub fn market_context_summary_for_llm() -> Value {
         "data_source": "schwab_option_chain",
         "ivr_available": false,
         "ivr_note": "IV Rank unavailable; chain_iv on each candidate is current implied vol — not a data outage",
-        "selection_guardrails": "Do not veto entries for vague missing chain data when candidate market_context has underlying_price and short_delta. Name specific null fields only.",
+        "selection_guardrails": "Do not veto for vague missing chain data when market_context has underlying_price and short_delta (or put_short_delta/call_short_delta for iron condors). Name specific null fields only.",
         "note": "candidate_entries[] and open_positions[].market_context include live price, delta, theta, POP vs break-even, expected move, and DTE from Schwab. Use market_context for monitor decisions — do not guess greeks."
     })
 }
@@ -329,5 +485,44 @@ mod tests {
         assert!(ctx["watch_elevated_delta"].as_bool().unwrap());
         assert!(ctx["spread_pop_pct"].as_f64().unwrap() > 60.0);
         assert!(ctx["net_theta_per_day_usd"].as_f64().unwrap() > 0.0);
+    }
+
+    #[test]
+    fn builds_iron_condor_market_context() {
+        let chain = json!({
+            "underlying": { "last": 380.0, "bid": 379.9, "ask": 380.1, "percentChange": 0.2 },
+            "volatility": 16.0,
+        });
+        let put_map = json!({
+            "360.0": [{ "delta": -0.16, "volatility": 17.0, "theta": -0.05, "inTheMoney": false }],
+            "355.0": [{ "delta": -0.10, "volatility": 16.5, "theta": -0.03, "inTheMoney": false }]
+        });
+        let call_map = json!({
+            "400.0": [{ "delta": 0.15, "volatility": 15.5, "theta": -0.04, "inTheMoney": false }],
+            "405.0": [{ "delta": 0.09, "volatility": 15.0, "theta": -0.02, "inTheMoney": false }]
+        });
+        let ctx = iron_condor_entry_market_context(
+            &chain,
+            "GLD",
+            NaiveDate::from_ymd_opt(2026, 8, 28).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 7, 30).unwrap(),
+            &put_map,
+            &call_map,
+            360.0,
+            355.0,
+            400.0,
+            405.0,
+            0.40,
+            0.35,
+            1.0,
+            Some(12.0),
+        );
+        assert_eq!(ctx["underlying_price"], 380.0);
+        assert_eq!(ctx["spread_type"], "iron_condor");
+        assert_eq!(ctx["put_short_delta"], -0.16);
+        assert_eq!(ctx["call_short_delta"], 0.15);
+        assert_eq!(ctx["short_delta"], -0.16);
+        assert!(ctx["expected_move_1sigma_usd"].as_f64().is_some());
+        assert!(ctx["max_loss_per_spread_usd"].as_f64().unwrap() > 400.0);
     }
 }

@@ -284,6 +284,11 @@ pub fn agent_status_lines(
             format!("{phase} · {} reviews", ctx.state.llm_review_count),
             12,
         ));
+        lines.push(kv_line(
+            "scorecard",
+            ctx.state.llm_scorecard.glance_line(),
+            12,
+        ));
     }
     lines
 }
@@ -382,7 +387,7 @@ pub fn activity_lines(ctx: &DashboardContext) -> Vec<Line<'static>> {
         .rev()
         .take(12)
         .map(|act| {
-            let time = act.at.format("%H:%M").to_string();
+            let time = act.at.format("%m/%d %H:%M").to_string();
             let detail = format_action_detail(&act.action, &act.detail);
             Line::from(vec![
                 Span::styled(format!("{time} "), Style::default().fg(Color::DarkGray)),
@@ -798,6 +803,11 @@ fn format_action_detail(action: &str, detail: &serde_json::Value) -> String {
                     .pointer("/new_entries/recommendation")
                     .and_then(|v| v.as_str())
                     .unwrap_or("—");
+                if let Some(eff) = detail.get("effective_action").and_then(|v| v.as_str()) {
+                    if eff != rec {
+                        return format!("{p} → entries {rec} (engine {eff})");
+                    }
+                }
                 format!("{p} → entries {rec}")
             })
             .unwrap_or_else(|| "review".into()),
@@ -806,6 +816,28 @@ fn format_action_detail(action: &str, detail: &serde_json::Value) -> String {
             .and_then(|v| v.as_str())
             .map(str::to_string)
             .unwrap_or_else(|| "digest".into()),
+        "entry_skipped" => {
+            let reason = detail
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("skipped");
+            let pid = detail
+                .get("position_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if pid.is_empty() {
+                reason.to_string()
+            } else {
+                format!("{reason} ({pid})")
+            }
+        }
+        "entry" | "exit" => detail
+            .get("reason")
+            .or_else(|| detail.get("strategy"))
+            .or_else(|| detail.get("underlying"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(action)
+            .to_string(),
         _ => action.to_string(),
     }
 }

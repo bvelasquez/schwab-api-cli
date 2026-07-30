@@ -201,6 +201,14 @@ pub fn passes_entry_filters(
         return Some("missing spread_pct".into());
     }
 
+    // ATR/horizon exit caps need atr_14; do not fall back to fixed % targets.
+    if atr_required_for_exit_caps(rules) {
+        match snap.atr_14 {
+            Some(atr) if atr > 0.0 => {}
+            _ => return Some("missing atr_14 for ATR/horizon exit caps".into()),
+        }
+    }
+
     if snap.last < entry.min_price_usd {
         return Some(format!("price {:.2} below min", snap.last));
     }
@@ -339,6 +347,14 @@ pub fn passes_entry_filters(
 
     let _ = tech;
     None
+}
+
+/// True when exit geometry depends on ATR (caps must not silently fall back to fixed %).
+pub fn atr_required_for_exit_caps(rules: &TraderRules) -> bool {
+    let exit = &rules.playbook.exit;
+    exit.profit_target_atr_cap.enabled
+        || exit.profit_target_horizon_cap.enabled
+        || exit.stop_loss_atr_cap.enabled
 }
 
 /// Shrink position size when price is in the soft zone below the 52w-high block threshold.
@@ -579,5 +595,25 @@ mod tests {
         snap.atr_14 = Some(2.5);
         let reason = passes_entry_filters(&snap, &rules.playbook.entry, &rules.technical, &rules);
         assert!(reason.is_none(), "got {reason:?}");
+    }
+
+    #[test]
+    fn rejects_missing_atr_when_exit_caps_enabled() {
+        let mut rules = TraderRules {
+            version: 1,
+            trader_id: "t".into(),
+            accounts: vec![],
+            ..TraderRules::default()
+        };
+        rules.playbook.exit.profit_target_horizon_cap.enabled = true;
+        let mut snap = base_snap();
+        snap.atr_14 = None;
+        let reason = passes_entry_filters(&snap, &rules.playbook.entry, &rules.technical, &rules);
+        assert!(
+            reason
+                .as_deref()
+                .is_some_and(|r| r.contains("missing atr_14")),
+            "got {reason:?}"
+        );
     }
 }

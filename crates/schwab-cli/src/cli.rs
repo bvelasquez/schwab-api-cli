@@ -616,6 +616,14 @@ pub enum AgentCommands {
         #[command(subcommand)]
         command: AgentBacktestCommands,
     },
+    /// LLM entry-decision scorecard (journal + rolling state)
+    Scorecard {
+        #[arg(long)]
+        rules_file: PathBuf,
+        /// Use simulate journal/state
+        #[arg(long)]
+        simulate: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

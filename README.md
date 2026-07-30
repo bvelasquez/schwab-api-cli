@@ -78,6 +78,8 @@ Copy `.env.example` to `.env` in the project root (or `~/.config/schwabinvestbot
 | `SCHWAB_MODE` | No | `agent` (default) or `human` |
 | `SCHWAB_OUTPUT` | No | `pretty`, `json`, or `md` |
 | `OPENROUTER_API_KEY` | No | OpenRouter API key (required when `llm.enabled` in a rules file) |
+| `FMP_API_KEY` | No | Financial Modeling Prep — `schwab-trader watchlist discover` |
+| `POLYGON_API_KEY` | No | Optional feed token when a Polygon `sources.feeds` entry is enabled |
 | `TELEGRAM_BOT_TOKEN` | No | Telegram bot token from [@BotFather](https://t.me/BotFather) |
 | `TELEGRAM_CHAT_ID` | No | Telegram chat ID for agent notifications (DM or group) |
 

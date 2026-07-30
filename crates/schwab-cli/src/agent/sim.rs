@@ -262,32 +262,31 @@ pub fn record_sim_entry(
     } else {
         None
     };
-    state.open_positions.insert(
-        position_id.clone(),
-        TrackedPosition {
-            position_id: position_id.clone(),
-            account_hash: account_hash.to_string(),
-            underlying: underlying.clone(),
-            expiry: expiry.clone(),
-            strategy: kind.as_str().to_string(),
-            opened_at: Utc::now(),
-            entry_credit: Some(credit),
-            max_loss_usd: margin,
-            contracts,
-            entry_params: Some(params.clone()),
-            peak_profit_pct: None,
-            entry_pop_pct: signal
-                .pointer("/market_context/spread_pop_pct")
-                .and_then(|v| v.as_f64()),
-            entry_short_delta: signal
-                .pointer("/market_context/short_delta")
-                .and_then(|v| v.as_f64())
-                .map(f64::abs),
-            rolls_used,
-            last_roll_at,
-            ..Default::default()
-        },
-    );
+    let mut tracked = TrackedPosition {
+        position_id: position_id.clone(),
+        account_hash: account_hash.to_string(),
+        underlying: underlying.clone(),
+        expiry: expiry.clone(),
+        strategy: kind.as_str().to_string(),
+        opened_at: Utc::now(),
+        entry_credit: Some(credit),
+        max_loss_usd: margin,
+        contracts,
+        entry_params: Some(params.clone()),
+        peak_profit_pct: None,
+        entry_pop_pct: signal
+            .pointer("/market_context/spread_pop_pct")
+            .and_then(|v| v.as_f64()),
+        entry_short_delta: signal
+            .pointer("/market_context/short_delta")
+            .and_then(|v| v.as_f64())
+            .map(f64::abs),
+        rolls_used,
+        last_roll_at,
+        ..Default::default()
+    };
+    crate::agent::scorecard::attach_decision_to_position(&mut tracked, state);
+    state.open_positions.insert(position_id.clone(), tracked);
 
     let detail = json!({
         "fill_status": "FILLED",
@@ -359,6 +358,15 @@ pub fn record_sim_exit(
     });
     state.record_action("sim_exit", detail.clone());
     journal::append_event(rules_path, true, "sim_exit_filled", detail.clone())?;
+    crate::agent::scorecard::resolve_on_exit(
+        rules_path,
+        true,
+        state,
+        &tracked,
+        exit_reason,
+        pnl_usd,
+        pnl_pct,
+    );
     Ok(detail)
 }
 

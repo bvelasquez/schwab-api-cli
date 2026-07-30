@@ -80,6 +80,12 @@ pub struct AgentState {
     /// When set, new entries are paused (exits continue). Cleared when condition recovers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trading_halted_reason: Option<String>,
+    /// Rolling LLM entry-decision scorecard (updated live; journal is authoritative).
+    #[serde(default)]
+    pub llm_scorecard: crate::agent::scorecard::LlmScorecardSummary,
+    /// Most recent selection-phase decision (for linking to fills).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_llm_entry_decision: Option<crate::agent::scorecard::LlmEntryDecisionRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -142,6 +148,9 @@ pub struct TrackedPosition {
     /// When the last defensive roll opened this position (if any).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_roll_at: Option<DateTime<Utc>>,
+    /// Linked `llm_entry_decision` id when entry followed a selection proceed / fail-open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm_decision_id: Option<String>,
 }
 
 pub fn update_peak_profit_pct(position: &mut TrackedPosition, profit_pct: f64) {
@@ -265,6 +274,7 @@ impl Default for TrackedPosition {
             protective_order_attempts: 0,
             rolls_used: 0,
             last_roll_at: None,
+            llm_decision_id: None,
         }
     }
 }

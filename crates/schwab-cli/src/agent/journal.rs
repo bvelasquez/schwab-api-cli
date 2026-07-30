@@ -60,12 +60,32 @@ fn write_journal_line(
 }
 
 pub fn read_all_backtest(rules_path: &Path) -> Result<Vec<Value>> {
-    let path = backtest_journal_path(rules_path);
+    read_journal_file(&backtest_journal_path(rules_path))
+}
+
+pub fn read_all(rules_path: &Path, simulate: bool) -> Result<Vec<Value>> {
+    let path = if simulate {
+        sim_journal_path(rules_path)
+    } else {
+        journal_path(rules_path)
+    };
+    read_journal_file(&path)
+}
+
+pub fn read_recent(rules_path: &Path, simulate: bool, limit: usize) -> Result<Vec<Value>> {
+    let mut all = read_all(rules_path, simulate)?;
+    if all.len() > limit {
+        all = all.split_off(all.len() - limit);
+    }
+    Ok(all)
+}
+
+fn read_journal_file(path: &Path) -> Result<Vec<Value>> {
     if !path.exists() {
         return Ok(vec![]);
     }
-    let raw = std::fs::read_to_string(&path)
-        .with_context(|| format!("read backtest journal {}", path.display()))?;
+    let raw = std::fs::read_to_string(path)
+        .with_context(|| format!("read journal {}", path.display()))?;
     let mut out = Vec::new();
     for line in raw.lines() {
         let line = line.trim();

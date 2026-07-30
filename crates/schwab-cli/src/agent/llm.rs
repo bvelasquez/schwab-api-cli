@@ -12,7 +12,12 @@ Respond ONLY with valid JSON matching this schema:
   "market_commentary": "string",
   "web_insights": ["string"],
   "positions": [{"position_id": "underlying|expiry", "recommendation": "hold|close|watch", "urgency": "low|medium|high", "reasoning": "string"}],
-  "new_entries": {"recommendation": "proceed|defer|skip", "reasoning": "string"},
+  "new_entries": {
+    "recommendation": "proceed|defer|skip",
+    "reasoning": "string",
+    "veto_category": "none|unexpected_catalyst|other",
+    "evidence": "string (required non-empty only when veto_category is unexpected_catalyst)"
+  },
   "risk_alerts": ["string"]
 }"#;
 
@@ -69,9 +74,17 @@ fn llm_review_json_schema() -> Value {
                         "type": "string",
                         "description": "proceed, defer, or skip"
                     },
-                    "reasoning": { "type": "string" }
+                    "reasoning": { "type": "string" },
+                    "veto_category": {
+                        "type": "string",
+                        "description": "none, unexpected_catalyst, or other. Engine honors veto only for unexpected_catalyst with evidence."
+                    },
+                    "evidence": {
+                        "type": "string",
+                        "description": "Concrete catalyst evidence when veto_category is unexpected_catalyst; else empty string"
+                    }
                 },
-                "required": ["recommendation", "reasoning"],
+                "required": ["recommendation", "reasoning", "veto_category", "evidence"],
                 "additionalProperties": false
             },
             "risk_alerts": {
@@ -125,6 +138,12 @@ pub struct LlmReview {
     pub position_reviews: Vec<PositionReview>,
     pub entry_recommendation: String,
     pub entry_reasoning: String,
+    /// none | unexpected_catalyst | other
+    #[serde(default)]
+    pub veto_category: String,
+    /// Required non-empty when veto_category is unexpected_catalyst.
+    #[serde(default)]
+    pub evidence: String,
     pub risk_alerts: Vec<String>,
 }
 
@@ -242,6 +261,38 @@ impl OpenRouterClient {
 
         let content = extract_message_content(&payload)?;
         parse_llm_json_content(&content)
+    }
+
+    /// Post-trade learn: lessons + optional allowlisted patches (caller filters/applies).
+    pub async fn suggest_rule_patches(
+        &self,
+        config: &LlmConfig,
+        context: &Value,
+    ) -> Result<(Vec<String>, Vec<Value>)> {
+        let model = config.effective_monitor_model();
+        let system = "You are tuning a conservative options income rules file. \
+Propose at most 3 patches using ONLY paths listed in allowlisted_paths. \
+If the sample is thin or no change is warranted, return empty patches. \
+Respond ONLY with JSON: {\"lessons\":[\"string\"],\"patches\":[{\"path\":\"...\",\"value\":...,\"reason\":\"...\"}]}";
+        let user = serde_json::to_string_pretty(context)?;
+        let parsed = self
+            .review_with_format(model, system, &user, config.max_tokens.min(1500), LlmResponseFormat::JsonObject)
+            .await?;
+        let lessons = parsed
+            .get("lessons")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let patches = parsed
+            .get("patches")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        Ok((lessons, patches))
     }
 }
 
@@ -367,6 +418,23 @@ fn parse_llm_review(
         .and_then(|v| v.as_str())
         .context("LLM review missing new_entries.reasoning")?
         .to_string();
+    let mut veto_category = parsed
+        .pointer("/new_entries/veto_category")
+        .and_then(|v| v.as_str())
+        .unwrap_or("none")
+        .trim()
+        .to_ascii_lowercase();
+    if !matches!(
+        veto_category.as_str(),
+        "none" | "unexpected_catalyst" | "other"
+    ) {
+        veto_category = "other".into();
+    }
+    let evidence = parsed
+        .pointer("/new_entries/evidence")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
     let position_reviews = parsed
         .get("positions")
@@ -397,7 +465,7 @@ fn parse_llm_review(
         })
         .unwrap_or_default();
 
-    Ok(LlmReview {
+    let mut review = LlmReview {
         phase: phase_label(phase).to_string(),
         model: model.to_string(),
         used_web,
@@ -413,6 +481,8 @@ fn parse_llm_review(
             .unwrap_or_default(),
         entry_recommendation,
         entry_reasoning,
+        veto_category,
+        evidence,
         risk_alerts: parsed
             .get("risk_alerts")
             .and_then(|v| v.as_array())
@@ -424,7 +494,19 @@ fn parse_llm_review(
             .unwrap_or_default(),
         position_reviews,
         raw: parsed,
-    })
+    };
+
+    // Monitor/overnight must not sticky-veto entries.
+    if matches!(phase, LlmPhase::Monitor | LlmPhase::OvernightDigest) {
+        review.entry_recommendation = "skip".into();
+        review.veto_category = "none".into();
+        review.evidence.clear();
+        if review.entry_reasoning.trim().is_empty() {
+            review.entry_reasoning = "monitor phase — no entry decision".into();
+        }
+    }
+
+    Ok(review)
 }
 
 fn required_string(parsed: &Value, key: &str) -> Result<String> {
@@ -455,11 +537,14 @@ impl LlmReview {
             "new_entries": {
                 "recommendation": self.entry_recommendation,
                 "reasoning": self.entry_reasoning,
+                "veto_category": self.veto_category,
+                "evidence": self.evidence,
             },
             "risk_alerts": self.risk_alerts,
         })
     }
 
+    /// Raw defer/skip — engine still applies [`crate::agent::scorecard::should_honor_entry_veto`].
     pub fn should_veto_entries(&self) -> bool {
         matches!(
             self.entry_recommendation.as_str(),
@@ -526,13 +611,39 @@ mod tests {
                 "urgency": "low",
                 "reasoning": "On track"
             }],
-            "new_entries": { "recommendation": "proceed", "reasoning": "ok" },
+            "new_entries": {
+                "recommendation": "proceed",
+                "reasoning": "ok",
+                "veto_category": "none",
+                "evidence": ""
+            },
             "risk_alerts": []
         });
         let review = parse_llm_review(LlmPhase::Selection, "test", true, raw).unwrap();
         assert_eq!(review.phase, "selection");
         assert_eq!(review.entry_recommendation, "proceed");
+        assert_eq!(review.veto_category, "none");
         assert_eq!(review.position_reviews.len(), 1);
+    }
+
+    #[test]
+    fn monitor_normalizes_entry_to_skip() {
+        let raw = json!({
+            "market_commentary": "watching",
+            "web_insights": [],
+            "positions": [],
+            "new_entries": {
+                "recommendation": "defer",
+                "reasoning": "FOMC",
+                "veto_category": "other",
+                "evidence": ""
+            },
+            "risk_alerts": []
+        });
+        let review = parse_llm_review(LlmPhase::Monitor, "test", false, raw).unwrap();
+        assert_eq!(review.entry_recommendation, "skip");
+        assert_eq!(review.veto_category, "none");
+        assert!(!crate::agent::scorecard::should_honor_entry_veto(&review));
     }
 
     #[test]

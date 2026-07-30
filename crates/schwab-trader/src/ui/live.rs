@@ -49,6 +49,11 @@ pub struct PositionMonitorView {
     pub min_hold_days: u32,
     pub oco_label: String,
     pub quote_age_secs: Option<i64>,
+    /// Implied target/stop % from the live brackets on the position.
+    pub target_pct: f64,
+    pub stop_pct: f64,
+    /// Optional ATR/horizon preview from latest scan (same symbol), if available.
+    pub geometry_preview: Option<String>,
 }
 
 pub fn collect_quote_symbols(state: &TraderState) -> Vec<String> {
@@ -57,7 +62,12 @@ pub fn collect_quote_symbols(state: &TraderState) -> Vec<String> {
         .values()
         .map(|p| p.symbol.to_uppercase())
         .collect();
-    if let Some(scan) = state.last_tick_result.as_ref().and_then(|t| t.get("scan")) {
+    if let Some(scan) = state
+        .last_tick_result
+        .as_ref()
+        .and_then(|t| t.get("scan"))
+        .or(state.last_regular_scan.as_ref())
+    {
         if let Some(cands) = scan.get("candidates").and_then(|v| v.as_array()) {
             for c in cands.iter().take(8) {
                 if let Some(sym) = c.get("symbol").and_then(|v| v.as_str()) {
@@ -127,6 +137,28 @@ pub fn build_position_monitor(
 
     let quote_age_secs = quote.map(|q| (now - q.fetched_at).num_seconds());
 
+    let target_pct = if pos.entry_price > 0.0 {
+        ((pos.profit_limit / pos.entry_price) - 1.0) * 100.0
+    } else {
+        0.0
+    };
+    let stop_pct = if pos.entry_price > 0.0 {
+        (1.0 - (pos.stop_price / pos.entry_price)) * 100.0
+    } else {
+        0.0
+    };
+    let geometry_preview = atr_from_scan(state, &pos.symbol).map(|atr| {
+        let g = crate::capital::exit_geometry(pos.entry_price, &effective, Some(atr));
+        format!(
+            "ATR {:.1}% → tgt +{:.1}% [{}]  stop -{:.1}%  R:R {:.2}  (live brackets may differ)",
+            g.atr_pct.unwrap_or(0.0),
+            g.effective_target_pct,
+            g.target_binding,
+            g.effective_stop_pct,
+            g.reward_risk
+        )
+    });
+
     PositionMonitorView {
         symbol: pos.symbol.clone(),
         quantity: pos.quantity,
@@ -148,7 +180,31 @@ pub fn build_position_monitor(
         min_hold_days: effective.playbook.holding_period.min_days,
         oco_label,
         quote_age_secs,
+        target_pct,
+        stop_pct,
+        geometry_preview,
     }
+}
+
+fn atr_from_scan(state: &TraderState, symbol: &str) -> Option<f64> {
+    let scan = state
+        .last_tick_result
+        .as_ref()
+        .and_then(|t| t.get("scan"))
+        .or(state.last_regular_scan.as_ref())?;
+    let want = symbol.to_uppercase();
+    for key in ["candidates", "rejected"] {
+        let Some(arr) = scan.get(key).and_then(|v| v.as_array()) else {
+            continue;
+        };
+        for c in arr {
+            let sym = c.get("symbol").and_then(|v| v.as_str())?;
+            if sym.eq_ignore_ascii_case(&want) {
+                return c.pointer("/technical_context/atr_14").and_then(|v| v.as_f64());
+            }
+        }
+    }
+    None
 }
 
 /// Horizontal rail: stop (left) → target (right), `●` = last price, `│` = entry.
@@ -318,9 +374,27 @@ pub fn regime_and_rules_lines(ctx: &crate::ui::context::WatchContext) -> Vec<Lin
                 .and_then(|v| v.as_u64())
                 .unwrap_or(ctx.rules.playbook.exit.time_stop_days as u64);
             lines.push(Line::from(format!(
-                "effective exits: +{pt:.1}% target / -{sl:.1}% stop / {ts}d time stop"
+                "effective exits ceil: +{pt:.1}% target / -{sl:.1}% stop / {ts}d time stop"
             )));
         }
+    }
+
+    // Cap knobs always come from effective (profile-merged) rules so the
+    // overview matches what candidates would actually get.
+    let effective = effective_rules(&ctx.rules, &ctx.state);
+    lines.push(Line::from(crate::capital::format_exit_cap_rules(&effective)));
+
+    if ctx.rules.sources.fmp.enabled {
+        let every = ctx.rules.sources.fmp.discover_every_minutes;
+        let last = ctx
+            .state
+            .last_fmp_discover_at
+            .map(|t| t.format("%m-%d %H:%M").to_string())
+            .unwrap_or_else(|| "never".into());
+        let dyn_n = ctx.state.fmp_dynamic_symbols.len();
+        lines.push(Line::from(format!(
+            "FMP: premarket+open+every {every}m  last {last}  dynamic+{dyn_n}"
+        )));
     }
 
     if let Some(dd) = tick.and_then(|t| t.get("drawdown")) {
