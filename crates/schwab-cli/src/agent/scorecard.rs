@@ -16,6 +16,7 @@ pub const SUGGESTION_ALLOWLIST: &[&str] = &[
     "exit_rules.thesis.min_hold_minutes",
     "exit_rules.thesis.min_pop_pct_exit",
     "exit_rules.thesis.max_short_delta_exit",
+    "exit_rules.thesis.regime_mismatch.min_profit_pct",
     "entry_rules.vertical.short_delta_min",
     "entry_rules.vertical.short_delta_max",
     "entry_rules.vertical.min_iv_rv_ratio",

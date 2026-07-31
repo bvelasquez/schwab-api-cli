@@ -90,6 +90,11 @@ exit_rules:
       exit_if_below_pct: 10
     # Don't re-sell the same name immediately after a thesis exit.
     redeploy_cooldown_minutes: 240
+    # Early take when open structure ≠ preferred regime (green enough).
+    regime_mismatch:
+      enabled: true
+      min_profit_pct: 25
+      treat_pause_as_mismatch: true
   # Defensive roll on mechanical stop (verticals only). Stop-triggered only —
   # do NOT wire to thesis exits; the money check correctly refuses rolls when
   # the short is already being run over. Soak with --simulate before trusting.

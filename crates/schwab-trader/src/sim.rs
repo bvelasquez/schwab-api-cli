@@ -158,7 +158,7 @@ pub fn record_sim_entry_at(
     );
     ledger.cash_usd -= cost;
 
-    let (profit_limit, stop_px, _) = exit_prices(fill_price, rules, atr_14);
+    let (profit_limit, stop_px, _) = exit_prices(fill_price, rules, atr_14, None);
     state.open_positions.insert(
         position_id.to_string(),
         SwingPosition {

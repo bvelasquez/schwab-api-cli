@@ -179,7 +179,7 @@ pub async fn reconcile_tick(
             continue;
         }
         let pos_id = position_id(symbol, &rules.schedule.timezone);
-        let (profit_limit, stop_px, _) = exit_prices(live_pos.average_price, rules, None);
+        let (profit_limit, stop_px, _) = exit_prices(live_pos.average_price, rules, None, None);
         state.open_positions.insert(
             pos_id.clone(),
             SwingPosition {
@@ -228,7 +228,7 @@ pub async fn reconcile_tick(
             continue;
         }
         ub.bracket_attempts += 1;
-        let (profit_limit, stop_px, stop_limit_px) = exit_prices(ub.entry_price, rules, None);
+        let (profit_limit, stop_px, stop_limit_px) = exit_prices(ub.entry_price, rules, None, None);
         match place_oco_bracket_with_retry(
             runtime,
             api,
@@ -331,7 +331,7 @@ async fn adopt_filled_buy(
     };
 
     let pos_id = position_id(symbol, &rules.schedule.timezone);
-    let (profit_limit, stop_px, stop_limit_px) = exit_prices(entry_price, rules, None);
+    let (profit_limit, stop_px, stop_limit_px) = exit_prices(entry_price, rules, None, None);
     let mut oco_order_id = None;
 
     if rules.playbook.exit.use_oco_at_entry {

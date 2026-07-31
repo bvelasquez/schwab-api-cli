@@ -8,7 +8,9 @@ use ratatui::style::Color;
 use crate::agent::exits::{
     evaluate_exit_from_mark_with_analytics, spread_exit_thresholds, SpreadMark,
 };
-use crate::agent::spread_analytics::SpreadAnalytics;
+use crate::agent::spread_analytics::{
+    compute_position_momentum, PositionMomentumInput, SpreadAnalytics,
+};
 use crate::agent::state::{AgentState, TrackedPosition};
 use crate::rules::RulesConfig;
 
@@ -47,6 +49,7 @@ pub struct SpreadMonitorView {
     pub mark_source: String,
     pub mark_age_secs: Option<i64>,
     pub analytics: Option<SpreadAnalytics>,
+    pub momentum: Option<crate::agent::spread_analytics::PositionMomentum>,
 }
 
 pub fn build_spread_monitor(
@@ -94,6 +97,23 @@ pub fn build_spread_monitor(
     let pct_cushion_from_stop =
         ((stop_debit - debit_to_close) / stop_span * 100.0).clamp(0.0, 200.0);
 
+    let momentum = analytics.as_ref().map(|a| {
+        compute_position_momentum(PositionMomentumInput {
+            analytics: a,
+            debit_to_close,
+            target_debit,
+            profit_target_pct: exit_rules.profit_target_pct,
+            profit_pct,
+            pct_toward_target,
+            pct_cushion_from_stop,
+            contracts,
+            entry_chain_iv_pct: tracked.entry_chain_iv_pct,
+            entry_pop_pct: tracked.entry_pop_pct,
+            dte,
+            dte_close: exit_rules.dte_close,
+        })
+    });
+
     SpreadMonitorView {
         underlying: tracked.underlying.clone(),
         expiry: tracked.expiry.clone(),
@@ -113,6 +133,7 @@ pub fn build_spread_monitor(
         mark_source,
         mark_age_secs,
         analytics,
+        momentum,
     }
 }
 

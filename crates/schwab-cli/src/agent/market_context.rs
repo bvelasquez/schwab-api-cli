@@ -4,7 +4,8 @@ use serde_json::{json, Value};
 use crate::options::days_to_expiry;
 
 use super::spread_analytics::{
-    analytics_to_json, compute_vertical_analytics, VerticalAnalyticsInput,
+    analytics_to_json, compute_iron_condor_analytics, compute_vertical_analytics,
+    IronCondorAnalyticsInput, VerticalAnalyticsInput,
 };
 
 /// Live chain fields attached to entry signals and LLM context.
@@ -372,6 +373,113 @@ pub fn vertical_open_position_context(
         "watch_near_short_strike": watch_near_strike,
         "analytics": analytics_to_json(&analytics),
         "note": "spread_pop_pct uses lognormal model at expiry; mechanical exits handle P/L and DTE."
+    })
+}
+
+/// Live chain context for an **open** iron condor (monitor / LLM / TUI).
+#[allow(clippy::too_many_arguments)]
+pub fn iron_condor_open_position_context(
+    chain: &Value,
+    underlying: &str,
+    expiry: NaiveDate,
+    put_map: &Value,
+    call_map: &Value,
+    put_short: f64,
+    put_long: f64,
+    call_short: f64,
+    call_long: f64,
+    entry_credit: Option<f64>,
+    debit_to_close: Option<f64>,
+    profit_pct: Option<f64>,
+    dte: i64,
+    contracts: u32,
+) -> Value {
+    let underlying_quote = chain.get("underlying").cloned().unwrap_or(json!({}));
+    let underlying_price = chain
+        .pointer("/underlying/last")
+        .or_else(|| chain.pointer("/underlying/mark"))
+        .or_else(|| chain.pointer("/underlyingPrice"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+
+    let chain_iv = chain.get("volatility").and_then(|v| v.as_f64());
+    let put_short_iv = strike_field(put_map, put_short, "volatility");
+    let call_short_iv = strike_field(call_map, call_short, "volatility");
+    let underlying_change_pct = underlying_quote
+        .pointer("/percentChange")
+        .and_then(|v| v.as_f64());
+    let credit = entry_credit.unwrap_or(0.0);
+
+    let analytics = compute_iron_condor_analytics(IronCondorAnalyticsInput {
+        underlying_price,
+        put_short,
+        put_long,
+        call_short,
+        call_long,
+        credit,
+        dte,
+        chain_iv_pct: chain_iv.or(put_short_iv).or(call_short_iv),
+        realized_vol_pct: None,
+        put_short_delta: strike_field(put_map, put_short, "delta"),
+        put_long_delta: strike_field(put_map, put_long, "delta"),
+        call_short_delta: strike_field(call_map, call_short, "delta"),
+        call_long_delta: strike_field(call_map, call_long, "delta"),
+        put_short_theta: strike_field(put_map, put_short, "theta"),
+        put_long_theta: strike_field(put_map, put_long, "theta"),
+        call_short_theta: strike_field(call_map, call_short, "theta"),
+        call_long_theta: strike_field(call_map, call_long, "theta"),
+        contracts: contracts.max(1),
+        underlying_change_pct,
+    });
+
+    let watch_elevated_delta = analytics.short_delta.is_some_and(|d| d.abs() >= 0.30);
+    let watch_near_strike = analytics
+        .short_otm_pct
+        .is_some_and(|pct| pct < 2.0 && underlying_price > f64::EPSILON);
+
+    json!({
+        "data_source": "schwab_option_chain",
+        "underlying": underlying,
+        "underlying_price": underlying_price,
+        "underlying_change_pct": underlying_change_pct,
+        "expiry": expiry.to_string(),
+        "dte": dte,
+        "spread_type": "iron_condor",
+        "put_short": put_short,
+        "put_long": put_long,
+        "call_short": call_short,
+        "call_long": call_long,
+        "width": analytics.width,
+        "entry_credit": entry_credit,
+        "debit_to_close": debit_to_close,
+        "profit_pct": profit_pct,
+        "chain_iv": chain_iv,
+        "short_delta": analytics.short_delta,
+        "put_short_delta": analytics.put_short_delta,
+        "call_short_delta": analytics.call_short_delta,
+        "net_theta_per_day_usd": analytics.net_theta_per_day_usd,
+        "put_short_otm_pct": analytics.put_short_otm_pct,
+        "call_short_otm_pct": analytics.call_short_otm_pct,
+        "short_otm_pct": analytics.short_otm_pct,
+        "distance_to_short_strike_usd": analytics.distance_to_short_strike_usd,
+        "put_break_even_price": analytics.put_break_even_price,
+        "call_break_even_price": analytics.call_break_even_price,
+        "distance_to_be_pct": analytics.distance_to_be_pct,
+        "expected_move_1sigma_usd": analytics.expected_move_1sigma_usd,
+        "expected_move_1sigma_pct": analytics.expected_move_1sigma_pct,
+        "short_strike_inside_1sigma": analytics.short_strike_inside_1sigma,
+        "put_short_inside_1sigma": analytics.expected_move_1sigma_usd.map(|em| {
+            (underlying_price - put_short) < em
+        }),
+        "call_short_inside_1sigma": analytics.expected_move_1sigma_usd.map(|em| {
+            (call_short - underlying_price) < em
+        }),
+        "spread_pop_pct": analytics.spread_pop_pct,
+        "max_loss_per_spread_usd": analytics.max_loss_per_spread_usd,
+        "watch_elevated_delta": watch_elevated_delta,
+        "watch_near_short_strike": watch_near_strike,
+        "analytics": analytics_to_json(&analytics),
+        "note": "Iron condor POP is P(put_BE < S_T < call_BE); mechanical exits use combined debit_to_close."
     })
 }
 

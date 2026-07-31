@@ -201,11 +201,30 @@ pub fn passes_entry_filters(
         return Some("missing spread_pct".into());
     }
 
-    // ATR/horizon exit caps need atr_14; do not fall back to fixed % targets.
+    // ATR/horizon/recent-range exit caps need supporting data; do not fall back to fixed %.
     if atr_required_for_exit_caps(rules) {
         match snap.atr_14 {
             Some(atr) if atr > 0.0 => {}
             _ => return Some("missing atr_14 for ATR/horizon exit caps".into()),
+        }
+    }
+    if recent_range_cap_required(rules) {
+        let lookback = rules
+            .playbook
+            .exit
+            .profit_target_recent_range_cap
+            .lookback_days;
+        match snap
+            .history_features
+            .as_ref()
+            .and_then(|h| h.high_for_lookback(lookback))
+        {
+            Some(h) if h > 0.0 => {}
+            _ => {
+                return Some(format!(
+                    "missing recent high ({lookback}d) for recent-range target cap"
+                ))
+            }
         }
     }
 
@@ -293,8 +312,9 @@ pub fn passes_entry_filters(
         if stop_pct <= 0.0 {
             return Some("stop_loss_pct must be > 0 for min_reward_risk".into());
         }
+        let recent_high = crate::capital::recent_high_for_exit_cap(rules, snap.history_features.as_ref());
         let target_pct =
-            crate::capital::effective_profit_target_pct(snap.last, rules, snap.atr_14);
+            crate::capital::effective_profit_target_pct(snap.last, rules, snap.atr_14, recent_high);
         let rr = target_pct / stop_pct;
         if rr + f64::EPSILON < min_rr {
             return Some(format!(
@@ -355,6 +375,11 @@ pub fn atr_required_for_exit_caps(rules: &TraderRules) -> bool {
     exit.profit_target_atr_cap.enabled
         || exit.profit_target_horizon_cap.enabled
         || exit.stop_loss_atr_cap.enabled
+}
+
+/// True when recent-range target cap is enabled (needs history high).
+pub fn recent_range_cap_required(rules: &TraderRules) -> bool {
+    rules.playbook.exit.profit_target_recent_range_cap.enabled
 }
 
 /// Shrink position size when price is in the soft zone below the 52w-high block threshold.
@@ -521,6 +546,13 @@ mod tests {
                 return_90d_pct: Some(10.0),
                 pct_from_52w_high: Some(-8.0),
                 pct_from_52w_low: Some(20.0),
+                high_20d: Some(104.0),
+                low_20d: Some(95.0),
+                high_60d: Some(108.0),
+                low_60d: Some(90.0),
+                high_90d: Some(110.0),
+                low_90d: Some(88.0),
+                range_60d_pct: Some(18.0),
                 sma_200: Some(90.0),
                 above_sma_200: Some(true),
                 rs_vs_benchmark_30d_pct: Some(2.0),

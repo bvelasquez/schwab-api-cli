@@ -177,8 +177,28 @@ fn geometry_line_for_row(
     let atr = row
         .pointer("/technical_context/atr_14")
         .and_then(|v| v.as_f64());
+    let lookback = effective
+        .playbook
+        .exit
+        .profit_target_recent_range_cap
+        .lookback_days;
+    let recent_high = if effective.playbook.exit.profit_target_recent_range_cap.enabled {
+        let key = match lookback {
+            0..=30 => "high_20d",
+            31..=75 => "high_60d",
+            _ => "high_90d",
+        };
+        row.pointer(&format!("/technical_context/history_features/{key}"))
+            .and_then(|v| v.as_f64())
+            .or_else(|| {
+                row.pointer("/technical_context/history_features/high_60d")
+                    .and_then(|v| v.as_f64())
+            })
+    } else {
+        None
+    };
     if last > 0.0 {
-        let g = exit_geometry(last, effective, atr);
+        let g = exit_geometry(last, effective, atr, recent_high);
         Line::from(vec![Span::styled(
             format!("      → {}", format_exit_geometry_brief(&g)),
             Style::default().fg(Color::Cyan),

@@ -284,7 +284,7 @@ pub async fn apply_monitor_exit_adjustments(
             continue;
         }
 
-        let (_, base_stop, _) = exit_prices(pos.entry_price, rules, None);
+        let (_, base_stop, _) = exit_prices(pos.entry_price, rules, None, None);
         let stop_range = (pos.entry_price - base_stop).max(0.01);
         let delta_pct = if action == "tighten_exits" {
             cfg.max_tighten_pct

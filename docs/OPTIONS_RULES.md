@@ -225,6 +225,29 @@ the VIX quote is unavailable.
 
 Requires `strategies.iron_condor.enabled: true` for condor regimes. Vertical call credits use the same delta/width rules as puts.
 
+### Regime-mismatch early take
+
+When `exit_rules.thesis.regime_mismatch.enabled: true`, each tick compares the
+**open structure** to the live preferred strategy ("what would I open flat now?").
+If they differ and unrealized profit ≥ `min_profit_pct` (default 25% of credit),
+the agent exits with reason `thesis_regime_mismatch` and sets a redeploy signal.
+
+This runs **even during** `thesis.min_hold_minutes` (unlike POP/delta/OTM thesis
+exits). With `treat_pause_as_mismatch: true`, green positions are also taken when
+preferred is `pause` (hostile / crushed vol).
+
+```yaml
+exit_rules:
+  thesis:
+    regime_mismatch:
+      enabled: true
+      min_profit_pct: 25
+      treat_pause_as_mismatch: true
+```
+
+Pair with `entry_policy.promote_redeploy_symbol: true` and a short
+`redeploy_cooldown_minutes` so capital can rotate into the new preferred structure.
+
 ## Entry quality gates (edge)
 
 Mechanical filters on vertical candidates (`entry_rules.vertical`):

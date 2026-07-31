@@ -148,7 +148,7 @@ pub fn build_position_monitor(
         0.0
     };
     let geometry_preview = atr_from_scan(state, &pos.symbol).map(|atr| {
-        let g = crate::capital::exit_geometry(pos.entry_price, &effective, Some(atr));
+        let g = crate::capital::exit_geometry(pos.entry_price, &effective, Some(atr), None);
         format!(
             "ATR {:.1}% → tgt +{:.1}% [{}]  stop -{:.1}%  R:R {:.2}  (live brackets may differ)",
             g.atr_pct.unwrap_or(0.0),

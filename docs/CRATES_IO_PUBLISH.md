@@ -55,5 +55,5 @@ Current minimum versions for the trader stack:
 |---------|--------|
 | `schwab-api-cli-core` ≥ 0.1.1 | `Tokens::obtained_at`, `refresh_expires_in_seconds()` |
 | `schwab-api-cli-market-data` ≥ 0.1.1 | depends on core 0.1.1 |
-| `schwab-api-cli` ≥ 0.1.5 | defensive rolling, options backtest harness, Batch 1 foundation |
-| `schwab-trader` ≥ 0.1.5 | depends on api-cli 0.1.5 |
+| `schwab-api-cli` ≥ 0.1.6 | regime-mismatch early take, live spread analytics/UI |
+| `schwab-trader` ≥ 0.1.6 | recent-range profit-target cap; depends on api-cli 0.1.6 |

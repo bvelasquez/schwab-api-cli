@@ -15,7 +15,7 @@ use crate::agent::exits::{
     option_group_from_tracked,
 };
 use crate::agent::paths::active_state_path;
-use crate::agent::state::load_state;
+use crate::agent::state::{backfill_entry_baselines_from_actions, load_state, save_state};
 use crate::rules::RulesConfig;
 use crate::ui::spread_live::{attach_exit_hint, SpreadLiveSnapshot, SpreadPositionMark};
 
@@ -66,7 +66,10 @@ async fn refresh_once(
     live: &Arc<RwLock<SpreadLiveSnapshot>>,
 ) -> Result<()> {
     let state_path = active_state_path(rules_path, simulate);
-    let state = load_state(&state_path)?;
+    let mut state = load_state(&state_path)?;
+    if backfill_entry_baselines_from_actions(&mut state) {
+        let _ = save_state(&state_path, &state);
+    }
     if state.open_positions.is_empty() {
         if let Ok(mut g) = live.write() {
             g.marks.clear();
@@ -101,8 +104,20 @@ async fn refresh_once(
             continue;
         };
 
-        let monitor =
-            evaluate_position_monitor(market, &group, rules, today, Some(tracked)).await?;
+        let preferred_for_exits = state
+            .last_regime
+            .as_ref()
+            .and_then(|r| r.get("preferred_strategy"))
+            .and_then(|v| v.as_str());
+        let monitor = evaluate_position_monitor(
+            market,
+            &group,
+            rules,
+            today,
+            Some(tracked),
+            preferred_for_exits,
+        )
+        .await?;
 
         let spread_mark = monitor
             .exit
