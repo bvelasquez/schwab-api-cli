@@ -121,6 +121,7 @@ pub fn record_sim_entry(
         position_id,
         Utc::now(),
         None,
+        crate::capital::ExitRangeContext::none(),
     )
 }
 
@@ -134,6 +135,7 @@ pub fn record_sim_entry_at(
     position_id: &str,
     opened_at: DateTime<Utc>,
     atr_14: Option<f64>,
+    range: crate::capital::ExitRangeContext,
 ) -> Result<()> {
     // Duplicate-fill guard: position_ids are SYMBOL|date, so a replayed entry
     // (stale state, double-approved candidate) would otherwise overwrite the
@@ -158,7 +160,7 @@ pub fn record_sim_entry_at(
     );
     ledger.cash_usd -= cost;
 
-    let (profit_limit, stop_px, _) = exit_prices(fill_price, rules, atr_14, None);
+    let (profit_limit, stop_px, _) = exit_prices(fill_price, rules, atr_14, range);
     state.open_positions.insert(
         position_id.to_string(),
         SwingPosition {
@@ -245,6 +247,18 @@ pub async fn process_sim_exits(
     }
     ensure_ledger(state, rules);
 
+    let mut exits = crate::closure::process_exit_plan_tightens(
+        None,
+        rules_path,
+        rules,
+        state,
+        None,
+        market,
+        "",
+        true,
+    )
+    .await?;
+
     let _ = process_sim_trailing_stops(rules_path, rules, state, market).await?;
 
     let regime_class = state
@@ -259,8 +273,6 @@ pub async fn process_sim_exits(
         .values()
         .map(|p| p.symbol.clone())
         .collect();
-
-    let mut exits = Vec::new();
     for symbol in symbols {
         let quote_raw = market
             .quote_last_bid_ask(&symbol)

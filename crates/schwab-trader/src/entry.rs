@@ -346,10 +346,10 @@ pub async fn attempt_entry(
         Some(rules_path),
     )
     .await?;
-    let recent_high =
-        crate::capital::recent_high_for_exit_cap(rules, snap.history_features.as_ref());
+    let range =
+        crate::capital::ExitRangeContext::from_history(rules, snap.history_features.as_ref());
     let (profit_limit, stop_price, stop_limit) =
-        exit_prices(limit_price, rules, snap.atr_14, recent_high);
+        exit_prices(limit_price, rules, snap.atr_14, range);
     let size_scalar = near_52w_high_size_scalar(rules, &snap);
     let sizing = compute_position_sizing(
         rules,
@@ -514,6 +514,7 @@ pub async fn attempt_entry(
             &pos_id,
             fill_at,
             snap.atr_14,
+            range,
         )?;
         state.trades_today += 1;
         if backtest {
@@ -670,10 +671,10 @@ pub async fn attempt_entry(
     };
 
     let fill_started = std::time::Instant::now();
-    let recent_high =
-        crate::capital::recent_high_for_exit_cap(rules, snap.history_features.as_ref());
+    let range =
+        crate::capital::ExitRangeContext::from_history(rules, snap.history_features.as_ref());
     let (profit_limit, stop_px, stop_limit_px) =
-        exit_prices(fill_price, rules, snap.atr_14, recent_high);
+        exit_prices(fill_price, rules, snap.atr_14, range);
     let mut bracket_result = None;
     let mut oco_order_id = None;
 

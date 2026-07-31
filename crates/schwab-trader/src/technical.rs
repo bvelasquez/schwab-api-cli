@@ -312,9 +312,12 @@ pub fn passes_entry_filters(
         if stop_pct <= 0.0 {
             return Some("stop_loss_pct must be > 0 for min_reward_risk".into());
         }
-        let recent_high = crate::capital::recent_high_for_exit_cap(rules, snap.history_features.as_ref());
+        let range = crate::capital::ExitRangeContext::from_history(
+            rules,
+            snap.history_features.as_ref(),
+        );
         let target_pct =
-            crate::capital::effective_profit_target_pct(snap.last, rules, snap.atr_14, recent_high);
+            crate::capital::effective_profit_target_pct(snap.last, rules, snap.atr_14, range);
         let rr = target_pct / stop_pct;
         if rr + f64::EPSILON < min_rr {
             return Some(format!(

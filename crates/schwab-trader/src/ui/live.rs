@@ -148,7 +148,8 @@ pub fn build_position_monitor(
         0.0
     };
     let geometry_preview = atr_from_scan(state, &pos.symbol).map(|atr| {
-        let g = crate::capital::exit_geometry(pos.entry_price, &effective, Some(atr), None);
+        let range = range_from_scan(state, &pos.symbol, &effective);
+        let g = crate::capital::exit_geometry(pos.entry_price, &effective, Some(atr), range);
         format!(
             "ATR {:.1}% → tgt +{:.1}% [{}]  stop -{:.1}%  R:R {:.2}  (live brackets may differ)",
             g.atr_pct.unwrap_or(0.0),
@@ -205,6 +206,53 @@ fn atr_from_scan(state: &TraderState, symbol: &str) -> Option<f64> {
         }
     }
     None
+}
+
+fn range_from_scan(
+    state: &TraderState,
+    symbol: &str,
+    rules: &crate::rules::TraderRules,
+) -> crate::capital::ExitRangeContext {
+    if !rules.playbook.exit.profit_target_recent_range_cap.enabled {
+        return crate::capital::ExitRangeContext::none();
+    }
+    let lookback = rules.playbook.exit.profit_target_recent_range_cap.lookback_days;
+    let (high_key, low_key) = match lookback {
+        0..=30 => ("high_20d", "low_20d"),
+        31..=75 => ("high_60d", "low_60d"),
+        _ => ("high_90d", "low_90d"),
+    };
+    let scan = state
+        .last_tick_result
+        .as_ref()
+        .and_then(|t| t.get("scan"))
+        .or(state.last_regular_scan.as_ref());
+    let Some(scan) = scan else {
+        return crate::capital::ExitRangeContext::none();
+    };
+    let want = symbol.to_uppercase();
+    for key in ["candidates", "rejected"] {
+        let Some(arr) = scan.get(key).and_then(|v| v.as_array()) else {
+            continue;
+        };
+        for c in arr {
+            let Some(sym) = c.get("symbol").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if !sym.eq_ignore_ascii_case(&want) {
+                continue;
+            }
+            let hf = |k: &str| {
+                c.pointer(&format!("/technical_context/history_features/{k}"))
+                    .and_then(|v| v.as_f64())
+            };
+            return crate::capital::ExitRangeContext {
+                recent_high: hf(high_key).or_else(|| hf("high_60d")),
+                recent_low: hf(low_key).or_else(|| hf("low_60d")),
+            };
+        }
+    }
+    crate::capital::ExitRangeContext::none()
 }
 
 /// Horizontal rail: stop (left) → target (right), `●` = last price, `│` = entry.

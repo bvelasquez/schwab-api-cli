@@ -229,9 +229,43 @@ pub fn effective_profit_target_pct(
     entry_price: f64,
     rules: &TraderRules,
     atr_14: Option<f64>,
-    recent_high: Option<f64>,
+    range: ExitRangeContext,
 ) -> f64 {
-    exit_geometry(entry_price, rules, atr_14, recent_high).effective_target_pct
+    exit_geometry(entry_price, rules, atr_14, range).effective_target_pct
+}
+
+/// Lookback high/low used by `profit_target_recent_range_cap`.
+///
+/// High sets a ceiling (plus optional extension). Low + high together measure
+/// the realized swing width so targets larger than what price has actually
+/// traversed recently are rejected as unreasonable.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ExitRangeContext {
+    pub recent_high: Option<f64>,
+    pub recent_low: Option<f64>,
+}
+
+impl ExitRangeContext {
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    pub fn from_history(
+        rules: &TraderRules,
+        history: Option<&crate::history_features::HistoryFeatures>,
+    ) -> Self {
+        let cap = &rules.playbook.exit.profit_target_recent_range_cap;
+        if !cap.enabled {
+            return Self::none();
+        }
+        let Some(h) = history else {
+            return Self::none();
+        };
+        Self {
+            recent_high: h.high_for_lookback(cap.lookback_days),
+            recent_low: h.low_for_lookback(cap.lookback_days),
+        }
+    }
 }
 
 /// Breakdown of how the effective target/stop were chosen (for CLI / watch UI).
@@ -242,6 +276,10 @@ pub struct ExitGeometry {
     pub atr_cap_pct: Option<f64>,
     pub horizon_cap_pct: Option<f64>,
     pub recent_range_cap_pct: Option<f64>,
+    /// Room to lookback high (+ extension), when available.
+    pub range_ceiling_cap_pct: Option<f64>,
+    /// Realized (high−low)/entry swing width, when both ends available.
+    pub range_width_cap_pct: Option<f64>,
     pub effective_target_pct: f64,
     pub effective_stop_pct: f64,
     /// Which target source binds: `fixed`, `atr`, `horizon`, or `recent_range`.
@@ -255,7 +293,7 @@ pub fn exit_geometry(
     entry_price: f64,
     rules: &TraderRules,
     atr_14: Option<f64>,
-    recent_high: Option<f64>,
+    range: ExitRangeContext,
 ) -> ExitGeometry {
     let base_target = rules.playbook.exit.profit_target_pct;
     let atr_cap_cfg = &rules.playbook.exit.profit_target_atr_cap;
@@ -271,18 +309,33 @@ pub fn exit_geometry(
         let days = rules.playbook.holding_period.target_days.max(1) as f64;
         horizon_cfg.sqrt_days_multiple * p * days.sqrt()
     });
-    let recent_range_cap_pct = if range_cfg.enabled {
-        recent_high
-            .filter(|h| *h > 0.0 && entry_price > 0.0)
-            .map(|high| {
-                let ceiling = high * (1.0 + range_cfg.max_extension_above_high_pct / 100.0);
-                ((ceiling / entry_price) - 1.0) * 100.0
-            })
-            // Already above the allowed ceiling → no upside room.
-            .map(|pct| pct.max(0.0))
-    } else {
-        None
-    };
+
+    let (range_ceiling_cap_pct, range_width_cap_pct, recent_range_cap_pct) =
+        if range_cfg.enabled && entry_price > 0.0 {
+            let ceiling = range
+                .recent_high
+                .filter(|h| *h > 0.0)
+                .map(|high| {
+                    let ceil = high * (1.0 + range_cfg.max_extension_above_high_pct / 100.0);
+                    ((ceil / entry_price) - 1.0) * 100.0
+                })
+                .map(|pct| pct.max(0.0));
+            let width = match (range.recent_high, range.recent_low) {
+                (Some(h), Some(l)) if h > 0.0 && l > 0.0 && h >= l => {
+                    Some(((h - l) / entry_price) * 100.0)
+                }
+                _ => None,
+            };
+            let combined = match (ceiling, width) {
+                (Some(c), Some(w)) => Some(c.min(w)),
+                (Some(c), None) => Some(c),
+                (None, Some(w)) => Some(w),
+                (None, None) => None,
+            };
+            (ceiling, width, combined)
+        } else {
+            (None, None, None)
+        };
 
     let mut effective_target = base_target;
     let mut target_binding = "fixed";
@@ -320,6 +373,8 @@ pub fn exit_geometry(
         atr_cap_pct,
         horizon_cap_pct,
         recent_range_cap_pct,
+        range_ceiling_cap_pct,
+        range_width_cap_pct,
         effective_target_pct: effective_target,
         effective_stop_pct: effective_stop,
         target_binding,
@@ -403,23 +458,16 @@ pub fn exit_prices(
     entry_price: f64,
     rules: &TraderRules,
     atr_14: Option<f64>,
-    recent_high: Option<f64>,
+    range: ExitRangeContext,
 ) -> (f64, f64, f64) {
-    let g = exit_geometry(entry_price, rules, atr_14, recent_high);
+    let g = exit_geometry(entry_price, rules, atr_14, range);
     let stop_limit = g.stop_price * 0.995;
     (g.target_price, g.stop_price, stop_limit)
 }
 
-/// Recent high used by `profit_target_recent_range_cap` when enabled.
-pub fn recent_high_for_exit_cap(
-    rules: &TraderRules,
-    history: Option<&crate::history_features::HistoryFeatures>,
-) -> Option<f64> {
-    let cap = &rules.playbook.exit.profit_target_recent_range_cap;
-    if !cap.enabled {
-        return None;
-    }
-    history.and_then(|h| h.high_for_lookback(cap.lookback_days))
+/// True when stored profit target is looser than current exit geometry.
+pub fn should_tighten_profit_limit(pos_profit_limit: f64, geometry: &ExitGeometry) -> bool {
+    geometry.target_price + 0.01 < pos_profit_limit
 }
 
 #[cfg(test)]
@@ -457,7 +505,7 @@ mod tests {
             accounts: vec![],
             ..TraderRules::default()
         };
-        let (profit, stop, _) = exit_prices(100.0, &rules, None, None);
+        let (profit, stop, _) = exit_prices(100.0, &rules, None, ExitRangeContext::none());
         assert!((profit - 108.0).abs() < 0.01);
         assert!((stop - 96.0).abs() < 0.01);
     }
@@ -475,20 +523,20 @@ mod tests {
         rules.playbook.exit.stop_loss_atr_cap.atr_multiple = 2.0;
 
         // Low-vol name: ATR 1.5% → stop capped at 3.0% (not the fixed 5%).
-        let (_, stop, _) = exit_prices(100.0, &rules, Some(1.5), None);
+        let (_, stop, _) = exit_prices(100.0, &rules, Some(1.5), ExitRangeContext::none());
         assert!((stop - 97.0).abs() < 0.01);
 
         // High-vol name: ATR 5% → 2.0×ATR = 10% > fixed 5% → fixed wins.
-        let (_, stop, _) = exit_prices(100.0, &rules, Some(5.0), None);
+        let (_, stop, _) = exit_prices(100.0, &rules, Some(5.0), ExitRangeContext::none());
         assert!((stop - 95.0).abs() < 0.01);
 
         // Missing ATR → fixed fallback.
-        let (_, stop, _) = exit_prices(100.0, &rules, None, None);
+        let (_, stop, _) = exit_prices(100.0, &rules, None, ExitRangeContext::none());
         assert!((stop - 95.0).abs() < 0.01);
 
         // Disabled → fixed.
         rules.playbook.exit.stop_loss_atr_cap.enabled = false;
-        let (_, stop, _) = exit_prices(100.0, &rules, Some(1.5), None);
+        let (_, stop, _) = exit_prices(100.0, &rules, Some(1.5), ExitRangeContext::none());
         assert!((stop - 95.0).abs() < 0.01);
     }
 
@@ -504,7 +552,7 @@ mod tests {
         rules.playbook.exit.profit_target_atr_cap.enabled = true;
         rules.playbook.exit.profit_target_atr_cap.atr_multiple = 2.5;
         // ATR 2 on price 100 → ATR% = 2%, cap = 5% < 8%
-        let (profit, _, _) = exit_prices(100.0, &rules, Some(2.0), None);
+        let (profit, _, _) = exit_prices(100.0, &rules, Some(2.0), ExitRangeContext::none());
         assert!((profit - 105.0).abs() < 0.01);
     }
 
@@ -523,7 +571,7 @@ mod tests {
         rules.playbook.exit.profit_target_horizon_cap.enabled = true;
         rules.playbook.exit.profit_target_horizon_cap.sqrt_days_multiple = 1.0;
         // ATR 2% → horizon = 1.0 × 2% × 2 = 4% < 8%
-        let (profit, _, _) = exit_prices(100.0, &rules, Some(2.0), None);
+        let (profit, _, _) = exit_prices(100.0, &rules, Some(2.0), ExitRangeContext::none());
         assert!((profit - 104.0).abs() < 0.01);
     }
 
@@ -542,7 +590,7 @@ mod tests {
         rules.playbook.exit.profit_target_horizon_cap.enabled = true;
         rules.playbook.exit.profit_target_horizon_cap.sqrt_days_multiple = 1.0;
         // ATR 1.5% → atr cap 3.75%, horizon ≈ 4.74% → atr wins
-        let g = exit_geometry(100.0, &rules, Some(1.5), None);
+        let g = exit_geometry(100.0, &rules, Some(1.5), ExitRangeContext::none());
         assert!((g.effective_target_pct - 3.75).abs() < 0.01);
         assert_eq!(g.target_binding, "atr");
         assert!(g.atr_pct.is_some_and(|p| (p - 1.5).abs() < 0.01));
@@ -567,9 +615,78 @@ mod tests {
             .profit_target_recent_range_cap
             .max_extension_above_high_pct = 1.0;
         // Entry 100, recent high 103 → ceiling 104.03 → ~4.03% < ATR/horizon/fixed
-        let g = exit_geometry(100.0, &rules, Some(2.0), Some(103.0));
+        let g = exit_geometry(
+            100.0,
+            &rules,
+            Some(2.0),
+            ExitRangeContext {
+                recent_high: Some(103.0),
+                recent_low: None,
+            },
+        );
         assert!((g.effective_target_pct - 4.03).abs() < 0.02);
         assert_eq!(g.target_binding, "recent_range");
+        assert!(g.range_ceiling_cap_pct.is_some());
+    }
+
+    #[test]
+    fn exit_prices_recent_range_width_binds_in_tight_channel() {
+        let mut rules = TraderRules {
+            version: 1,
+            trader_id: "t".into(),
+            accounts: vec![],
+            ..TraderRules::default()
+        };
+        rules.playbook.exit.profit_target_pct = 8.0;
+        rules.playbook.exit.profit_target_recent_range_cap.enabled = true;
+        rules.playbook.exit.profit_target_recent_range_cap.lookback_days = 60;
+        rules
+            .playbook
+            .exit
+            .profit_target_recent_range_cap
+            .max_extension_above_high_pct = 5.0; // loose ceiling
+        // high 104 / low 101 → width 3% < ceiling (~9%) and < fixed 8%
+        let g = exit_geometry(
+            100.0,
+            &rules,
+            None,
+            ExitRangeContext {
+                recent_high: Some(104.0),
+                recent_low: Some(101.0),
+            },
+        );
+        assert!((g.effective_target_pct - 3.0).abs() < 0.01);
+        assert_eq!(g.target_binding, "recent_range");
+        assert!(g.range_width_cap_pct.is_some_and(|w| (w - 3.0).abs() < 0.01));
+    }
+
+    #[test]
+    fn should_tighten_when_stored_target_looser_than_geometry() {
+        let mut rules = TraderRules {
+            version: 1,
+            trader_id: "t".into(),
+            accounts: vec![],
+            ..TraderRules::default()
+        };
+        rules.playbook.exit.profit_target_pct = 6.0;
+        rules.playbook.exit.profit_target_recent_range_cap.enabled = true;
+        rules
+            .playbook
+            .exit
+            .profit_target_recent_range_cap
+            .max_extension_above_high_pct = 1.0;
+        let g = exit_geometry(
+            451.5,
+            &rules,
+            Some(15.0),
+            ExitRangeContext {
+                recent_high: Some(466.32),
+                recent_low: Some(349.2),
+            },
+        );
+        assert_eq!(g.target_binding, "recent_range");
+        assert!(should_tighten_profit_limit(478.59, &g));
+        assert!(!should_tighten_profit_limit(g.target_price, &g));
     }
 
     #[test]
@@ -584,7 +701,7 @@ mod tests {
         rules.playbook.exit.profit_target_pct = 8.0;
         rules.playbook.exit.profit_target_horizon_cap.enabled = true;
         rules.playbook.exit.profit_target_horizon_cap.sqrt_days_multiple = 1.0;
-        let g = exit_geometry(100.0, &rules, Some(2.0), None);
+        let g = exit_geometry(100.0, &rules, Some(2.0), ExitRangeContext::none());
         let s = format_exit_geometry_brief(&g);
         assert!(s.contains("ATR 2.0%"), "{s}");
         assert!(s.contains("[horizon]"), "{s}");
