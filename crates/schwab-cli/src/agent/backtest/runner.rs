@@ -113,24 +113,6 @@ pub fn run_backtest(
             .unwrap_or_else(Utc::now);
 
         let mut still_open = Vec::new();
-        for pos in open.drain(..) {
-            match process_open(
-                rules_path,
-                rules,
-                &cache,
-                &mut state,
-                pos,
-                *day,
-                as_of,
-                &mut skip_counts,
-            )? {
-                Some(p) => still_open.push(p),
-                None => {}
-            }
-        }
-        open = still_open;
-        sync_open_to_state(&mut state, &open);
-
         let closes_bench = cache.closes_through(&bench, *day);
         let spot_bench = cache.close_on_date(&bench, *day).unwrap_or(0.0);
         let (above50, above200) = sma_flags(&closes_bench, spot_bench);
@@ -148,6 +130,25 @@ pub fn run_backtest(
                 .pause_entries_vix_below
                 .is_some_and(|floor| vix.is_some_and(|v| v <= floor));
         let blocked = !rules.risk.active_blocked_date_labels(*day).is_empty();
+
+        for pos in open.drain(..) {
+            match process_open(
+                rules_path,
+                rules,
+                &cache,
+                &mut state,
+                pos,
+                *day,
+                as_of,
+                &mut skip_counts,
+                Some(preferred.as_str()),
+            )? {
+                Some(p) => still_open.push(p),
+                None => {}
+            }
+        }
+        open = still_open;
+        sync_open_to_state(&mut state, &open);
 
         let mut entry_action = Value::Null;
         if !pause && !blocked && preferred != "pause" && state.trading_halted_reason.is_none() {
@@ -252,6 +253,7 @@ fn process_open(
     day: NaiveDate,
     as_of: chrono::DateTime<Utc>,
     skips: &mut HashMap<String, u32>,
+    preferred_strategy: Option<&str>,
 ) -> Result<Option<OpenBt>> {
     match &pos.kind {
         OpenKind::Vertical(v) => {
@@ -310,6 +312,7 @@ fn process_open(
                 dte,
                 source: "bs".into(),
             };
+            let open_strategy = if v.is_put { "put_credit" } else { "call_credit" };
             let exit = evaluate_all_exits(
                 rules,
                 Some(pos.entry_credit),
@@ -317,6 +320,8 @@ fn process_open(
                 Some(&analytics),
                 pos.peak_profit_pct,
                 Some(pos.opened_at),
+                preferred_strategy,
+                open_strategy,
             );
 
             if let Some(eval) = exit {
@@ -370,8 +375,17 @@ fn process_open(
                 dte,
                 source: "bs".into(),
             };
-            // Condors: mechanical profit/stop/DTE only (no thesis analytics).
-            let exit = evaluate_all_exits(rules, Some(pos.entry_credit), &mark, None, None, None);
+            // Condors: mechanical + regime-mismatch (no greek thesis analytics).
+            let exit = evaluate_all_exits(
+                rules,
+                Some(pos.entry_credit),
+                &mark,
+                None,
+                None,
+                None,
+                preferred_strategy,
+                "iron_condor",
+            );
             if let Some(eval) = exit {
                 close_position(rules_path, state, &pos, &eval.reason, debit, as_of, day)?;
                 return Ok(None);

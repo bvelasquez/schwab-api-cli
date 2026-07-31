@@ -327,6 +327,11 @@ pub struct ExitConfig {
     /// `sqrt_days_multiple × ATR% × √target_days` (uses min with other caps).
     #[serde(default)]
     pub profit_target_horizon_cap: ProfitTargetHorizonCapConfig,
+    /// Cap profit target at room to the recent N-day high (plus optional extension).
+    /// Rejects fantasy targets that ATR/horizon still allow when price has not
+    /// traded near that level recently.
+    #[serde(default)]
+    pub profit_target_recent_range_cap: ProfitTargetRecentRangeCapConfig,
     pub stop_loss_pct: f64,
     /// Cap stop distance at `atr_multiple × ATR%` when enabled (uses min with
     /// stop_loss_pct). Lets low-vol names (utilities/staples) trade with a
@@ -358,6 +363,18 @@ pub struct ProfitTargetHorizonCapConfig {
     /// Horizon expected move % = sqrt_days_multiple × ATR% × √target_days.
     /// `1.0` ≈ one random-walk expected move over the hold window.
     pub sqrt_days_multiple: f64,
+}
+
+/// Cap the profit target using recent swing highs so brackets stay inside
+/// historically printed range (plus a small extension buffer).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProfitTargetRecentRangeCapConfig {
+    pub enabled: bool,
+    /// Lookback sessions for recent high (mapped to 20 / 60 / 90d history features).
+    pub lookback_days: u32,
+    /// Allow target this far above the recent high (e.g. 1.0 = 1% breakout room).
+    pub max_extension_above_high_pct: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -833,6 +850,16 @@ impl Default for ProfitTargetHorizonCapConfig {
     }
 }
 
+impl Default for ProfitTargetRecentRangeCapConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            lookback_days: 60,
+            max_extension_above_high_pct: 1.0,
+        }
+    }
+}
+
 impl Default for StopLossAtrCapConfig {
     fn default() -> Self {
         Self {
@@ -848,6 +875,7 @@ impl Default for ExitConfig {
             profit_target_pct: 8.0,
             profit_target_atr_cap: ProfitTargetAtrCapConfig::default(),
             profit_target_horizon_cap: ProfitTargetHorizonCapConfig::default(),
+            profit_target_recent_range_cap: ProfitTargetRecentRangeCapConfig::default(),
             stop_loss_pct: 4.0,
             stop_loss_atr_cap: StopLossAtrCapConfig::default(),
             use_oco_at_entry: true,
@@ -1629,7 +1657,7 @@ mod tests {
         assert!((rules.playbook.exit.profit_target_horizon_cap.sqrt_days_multiple - 1.0).abs() < 1e-9);
         assert_eq!(rules.playbook.holding_period.target_days, 10);
         // ATR 1.5% → atr cap 3.75% binds before horizon ≈ 4.74%
-        let pct = crate::capital::effective_profit_target_pct(100.0, &rules, Some(1.5));
+        let pct = crate::capital::effective_profit_target_pct(100.0, &rules, Some(1.5), None);
         assert!((pct - 3.75).abs() < 0.01);
     }
 }

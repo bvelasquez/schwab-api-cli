@@ -370,6 +370,7 @@ Effective profit target % is the **minimum** of:
 | Fixed | `profit_target_pct` | Ceiling |
 | ATR cap | `atr_multiple × ATR%` when `profit_target_atr_cap.enabled` | Daily-range scale (how many ATRs is the target?) |
 | Horizon cap | `sqrt_days_multiple × ATR% × √target_days` when `profit_target_horizon_cap.enabled` | Hold-window expected move (`holding_period.target_days`) |
+| Recent-range cap | Room to N-day high (+ extension %) when `profit_target_recent_range_cap.enabled` | Blocks targets beyond recently printed highs |
 
 ```yaml
 exit:
@@ -380,15 +381,19 @@ exit:
   profit_target_horizon_cap:
     enabled: true
     sqrt_days_multiple: 1.0    # min(..., ATR% × √target_days)
+  profit_target_recent_range_cap:
+    enabled: true
+    lookback_days: 60          # uses 20/60/90d highs from history
+    max_extension_above_high_pct: 1.0  # allow 1% above recent high
   stop_loss_pct: 5.0
   stop_loss_atr_cap:
     enabled: true
     atr_multiple: 2.0          # min(5%, 2.0 × ATR%)
 ```
 
-With `target_days: 10`, horizon ≈ `3.16 × ATR%`. The daily ATR cap (2.5×) usually binds first; horizon binds when `target_days` is short or ATR cap is off. Stops use `stop_loss_atr_cap` the same way.
+With `target_days: 10`, horizon ≈ `3.16 × ATR%`. The daily ATR cap (2.5×) usually binds first; horizon binds when `target_days` is short or ATR cap is off. Recent-range binds when the ATR/horizon target sits above the recent swing high (classic fantasy-target case). Stops use `stop_loss_atr_cap` the same way.
 
-When any ATR/horizon exit cap is enabled, entries **require** `atr_14` (no silent fallback to the fixed %). `min_reward_risk` then rejects names whose capped target / stop collapses below the floor.
+When any ATR/horizon exit cap is enabled, entries **require** `atr_14` (no silent fallback to the fixed %). When recent-range cap is enabled, entries **require** the lookback high. `min_reward_risk` then rejects names whose capped target / stop collapses below the floor.
 
 ### FMP candidate discovery (`sources.fmp`)
 

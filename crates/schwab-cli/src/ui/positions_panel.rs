@@ -14,7 +14,7 @@ use crate::ui::spread_live::{
 use crate::ui::spread_payoff::render_payoff_chart;
 use crate::ui::theme::{self, gauge_color, pnl_color};
 
-pub const CARD_HEIGHT: u16 = 17;
+pub const CARD_HEIGHT: u16 = 18;
 
 pub fn positions_content_height(monitors: &[SpreadMonitorView]) -> u16 {
     if monitors.is_empty() {
@@ -92,17 +92,22 @@ pub fn render_positions_panel(
 
 fn render_position_card(f: &mut Frame, area: Rect, m: &SpreadMonitorView, exits_armed: bool) {
     let health = spread_health(m, exits_armed);
-    let type_label = m
-        .analytics
-        .as_ref()
-        .map(|a| {
-            if a.is_put_spread {
-                "put credit"
-            } else {
-                "call credit"
-            }
-        })
-        .unwrap_or(m.strategy.as_str());
+    let type_label = if m.strategy.eq_ignore_ascii_case("iron_condor")
+        || m.analytics.as_ref().is_some_and(|a| a.is_iron_condor)
+    {
+        "iron condor"
+    } else {
+        m.analytics
+            .as_ref()
+            .map(|a| {
+                if a.is_put_spread {
+                    "put credit"
+                } else {
+                    "call credit"
+                }
+            })
+            .unwrap_or(m.strategy.as_str())
+    };
 
     let title = format!(
         "{}  ×{}  {}  exp {}  {}d DTE",
@@ -154,39 +159,49 @@ fn render_metrics_column(
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(1),
+            Constraint::Length(1),
             Constraint::Min(0),
         ])
         .split(area);
 
-    let win = m
-        .analytics
+    let success = m
+        .momentum
         .as_ref()
-        .map(|a| spread_win_score(m.profit_pct, a, m.pct_cushion_from_stop))
+        .map(|mom| mom.success_pct)
+        .or_else(|| {
+            m.analytics
+                .as_ref()
+                .map(|a| spread_win_score(m.profit_pct, a, m.pct_cushion_from_stop))
+        })
         .unwrap_or(50.0);
 
     // Path-first headline (options ≠ stocks): OTM cushion + time, then optional MTM.
     let path_line = if let Some(a) = &m.analytics {
-        let otm = a
-            .short_otm_pct
-            .map(|p| format!("{p:.1}% OTM"))
-            .unwrap_or_else(|| "OTM—".into());
+        let otm = if a.is_iron_condor {
+            match (a.put_short_otm_pct, a.call_short_otm_pct) {
+                (Some(p), Some(c)) => format!("put {p:.1}% / call {c:.1}% OTM"),
+                _ => a
+                    .short_otm_pct
+                    .map(|p| format!("{p:.1}% OTM (near)"))
+                    .unwrap_or_else(|| "OTM—".into()),
+            }
+        } else {
+            a.short_otm_pct
+                .map(|p| format!("{p:.1}% OTM"))
+                .unwrap_or_else(|| "OTM—".into())
+        };
         let to_short = a
             .distance_to_short_strike_usd
-            .map(|d| format!("${d:.0} to short"))
+            .map(|d| format!("${d:.0} to near short"))
             .unwrap_or_else(|| "—".into());
         let theta = a
             .net_theta_per_day_usd
             .map(|t| format!("θ ${t:+.2}/d"))
             .unwrap_or_else(|| "θ —".into());
-        let expiry_here = crate::ui::spread_payoff::vertical_credit_payoff_usd(
-            a.underlying_price,
-            a.is_put_spread,
-            a.short_strike,
-            a.long_strike,
-            m.entry_credit,
-            m.contracts,
-        );
-        format!("{otm}  {to_short}  {theta}  if expired here ${expiry_here:+.0}")
+        let expiry_here = crate::ui::spread_payoff::expiry_payoff_usd(a.underlying_price, m)
+            .map(|v| format!("if expired here ${v:+.0}"))
+            .unwrap_or_else(|| "if expired here —".into());
+        format!("{otm}  {to_short}  {theta}  {expiry_here}")
     } else {
         format!("{}d DTE  waiting for chain…", m.dte)
     };
@@ -216,7 +231,28 @@ fn render_metrics_column(
         rows[1],
     );
 
-    f.render_widget(thesis_gauge(win), rows[2]);
+    f.render_widget(success_gauge(success), rows[2]);
+
+    if let Some(mom) = &m.momentum {
+        let crush_color = match mom.iv_change_pts {
+            Some(c) if c <= -1.0 => theme::PROFIT,
+            Some(c) if c >= 1.0 => theme::LOSS,
+            _ => theme::ACCENT,
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(vec![Span::styled(
+                mom.summary.clone(),
+                Style::default().fg(crush_color),
+            )]))
+            .wrap(Wrap { trim: true }),
+            rows[3],
+        );
+    } else {
+        f.render_widget(
+            Paragraph::new("θ / IV momentum waiting for chain…").style(theme::label_style()),
+            rows[3],
+        );
+    }
 
     if let Some(a) = &m.analytics {
         let pop = a.spread_pop_pct.unwrap_or(0.0);
@@ -228,11 +264,24 @@ fn render_metrics_column(
                         .bg(Color::Rgb(40, 44, 56)),
                 )
                 .ratio((pop / 100.0).clamp(0.0, 1.0))
-                .label(format!("POP vs BE {pop:.0}%")),
-            rows[3],
+                .label(if a.is_iron_condor {
+                    format!("model P(in BE band) {pop:.0}%")
+                } else {
+                    format!("model P(above BE) {pop:.0}%")
+                }),
+            rows[4],
         );
 
-        let strike_line = if a.is_put_spread {
+        let strike_line = if a.is_iron_condor {
+            format!(
+                "puts ${:.0}/${:.0}  calls ${:.0}/${:.0}  width ${:.0}",
+                a.put_short.unwrap_or(0.0),
+                a.put_long.unwrap_or(0.0),
+                a.call_short.unwrap_or(0.0),
+                a.call_long.unwrap_or(0.0),
+                a.width
+            )
+        } else if a.is_put_spread {
             format!(
                 "puts ${:.0}/${:.0}  width ${:.0}",
                 a.short_strike, a.long_strike, a.width
@@ -245,7 +294,7 @@ fn render_metrics_column(
         };
         f.render_widget(
             Paragraph::new(strike_line).style(Style::default().fg(theme::ACCENT)),
-            rows[4],
+            rows[5],
         );
 
         let chg = a
@@ -255,28 +304,67 @@ fn render_metrics_column(
         f.render_widget(
             Paragraph::new(format!("spot ${:.2}{chg}", a.underlying_price))
                 .style(theme::value_style()),
-            rows[5],
+            rows[6],
         );
 
-        let delta_s = a
-            .short_delta
-            .map(|d| format!("{d:+.2}"))
-            .unwrap_or_else(|| "—".into());
+        let delta_s = if a.is_iron_condor {
+            match (a.put_short_delta, a.call_short_delta) {
+                (Some(p), Some(c)) => format!("P{p:+.2}/C{c:+.2}"),
+                _ => a
+                    .short_delta
+                    .map(|d| format!("{d:+.2}"))
+                    .unwrap_or_else(|| "—".into()),
+            }
+        } else {
+            a.short_delta
+                .map(|d| format!("{d:+.2}"))
+                .unwrap_or_else(|| "—".into())
+        };
         let theta = a
             .net_theta_per_day_usd
             .map(|t| format!("{:+.2}/d", t))
             .unwrap_or_else(|| "—".into());
+        let iv_part = match (
+            a.chain_iv_pct,
+            m.momentum.as_ref().and_then(|mom| mom.iv_change_pts),
+        ) {
+            (Some(iv), Some(chg)) => format!("IV {iv:.0}% ({chg:+.1})"),
+            (Some(iv), None) => format!("IV {iv:.0}%"),
+            _ => "IV —".into(),
+        };
         f.render_widget(
             Paragraph::new(format!(
-                "δ {delta_s}  θ {theta}  IV {:.0}%  ·  {}d left",
-                a.chain_iv_pct.unwrap_or(0.0),
+                "δ {delta_s}  θ {theta}  {iv_part}  ·  {}d left",
                 m.dte
             ))
             .style(theme::label_style()),
-            rows[6],
+            rows[7],
         );
 
-        if let Some(be) = a.break_even_price {
+        if a.is_iron_condor {
+            if let (Some(put_be), Some(call_be)) =
+                (a.put_break_even_price, a.call_break_even_price)
+            {
+                let cushion = a
+                    .distance_to_be_pct
+                    .map(|p| format!("{p:+.1}%"))
+                    .unwrap_or_else(|| "—".into());
+                let (rail, _) = crate::agent::spread_analytics::iron_condor_price_rail(
+                    put_be,
+                    call_be,
+                    a.underlying_price,
+                    area.width.saturating_sub(8).max(16) as usize,
+                );
+                f.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::raw(format!("BE ${put_be:.0}–${call_be:.0}  near {cushion}  ")),
+                        Span::styled(rail, Style::default().fg(Color::Blue)),
+                        Span::styled("  P ● C", theme::label_style()),
+                    ])),
+                    rows[8],
+                );
+            }
+        } else if let Some(be) = a.break_even_price {
             let cushion = a
                 .distance_to_be_pct
                 .map(|p| format!("{p:+.1}%"))
@@ -294,13 +382,13 @@ fn render_metrics_column(
                     Span::styled(rail, Style::default().fg(Color::Blue)),
                     Span::styled("  B S ●", theme::label_style()),
                 ])),
-                rows[7],
+                rows[8],
             );
         }
     } else {
         f.render_widget(
             Paragraph::new("waiting for chain refresh…").style(theme::label_style()),
-            rows[3],
+            rows[4],
         );
     }
 
@@ -329,7 +417,7 @@ fn render_metrics_column(
             )
             .ratio(exit_ratio)
             .label(format!("mark exit {exit_label} {:.0}%", exit_ratio * 100.0)),
-        rows[8],
+        rows[9],
     );
 
     let rail = spread_exit_rail(
@@ -352,7 +440,7 @@ fn render_metrics_column(
             Span::styled("T", Style::default().fg(theme::PROFIT)),
             Span::styled(spread_rail_progress_labels(m), theme::label_style()),
         ])),
-        rows[9],
+        rows[10],
     );
 
     let age = m
@@ -376,17 +464,17 @@ fn render_metrics_column(
         Paragraph::new(footer)
             .style(theme::label_style())
             .wrap(Wrap { trim: true }),
-        rows[10],
+        rows[11],
     );
 }
 
-fn thesis_gauge(win: f64) -> Gauge<'static> {
+fn success_gauge(success: f64) -> Gauge<'static> {
     Gauge::default()
         .gauge_style(
             Style::default()
-                .fg(gauge_color(1.0 - win / 100.0))
+                .fg(gauge_color(1.0 - success / 100.0))
                 .bg(Color::Rgb(40, 44, 56)),
         )
-        .ratio((win / 100.0).clamp(0.0, 1.0))
-        .label(format!("path score {win:.0}%"))
+        .ratio((success / 100.0).clamp(0.0, 1.0))
+        .label(format!("success ~{success:.0}%  (POP+path+θ/IV)"))
 }

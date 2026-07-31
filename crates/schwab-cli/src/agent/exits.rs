@@ -7,12 +7,13 @@ use serde_json::{json, Value};
 
 use crate::options::{
     days_to_expiry, group_option_legs, list_option_positions, position_group_id,
-    spread_contract_count, OptionPositionGroup, OptionPositionLeg, VerticalParams,
+    spread_contract_count, IronCondorParams, OptionPositionGroup, OptionPositionLeg,
+    VerticalParams,
 };
 use crate::options::symbology::{build_option_symbol, parse_expiry, parse_option_symbol};
 use crate::rules::{ExitRules, RulesConfig};
 
-use super::market_context::vertical_open_position_context;
+use super::market_context::{iron_condor_open_position_context, vertical_open_position_context};
 use super::spread_analytics::{analytics_from_json, SpreadAnalytics};
 use super::state::{AgentState, TrackedPosition};
 
@@ -55,23 +56,24 @@ pub fn find_tracked_position<'a>(
 }
 
 pub fn infer_entry_credit_from_legs(legs: &[OptionPositionLeg]) -> Option<f64> {
-    if legs.len() != 2 {
-        return None;
-    }
-    let mut short_premium = None;
-    let mut long_premium = None;
+    let mut short_sum = 0.0;
+    let mut long_sum = 0.0;
+    let mut saw_short = false;
+    let mut saw_long = false;
     for leg in legs {
         let avg = leg.average_price?;
         if leg.quantity < 0.0 {
-            short_premium = Some(avg.abs());
+            short_sum += avg.abs();
+            saw_short = true;
         } else if leg.quantity > 0.0 {
-            long_premium = Some(avg.abs());
+            long_sum += avg.abs();
+            saw_long = true;
         }
     }
-    match (short_premium, long_premium) {
-        (Some(s), Some(l)) => Some((s - l).max(0.0)),
-        (Some(s), None) => Some(s),
-        _ => None,
+    if saw_short {
+        Some((short_sum - if saw_long { long_sum } else { 0.0 }).max(0.0))
+    } else {
+        None
     }
 }
 
@@ -92,6 +94,26 @@ struct VerticalChainSnapshot {
     debit_to_close: f64,
 }
 
+struct IronCondorChainSnapshot {
+    chain: Value,
+    put_map: Value,
+    call_map: Value,
+    put_short: f64,
+    put_long: f64,
+    call_short: f64,
+    call_long: f64,
+    debit_to_close: f64,
+}
+
+fn position_strategy<'a>(
+    tracked: Option<&'a TrackedPosition>,
+    group: &'a OptionPositionGroup,
+) -> &'a str {
+    tracked
+        .map(|t| t.strategy.as_str())
+        .unwrap_or(group.strategy_hint.as_str())
+}
+
 /// Evaluate mechanical exit rules and build an LLM-ready monitor snapshot (single chain fetch).
 pub async fn evaluate_position_monitor(
     market: &MarketDataApi,
@@ -99,6 +121,7 @@ pub async fn evaluate_position_monitor(
     rules: &RulesConfig,
     today: NaiveDate,
     tracked: Option<&TrackedPosition>,
+    preferred_strategy: Option<&str>,
 ) -> Result<PositionMonitorResult> {
     let entry_credit = tracked
         .and_then(|p| p.entry_credit)
@@ -111,66 +134,132 @@ pub async fn evaluate_position_monitor(
         .map(|p| days_to_expiry(p.expiry, today))
         .unwrap_or(0);
 
-    let chain_result = fetch_vertical_chain_snapshot(market, group).await;
-
-    let (exit, mark_opt, analytics, market_context, chain_error) = match chain_result {
-        Ok(chain_snap) => {
-            let profit_pct = entry_credit
-                .filter(|c| *c > f64::EPSILON)
-                .map(|entry| ((entry - chain_snap.debit_to_close) / entry) * 100.0);
-            let mark = SpreadMark {
-                entry_credit: entry_credit.unwrap_or(0.0),
-                debit_to_close: chain_snap.debit_to_close,
-                profit_pct: profit_pct.unwrap_or(0.0),
-                dte,
-                source: "chain".into(),
-            };
-            let expiry_date = chrono::NaiveDate::parse_from_str(&group.expiry, "%Y-%m-%d")
-                .ok()
-                .or_else(|| {
-                    group
-                        .legs
-                        .first()
-                        .and_then(|l| l.parsed.as_ref())
-                        .map(|p| p.expiry)
-                })
-                .unwrap_or(today);
-            let contracts = spread_contract_count(group).max(1);
-            let ctx = vertical_open_position_context(
-                &chain_snap.chain,
-                &group.underlying,
-                today,
-                expiry_date,
-                &chain_snap.strike_map,
-                chain_snap.short_strike,
-                chain_snap.long_strike,
-                chain_snap.is_put,
-                entry_credit,
-                Some(chain_snap.debit_to_close),
-                profit_pct,
-                dte,
-                contracts,
-            );
-            let analytics = analytics_from_json(ctx.get("analytics").unwrap_or(&json!({})));
-            let exit = evaluate_all_exits(
-                rules,
-                entry_credit,
-                &mark,
-                analytics.as_ref(),
-                tracked.and_then(|p| p.peak_profit_pct),
-                tracked.map(|p| p.opened_at),
-            );
-            (exit, Some(mark), analytics, Some(ctx), None)
-        }
-        Err(e) => {
-            let exit = if let Some(credit) = entry_credit.filter(|c| *c > 0.0) {
-                evaluate_dte_only_with_credit(group, rules, today, credit, dte)?
-            } else {
-                evaluate_dte_only(group, rules, today)?
-            };
-            (exit, None, None, None, Some(e.to_string()))
-        }
-    };
+    let strategy = position_strategy(tracked, group);
+    let (exit, mark_opt, analytics, market_context, chain_error) =
+        if strategy.eq_ignore_ascii_case("iron_condor") {
+            match fetch_iron_condor_chain_snapshot(market, group, tracked).await {
+                Ok(snap) => {
+                    let profit_pct = entry_credit
+                        .filter(|c| *c > f64::EPSILON)
+                        .map(|entry| ((entry - snap.debit_to_close) / entry) * 100.0);
+                    let mark = SpreadMark {
+                        entry_credit: entry_credit.unwrap_or(0.0),
+                        debit_to_close: snap.debit_to_close,
+                        profit_pct: profit_pct.unwrap_or(0.0),
+                        dte,
+                        source: "chain".into(),
+                    };
+                    let expiry_date = chrono::NaiveDate::parse_from_str(&group.expiry, "%Y-%m-%d")
+                        .ok()
+                        .or_else(|| {
+                            group
+                                .legs
+                                .first()
+                                .and_then(|l| l.parsed.as_ref())
+                                .map(|p| p.expiry)
+                        })
+                        .unwrap_or(today);
+                    let contracts = spread_contract_count(group).max(1);
+                    let ctx = iron_condor_open_position_context(
+                        &snap.chain,
+                        &group.underlying,
+                        expiry_date,
+                        &snap.put_map,
+                        &snap.call_map,
+                        snap.put_short,
+                        snap.put_long,
+                        snap.call_short,
+                        snap.call_long,
+                        entry_credit,
+                        Some(snap.debit_to_close),
+                        profit_pct,
+                        dte,
+                        contracts,
+                    );
+                    let analytics = analytics_from_json(ctx.get("analytics").unwrap_or(&json!({})));
+                    let exit = evaluate_all_exits(
+                        rules,
+                        entry_credit,
+                        &mark,
+                        analytics.as_ref(),
+                        tracked.and_then(|p| p.peak_profit_pct),
+                        tracked.map(|p| p.opened_at),
+                        preferred_strategy,
+                        strategy,
+                    );
+                    (exit, Some(mark), analytics, Some(ctx), None)
+                }
+                Err(e) => {
+                    let exit = if let Some(credit) = entry_credit.filter(|c| *c > 0.0) {
+                        evaluate_dte_only_with_credit(group, rules, today, credit, dte)?
+                    } else {
+                        evaluate_dte_only(group, rules, today)?
+                    };
+                    (exit, None, None, None, Some(e.to_string()))
+                }
+            }
+        } else {
+            match fetch_vertical_chain_snapshot(market, group).await {
+                Ok(chain_snap) => {
+                    let profit_pct = entry_credit
+                        .filter(|c| *c > f64::EPSILON)
+                        .map(|entry| ((entry - chain_snap.debit_to_close) / entry) * 100.0);
+                    let mark = SpreadMark {
+                        entry_credit: entry_credit.unwrap_or(0.0),
+                        debit_to_close: chain_snap.debit_to_close,
+                        profit_pct: profit_pct.unwrap_or(0.0),
+                        dte,
+                        source: "chain".into(),
+                    };
+                    let expiry_date = chrono::NaiveDate::parse_from_str(&group.expiry, "%Y-%m-%d")
+                        .ok()
+                        .or_else(|| {
+                            group
+                                .legs
+                                .first()
+                                .and_then(|l| l.parsed.as_ref())
+                                .map(|p| p.expiry)
+                        })
+                        .unwrap_or(today);
+                    let contracts = spread_contract_count(group).max(1);
+                    let ctx = vertical_open_position_context(
+                        &chain_snap.chain,
+                        &group.underlying,
+                        today,
+                        expiry_date,
+                        &chain_snap.strike_map,
+                        chain_snap.short_strike,
+                        chain_snap.long_strike,
+                        chain_snap.is_put,
+                        entry_credit,
+                        Some(chain_snap.debit_to_close),
+                        profit_pct,
+                        dte,
+                        contracts,
+                    );
+                    let analytics = analytics_from_json(ctx.get("analytics").unwrap_or(&json!({})));
+                    let exit = evaluate_all_exits(
+                        rules,
+                        entry_credit,
+                        &mark,
+                        analytics.as_ref(),
+                        tracked.and_then(|p| p.peak_profit_pct),
+                        tracked.map(|p| p.opened_at),
+                        preferred_strategy,
+                        strategy,
+                    );
+                    (exit, Some(mark), analytics, Some(ctx), None)
+                }
+                Err(e) => {
+                    let exit = if let Some(credit) = entry_credit.filter(|c| *c > 0.0) {
+                        evaluate_dte_only_with_credit(group, rules, today, credit, dte)?
+                    } else {
+                        evaluate_dte_only(group, rules, today)?
+                    };
+                    (exit, None, None, None, Some(e.to_string()))
+                }
+            }
+        };
 
     let snapshot = monitor_snapshot_json(
         group,
@@ -242,6 +331,7 @@ pub fn stop_loss_armed(rules: &RulesConfig, analytics: Option<&SpreadAnalytics>)
 
 /// Primary + thesis deterioration exits (evaluated every tick when chain data is live).
 /// Profit target / DTE always apply; mark stop may require thin OTM cushion; thesis respects min_hold.
+/// Regime-mismatch early take runs even during min_hold (structure vs live preferred strategy).
 pub fn evaluate_all_exits(
     rules: &RulesConfig,
     entry_credit: Option<f64>,
@@ -249,9 +339,16 @@ pub fn evaluate_all_exits(
     analytics: Option<&SpreadAnalytics>,
     peak_profit_pct: Option<f64>,
     opened_at: Option<chrono::DateTime<chrono::Utc>>,
+    preferred_strategy: Option<&str>,
+    open_strategy: &str,
 ) -> Option<ExitEvaluation> {
     if let Some(exit) =
         evaluate_exit_from_mark_with_analytics(rules, entry_credit, mark, analytics)
+    {
+        return Some(exit);
+    }
+    if let Some(exit) =
+        evaluate_regime_mismatch_exit(rules, entry_credit, mark, preferred_strategy, open_strategy)
     {
         return Some(exit);
     }
@@ -262,6 +359,65 @@ pub fn evaluate_all_exits(
         return None;
     }
     evaluate_thesis_exit(rules, entry_credit, mark, analytics, peak_profit_pct)
+}
+
+/// Normalize strategy labels used in regime map / tracked positions.
+pub fn normalize_options_strategy(s: &str) -> String {
+    let lower = s.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "put" | "put_credit" | "putcredit" | "vertical_put" => "put_credit".into(),
+        "call" | "call_credit" | "callcredit" | "vertical_call" => "call_credit".into(),
+        "condor" | "iron_condor" | "ironcondor" | "ic" => "iron_condor".into(),
+        "pause" | "hostile" => "pause".into(),
+        other => other.to_string(),
+    }
+}
+
+/// True when the open structure is not what we would open flat under `preferred`.
+pub fn structure_mismatches_preferred(
+    open_strategy: &str,
+    preferred_strategy: &str,
+    treat_pause_as_mismatch: bool,
+) -> bool {
+    let open = normalize_options_strategy(open_strategy);
+    let preferred = normalize_options_strategy(preferred_strategy);
+    if preferred.is_empty() {
+        return false;
+    }
+    if preferred == "pause" {
+        return treat_pause_as_mismatch;
+    }
+    open != preferred
+}
+
+/// Early take when regime prefers a different structure and the trade is green enough.
+pub fn evaluate_regime_mismatch_exit(
+    rules: &RulesConfig,
+    entry_credit: Option<f64>,
+    mark: &SpreadMark,
+    preferred_strategy: Option<&str>,
+    open_strategy: &str,
+) -> Option<ExitEvaluation> {
+    let cfg = &rules.exit_rules.thesis.regime_mismatch;
+    if !cfg.enabled || !rules.exit_rules.thesis.enabled {
+        return None;
+    }
+    let preferred = preferred_strategy?;
+    if !structure_mismatches_preferred(open_strategy, preferred, cfg.treat_pause_as_mismatch) {
+        return None;
+    }
+    let entry_credit = entry_credit.filter(|c| *c > f64::EPSILON)?;
+    if mark.profit_pct + f64::EPSILON < cfg.min_profit_pct {
+        return None;
+    }
+    let mark = SpreadMark {
+        entry_credit,
+        ..mark.clone()
+    };
+    Some(ExitEvaluation {
+        reason: "thesis_regime_mismatch".into(),
+        mark,
+    })
 }
 
 fn thesis_min_hold_active(
@@ -439,6 +595,122 @@ async fn fetch_vertical_chain_at_strikes(
         is_put,
         debit_to_close,
     })
+}
+
+async fn fetch_iron_condor_chain_snapshot(
+    market: &MarketDataApi,
+    group: &OptionPositionGroup,
+    tracked: Option<&TrackedPosition>,
+) -> Result<IronCondorChainSnapshot> {
+    let (put_short, put_long, call_short, call_long) =
+        iron_condor_strikes(group, tracked).context("iron condor strikes")?;
+
+    let mut last_err = None;
+    for strike_count in [80u32, 150] {
+        match fetch_iron_condor_chain_at_strikes(
+            market,
+            group,
+            put_short,
+            put_long,
+            call_short,
+            call_long,
+            strike_count,
+        )
+        .await
+        {
+            Ok(snap) => return Ok(snap),
+            Err(e) => last_err = Some(e),
+        }
+    }
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("iron condor chain fetch failed")))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn fetch_iron_condor_chain_at_strikes(
+    market: &MarketDataApi,
+    group: &OptionPositionGroup,
+    put_short: f64,
+    put_long: f64,
+    call_short: f64,
+    call_long: f64,
+    strike_count: u32,
+) -> Result<IronCondorChainSnapshot> {
+    let chain = market
+        .chains()
+        .get(&ChainQuery {
+            symbol: &group.underlying,
+            contract_type: Some("ALL"),
+            strike_count: Some(strike_count),
+            include_underlying_quote: Some(true),
+            from_date: Some(&group.expiry),
+            to_date: Some(&group.expiry),
+            ..Default::default()
+        })
+        .await?;
+
+    let put_map =
+        find_expiry_strikes(&chain, "putExpDateMap", &group.expiry).context("put expiry map")?;
+    let call_map =
+        find_expiry_strikes(&chain, "callExpDateMap", &group.expiry).context("call expiry map")?;
+
+    let put_debit = (strike_quote_field(&put_map, put_short, "ask")?
+        - strike_quote_field(&put_map, put_long, "bid")?)
+    .max(0.0);
+    let call_debit = (strike_quote_field(&call_map, call_short, "ask")?
+        - strike_quote_field(&call_map, call_long, "bid")?)
+    .max(0.0);
+
+    Ok(IronCondorChainSnapshot {
+        chain,
+        put_map,
+        call_map,
+        put_short,
+        put_long,
+        call_short,
+        call_long,
+        debit_to_close: put_debit + call_debit,
+    })
+}
+
+fn iron_condor_strikes(
+    group: &OptionPositionGroup,
+    tracked: Option<&TrackedPosition>,
+) -> Result<(f64, f64, f64, f64)> {
+    if let Some(params) = tracked
+        .and_then(|t| t.entry_params.as_ref())
+        .and_then(|v| serde_json::from_value::<IronCondorParams>(v.clone()).ok())
+    {
+        return Ok((
+            params.put_short,
+            params.put_long,
+            params.call_short,
+            params.call_long,
+        ));
+    }
+    iron_condor_legs_from_group(group)
+}
+
+fn iron_condor_legs_from_group(group: &OptionPositionGroup) -> Result<(f64, f64, f64, f64)> {
+    let mut put_short = None;
+    let mut put_long = None;
+    let mut call_short = None;
+    let mut call_long = None;
+    for leg in &group.legs {
+        let parsed = leg.parsed.as_ref().context("unparsed option leg")?;
+        match (parsed.put_call, leg.quantity < 0.0, leg.quantity > 0.0) {
+            ('P' | 'p', true, _) => put_short = Some(parsed.strike),
+            ('P' | 'p', _, true) => put_long = Some(parsed.strike),
+            ('C' | 'c', true, _) => call_short = Some(parsed.strike),
+            ('C' | 'c', _, true) => call_long = Some(parsed.strike),
+            _ => {}
+        }
+    }
+    Ok((
+        put_short.context("missing put short leg")?,
+        put_long.context("missing put long leg")?,
+        call_short.context("missing call short leg")?,
+        call_long.context("missing call long leg")?,
+    ))
 }
 
 fn format_chain_strike(strike: f64) -> String {
@@ -850,9 +1122,66 @@ pub async fn load_live_position_groups(
     Ok(map)
 }
 
-/// Build a minimal position group from sim tracked state (vertical spreads only).
+/// Build a minimal position group from tracked state (vertical or iron condor).
 pub fn option_group_from_tracked(tracked: &TrackedPosition) -> Option<OptionPositionGroup> {
     let params = tracked.entry_params.as_ref()?;
+    let contracts = tracked.contracts.max(1) as f64;
+
+    if tracked.strategy.eq_ignore_ascii_case("iron_condor") {
+        let ic: IronCondorParams = serde_json::from_value(params.clone()).ok()?;
+        let expiry = parse_expiry(&ic.expiry).ok()?;
+        let put_short_sym =
+            build_option_symbol(&ic.underlying, &ic.expiry, 'P', ic.put_short).ok()?;
+        let put_long_sym =
+            build_option_symbol(&ic.underlying, &ic.expiry, 'P', ic.put_long).ok()?;
+        let call_short_sym =
+            build_option_symbol(&ic.underlying, &ic.expiry, 'C', ic.call_short).ok()?;
+        let call_long_sym =
+            build_option_symbol(&ic.underlying, &ic.expiry, 'C', ic.call_long).ok()?;
+        let legs = vec![
+            OptionPositionLeg {
+                symbol: put_short_sym.clone(),
+                underlying: ic.underlying.clone(),
+                quantity: -contracts,
+                market_value: 0.0,
+                average_price: tracked.entry_credit,
+                parsed: parse_option_symbol(&put_short_sym).ok(),
+            },
+            OptionPositionLeg {
+                symbol: put_long_sym.clone(),
+                underlying: ic.underlying.clone(),
+                quantity: contracts,
+                market_value: 0.0,
+                average_price: None,
+                parsed: parse_option_symbol(&put_long_sym).ok(),
+            },
+            OptionPositionLeg {
+                symbol: call_short_sym.clone(),
+                underlying: ic.underlying.clone(),
+                quantity: -contracts,
+                market_value: 0.0,
+                average_price: None,
+                parsed: parse_option_symbol(&call_short_sym).ok(),
+            },
+            OptionPositionLeg {
+                symbol: call_long_sym.clone(),
+                underlying: ic.underlying.clone(),
+                quantity: contracts,
+                market_value: 0.0,
+                average_price: None,
+                parsed: parse_option_symbol(&call_long_sym).ok(),
+            },
+        ];
+        return Some(OptionPositionGroup {
+            id: tracked.position_id.clone(),
+            underlying: ic.underlying,
+            expiry: expiry.format("%Y-%m-%d").to_string(),
+            strategy_hint: tracked.strategy.clone(),
+            legs,
+            net_market_value: 0.0,
+        });
+    }
+
     let v: VerticalParams = serde_json::from_value(params.clone()).ok()?;
     let put_call = if v.spread_type.to_ascii_lowercase().contains("put") {
         'P'
@@ -862,7 +1191,6 @@ pub fn option_group_from_tracked(tracked: &TrackedPosition) -> Option<OptionPosi
     let expiry = parse_expiry(&v.expiry).ok()?;
     let short_sym = build_option_symbol(&v.underlying, &v.expiry, put_call, v.short_strike).ok()?;
     let long_sym = build_option_symbol(&v.underlying, &v.expiry, put_call, v.long_strike).ok()?;
-    let contracts = tracked.contracts.max(1) as f64;
     let legs = vec![
         OptionPositionLeg {
             symbol: short_sym.clone(),
@@ -1105,6 +1433,8 @@ mod tests {
             Some(&analytics),
             None,
             Some(opened),
+            None,
+            "put_credit",
         );
         assert!(exit.is_none(), "thesis should wait for min hold");
 
@@ -1120,11 +1450,60 @@ mod tests {
             Some(&analytics),
             None,
             Some(opened),
+            None,
+            "put_credit",
         );
         assert_eq!(
             profit_exit.as_ref().map(|e| e.reason.as_str()),
             Some("profit_target")
         );
+    }
+
+    #[test]
+    fn regime_mismatch_takes_green_iron_condor_when_trend_preferred() {
+        let mut rules = thesis_rules();
+        rules.exit_rules.thesis.min_hold_minutes = Some(30);
+        rules.exit_rules.thesis.regime_mismatch.enabled = true;
+        rules.exit_rules.thesis.regime_mismatch.min_profit_pct = 25.0;
+        let mark = SpreadMark {
+            entry_credit: 1.0,
+            debit_to_close: 0.70,
+            profit_pct: 30.0,
+            dte: 28,
+            source: "test".into(),
+        };
+        let opened = chrono::Utc::now() - chrono::Duration::minutes(5);
+        let exit = evaluate_all_exits(
+            &rules,
+            Some(1.0),
+            &mark,
+            None,
+            None,
+            Some(opened),
+            Some("put_credit"),
+            "iron_condor",
+        );
+        assert_eq!(
+            exit.as_ref().map(|e| e.reason.as_str()),
+            Some("thesis_regime_mismatch")
+        );
+
+        let flat = SpreadMark {
+            profit_pct: 10.0,
+            debit_to_close: 0.90,
+            ..mark
+        };
+        let hold = evaluate_all_exits(
+            &rules,
+            Some(1.0),
+            &flat,
+            None,
+            None,
+            Some(opened),
+            Some("put_credit"),
+            "iron_condor",
+        );
+        assert!(hold.is_none(), "below min_profit should hold");
     }
 
     #[test]

@@ -133,6 +133,9 @@ pub struct TrackedPosition {
     /// |short_delta| at entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry_short_delta: Option<f64>,
+    /// Chain IV % at entry (for crush / expansion readout vs live IV).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_chain_iv_pct: Option<f64>,
     /// Broker order id for the resting GTC profit-target close order, if placed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protective_order_id: Option<String>,
@@ -156,6 +159,89 @@ pub struct TrackedPosition {
 pub fn update_peak_profit_pct(position: &mut TrackedPosition, profit_pct: f64) {
     let peak = position.peak_profit_pct.unwrap_or(profit_pct);
     position.peak_profit_pct = Some(peak.max(profit_pct));
+}
+
+/// Fill missing entry IV / POP from the matching `entry` action in `last_actions`.
+/// Returns true if any position was updated.
+pub fn backfill_entry_baselines_from_actions(state: &mut AgentState) -> bool {
+    let mut changed = false;
+    for (position_id, tracked) in state.open_positions.iter_mut() {
+        let needs_iv = tracked.entry_chain_iv_pct.is_none();
+        let needs_pop = tracked.entry_pop_pct.is_none();
+        if !needs_iv && !needs_pop {
+            continue;
+        }
+        let Some(detail) = state.last_actions.iter().rev().find_map(|a| {
+            if a.action != "entry" {
+                return None;
+            }
+            let d = &a.detail;
+            let id_match = d
+                .get("position_id")
+                .and_then(|v| v.as_str())
+                .is_some_and(|id| id == position_id);
+            let under = d
+                .get("underlying")
+                .and_then(|v| v.as_str())
+                .or_else(|| d.pointer("/market_context/underlying").and_then(|v| v.as_str()));
+            let exp = d
+                .get("expiry")
+                .and_then(|v| v.as_str())
+                .or_else(|| d.pointer("/market_context/expiry").and_then(|v| v.as_str()));
+            let under_exp_match = under.is_some_and(|u| u.eq_ignore_ascii_case(&tracked.underlying))
+                && exp.is_some_and(|e| e == tracked.expiry);
+            if id_match || under_exp_match {
+                Some(d)
+            } else {
+                None
+            }
+        }) else {
+            continue;
+        };
+        if needs_iv {
+            if let Some(iv) = detail
+                .pointer("/market_context/chain_iv")
+                .and_then(|v| v.as_f64())
+                .or_else(|| {
+                    detail
+                        .pointer("/market_context/analytics/chain_iv_pct")
+                        .and_then(|v| v.as_f64())
+                })
+            {
+                tracked.entry_chain_iv_pct = Some(iv);
+                changed = true;
+            }
+        }
+        if needs_pop {
+            if let Some(pop) = detail
+                .pointer("/market_context/spread_pop_pct")
+                .and_then(|v| v.as_f64())
+                .or_else(|| {
+                    detail
+                        .pointer("/market_context/analytics/spread_pop_pct")
+                        .and_then(|v| v.as_f64())
+                })
+                .or_else(|| {
+                    // Iron condor entry context nests put/call analytics.
+                    let put = detail
+                        .pointer("/market_context/analytics/put/spread_pop_pct")
+                        .and_then(|v| v.as_f64());
+                    let call = detail
+                        .pointer("/market_context/analytics/call/spread_pop_pct")
+                        .and_then(|v| v.as_f64());
+                    match (put, call) {
+                        (Some(p), Some(c)) => Some((p + c) / 2.0),
+                        (Some(p), None) | (None, Some(p)) => Some(p),
+                        _ => None,
+                    }
+                })
+            {
+                tracked.entry_pop_pct = Some(pop);
+                changed = true;
+            }
+        }
+    }
+    changed
 }
 
 pub fn is_thesis_exit_reason(reason: &str) -> bool {
@@ -269,6 +355,7 @@ impl Default for TrackedPosition {
             peak_profit_pct: None,
             entry_pop_pct: None,
             entry_short_delta: None,
+            entry_chain_iv_pct: None,
             protective_order_id: None,
             protective_order_status: None,
             protective_order_attempts: 0,

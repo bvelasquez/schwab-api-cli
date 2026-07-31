@@ -53,10 +53,11 @@ use super::resilience;
 use super::sim::{ensure_ledger, record_sim_entry, record_sim_exit};
 use super::schedule::{self, AgentSession};
 use super::state::{
-    candidate_fingerprint, entry_attempt_cooldown_active, entry_proceed_cache_valid,
-    is_stop_loss_exit_reason, is_thesis_exit_reason, record_entry_attempt, record_stop_loss_exit,
-    save_state, stop_loss_re_entry_blocked, update_peak_profit_pct, AgentState, EntryProceedCache,
-    PendingOrder, PendingOrderAction, RedeploySignal, TrackedPosition,
+    backfill_entry_baselines_from_actions, candidate_fingerprint, entry_attempt_cooldown_active,
+    entry_proceed_cache_valid, is_stop_loss_exit_reason, is_thesis_exit_reason,
+    record_entry_attempt, record_stop_loss_exit, save_state, stop_loss_re_entry_blocked,
+    update_peak_profit_pct, AgentState, EntryProceedCache, PendingOrder, PendingOrderAction,
+    RedeploySignal, TrackedPosition,
 };
 use super::telegram_format::{
     format_action_telegram, format_llm_review_telegram, format_market_open_telegram,
@@ -95,6 +96,7 @@ pub async fn run_agent_loop(
         load_agent_state(rules_path, &rules.agent_id)
     };
     state.agent_id = rules.agent_id.clone();
+    let _ = backfill_entry_baselines_from_actions(&mut state);
 
     trade_audio::init(runtime.no_audio);
 
@@ -448,8 +450,9 @@ pub async fn tick_once(
                 ));
                 continue;
             };
+            let preferred_for_exits = regime_snap.as_ref().map(|s| s.preferred_strategy.as_str());
             let monitor =
-                evaluate_position_monitor(market, &group, rules, today, Some(&tracked)).await?;
+                evaluate_position_monitor(market, &group, rules, today, Some(&tracked), preferred_for_exits).await?;
             if let Some(profit) = monitor.mark.as_ref().map(|m| m.profit_pct) {
                 if let Some(p) = state.open_positions.get_mut(&position_id) {
                     update_peak_profit_pct(p, profit);
@@ -563,12 +566,14 @@ pub async fn tick_once(
             let groups = group_option_legs(&legs);
             for group in &groups {
                 let tracked_owned = find_tracked_position(state, &account.hash, group).cloned();
+                let preferred_for_exits = regime_snap.as_ref().map(|s| s.preferred_strategy.as_str());
                 let monitor = evaluate_position_monitor(
                     market,
                     group,
                     rules,
                     today,
                     tracked_owned.as_ref(),
+                    preferred_for_exits,
                 )
                 .await?;
                 let position_id = stable_position_key(&account.hash, group);
@@ -1544,6 +1549,14 @@ fn track_filled_entry_from_pending(state: &mut AgentState, detail: &Value, pendi
                 .pointer("/market_context/short_delta")
                 .and_then(|v| v.as_f64())
                 .map(f64::abs),
+            entry_chain_iv_pct: signal
+                .pointer("/market_context/chain_iv")
+                .and_then(|v| v.as_f64())
+                .or_else(|| {
+                    signal
+                        .pointer("/market_context/analytics/chain_iv_pct")
+                        .and_then(|v| v.as_f64())
+                }),
             llm_decision_id,
             ..Default::default()
         });
@@ -2820,6 +2833,14 @@ async fn maybe_execute_entry(
                 .pointer("/market_context/short_delta")
                 .and_then(|v| v.as_f64())
                 .map(f64::abs),
+            entry_chain_iv_pct: signal
+                .pointer("/market_context/chain_iv")
+                .and_then(|v| v.as_f64())
+                .or_else(|| {
+                    signal
+                        .pointer("/market_context/analytics/chain_iv_pct")
+                        .and_then(|v| v.as_f64())
+                }),
             rolls_used,
             last_roll_at,
             ..Default::default()

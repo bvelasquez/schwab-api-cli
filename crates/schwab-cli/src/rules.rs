@@ -422,6 +422,32 @@ pub struct ThesisExitRules {
     /// After a thesis exit, skip same-underlying entry scan for this many minutes.
     pub redeploy_cooldown_minutes: Option<u32>,
     pub profit_giveback: Option<ProfitGivebackExit>,
+    /// Early take when open structure no longer matches the preferred regime strategy
+    /// ("what would I open now?"). Evaluated even during thesis min_hold.
+    #[serde(default)]
+    pub regime_mismatch: RegimeMismatchExit,
+}
+
+/// Close a green position when the live regime prefers a different structure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RegimeMismatchExit {
+    pub enabled: bool,
+    /// Minimum unrealized profit % of credit before taking the mismatch exit.
+    pub min_profit_pct: f64,
+    /// When preferred strategy is `pause`, still take winners at `min_profit_pct`
+    /// (hostile / crushed-vol regimes — do not sit short premium).
+    pub treat_pause_as_mismatch: bool,
+}
+
+impl Default for RegimeMismatchExit {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            min_profit_pct: 25.0,
+            treat_pause_as_mismatch: true,
+        }
+    }
 }
 
 impl Default for ThesisExitRules {
@@ -435,6 +461,7 @@ impl Default for ThesisExitRules {
             exit_short_inside_1sigma: false,
             redeploy_cooldown_minutes: None,
             profit_giveback: None,
+            regime_mismatch: RegimeMismatchExit::default(),
         }
     }
 }
