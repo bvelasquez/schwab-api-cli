@@ -9,6 +9,9 @@ use chrono::{DateTime, Utc};
 use schwab_api::TraderApi;
 use serde_json::{json, Value};
 
+use crate::capital::{
+    exit_geometry, should_tighten_profit_limit, ExitRangeContext,
+};
 use crate::agent::state::{save_state, SwingPosition, TraderState};
 use crate::config::TraderRuntime;
 use crate::journal;
@@ -124,6 +127,23 @@ pub async fn process_closure_exits(
     }
 
     let mut exits = Vec::new();
+
+    // Recompute exit geometry vs lookback high/low (+ ATR/horizon). Tighten
+    // fantasy targets on open positions so sim/live stays rule-faithful.
+    if !runtime.dry_run {
+        let plan_updates = process_exit_plan_tightens(
+            Some(runtime),
+            rules_path,
+            rules,
+            state,
+            Some(api),
+            market,
+            account_hash,
+            false,
+        )
+        .await?;
+        exits.extend(plan_updates);
+    }
 
     // Trailing stop OCO replace (live only).
     if !runtime.dry_run {
@@ -323,6 +343,109 @@ pub fn trailing_stop_candidate(
         candidate = Some(candidate.map_or(floor, |c| c.max(floor)));
     }
     candidate
+}
+
+/// Tighten open profit targets when current exit geometry (ATR / horizon /
+/// recent high–low range) is tighter than the stored plan. Never widens.
+///
+/// Used by live ticks (optional OCO replace) and sim ticks (state-only).
+pub async fn process_exit_plan_tightens(
+    runtime: Option<&TraderRuntime>,
+    rules_path: &Path,
+    rules: &TraderRules,
+    state: &mut TraderState,
+    api: Option<&Arc<TraderApi>>,
+    market: &MarketCtx,
+    account_hash: &str,
+    simulate: bool,
+) -> Result<Vec<Value>> {
+    if state.open_positions.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let mut updates = Vec::new();
+    let positions: Vec<SwingPosition> = state.open_positions.values().cloned().collect();
+
+    for pos in positions {
+        let snap = fetch_technical_snapshot(market, rules, &pos.symbol).await?;
+        let range = ExitRangeContext::from_history(rules, snap.history_features.as_ref());
+        // If range cap is required but history is missing, skip — do not
+        // silently fall back to a looser fixed/ATR target on an open trade.
+        if crate::technical::recent_range_cap_required(rules)
+            && range.recent_high.is_none()
+            && range.recent_low.is_none()
+        {
+            continue;
+        }
+        let geometry = exit_geometry(pos.entry_price, rules, snap.atr_14, range);
+        if !should_tighten_profit_limit(pos.profit_limit, &geometry) {
+            continue;
+        }
+
+        let new_target = geometry.target_price;
+        let old_target = pos.profit_limit;
+        let new_stop_limit = pos.stop_price * 0.995;
+
+        let mut new_oco_id = pos.oco_order_id.clone();
+        if !simulate {
+            if let (Some(runtime), Some(api)) = (runtime, api) {
+                if let Some(oco_id) = pos
+                    .oco_order_id
+                    .as_ref()
+                    .filter(|_| has_working_broker_oco(&pos))
+                {
+                    let bracket = replace_oco_bracket(
+                        runtime,
+                        api,
+                        account_hash,
+                        oco_id,
+                        &pos.symbol,
+                        pos.quantity,
+                        new_target,
+                        pos.stop_price,
+                        new_stop_limit,
+                        &rules.execution.oco_duration,
+                    )
+                    .await?;
+                    new_oco_id = bracket
+                        .order
+                        .get("order_id")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string);
+                }
+            }
+        }
+
+        if let Some(p) = state.open_positions.get_mut(&pos.position_id) {
+            p.profit_limit = new_target;
+            p.oco_order_id = new_oco_id.clone();
+            p.exit_plan_version += 1;
+        }
+
+        let event = json!({
+            "symbol": pos.symbol,
+            "position_id": pos.position_id,
+            "action": if simulate {
+                "sim_exit_plan_tightened"
+            } else {
+                "exit_plan_tightened"
+            },
+            "old_profit_limit": old_target,
+            "new_profit_limit": new_target,
+            "target_binding": geometry.target_binding,
+            "effective_target_pct": geometry.effective_target_pct,
+            "range_ceiling_cap_pct": geometry.range_ceiling_cap_pct,
+            "range_width_cap_pct": geometry.range_width_cap_pct,
+            "atr_cap_pct": geometry.atr_cap_pct,
+            "horizon_cap_pct": geometry.horizon_cap_pct,
+            "oco_order_id": new_oco_id,
+        });
+        updates.push(event.clone());
+        journal::append_event(rules_path, "exit_plan_tightened", event)?;
+        save_state(rules_path, state)?;
+    }
+
+    Ok(updates)
 }
 
 async fn process_trailing_stops(

@@ -327,9 +327,10 @@ pub struct ExitConfig {
     /// `sqrt_days_multiple × ATR% × √target_days` (uses min with other caps).
     #[serde(default)]
     pub profit_target_horizon_cap: ProfitTargetHorizonCapConfig,
-    /// Cap profit target at room to the recent N-day high (plus optional extension).
+    /// Cap profit target using the lookback high/low range: min(room to the
+    /// recent N-day high + extension, realized (high−low)/entry width).
     /// Rejects fantasy targets that ATR/horizon still allow when price has not
-    /// traded near that level recently.
+    /// traded that far recently. Open positions are re-tightened on each tick.
     #[serde(default)]
     pub profit_target_recent_range_cap: ProfitTargetRecentRangeCapConfig,
     pub stop_loss_pct: f64,
@@ -371,7 +372,7 @@ pub struct ProfitTargetHorizonCapConfig {
 #[serde(default)]
 pub struct ProfitTargetRecentRangeCapConfig {
     pub enabled: bool,
-    /// Lookback sessions for recent high (mapped to 20 / 60 / 90d history features).
+    /// Lookback sessions for recent high/low (mapped to 20 / 60 / 90d history features).
     pub lookback_days: u32,
     /// Allow target this far above the recent high (e.g. 1.0 = 1% breakout room).
     pub max_extension_above_high_pct: f64,
@@ -1657,7 +1658,12 @@ mod tests {
         assert!((rules.playbook.exit.profit_target_horizon_cap.sqrt_days_multiple - 1.0).abs() < 1e-9);
         assert_eq!(rules.playbook.holding_period.target_days, 10);
         // ATR 1.5% → atr cap 3.75% binds before horizon ≈ 4.74%
-        let pct = crate::capital::effective_profit_target_pct(100.0, &rules, Some(1.5), None);
+        let pct = crate::capital::effective_profit_target_pct(
+            100.0,
+            &rules,
+            Some(1.5),
+            crate::capital::ExitRangeContext::none(),
+        );
         assert!((pct - 3.75).abs() < 0.01);
     }
 }

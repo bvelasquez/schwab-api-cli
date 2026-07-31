@@ -182,23 +182,30 @@ fn geometry_line_for_row(
         .exit
         .profit_target_recent_range_cap
         .lookback_days;
-    let recent_high = if effective.playbook.exit.profit_target_recent_range_cap.enabled {
-        let key = match lookback {
+    let range = if effective.playbook.exit.profit_target_recent_range_cap.enabled {
+        let high_key = match lookback {
             0..=30 => "high_20d",
             31..=75 => "high_60d",
             _ => "high_90d",
         };
-        row.pointer(&format!("/technical_context/history_features/{key}"))
-            .and_then(|v| v.as_f64())
-            .or_else(|| {
-                row.pointer("/technical_context/history_features/high_60d")
-                    .and_then(|v| v.as_f64())
-            })
+        let low_key = match lookback {
+            0..=30 => "low_20d",
+            31..=75 => "low_60d",
+            _ => "low_90d",
+        };
+        let hf = |k: &str| {
+            row.pointer(&format!("/technical_context/history_features/{k}"))
+                .and_then(|v| v.as_f64())
+        };
+        crate::capital::ExitRangeContext {
+            recent_high: hf(high_key).or_else(|| hf("high_60d")),
+            recent_low: hf(low_key).or_else(|| hf("low_60d")),
+        }
     } else {
-        None
+        crate::capital::ExitRangeContext::none()
     };
     if last > 0.0 {
-        let g = exit_geometry(last, effective, atr, recent_high);
+        let g = exit_geometry(last, effective, atr, range);
         Line::from(vec![Span::styled(
             format!("      → {}", format_exit_geometry_brief(&g)),
             Style::default().fg(Color::Cyan),
