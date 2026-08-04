@@ -572,10 +572,27 @@ async fn tick_premarket(
     )
     .await?;
 
+    let screened_refresh = match crate::watchlist::screened_refresh::apply_screened_refresh_if_due(
+        state,
+        rules,
+        rules_path,
+        market,
+        crate::watchlist::screened_refresh::ScreenedRefreshTrigger::Premarket,
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(err) => {
+            tracing::warn!("screened watchlist refresh failed: {err:#}");
+            Some(json!({ "error": format!("{err:#}") }))
+        }
+    };
+
     let fmp_discover = match crate::fmp::apply_fmp_discover_if_due(
         state,
         rules,
         rules_path,
+        Some(market),
         crate::fmp::FmpDiscoverTrigger::Premarket,
     )
     .await
@@ -655,6 +672,7 @@ async fn tick_premarket(
         "next_sleep_seconds": transition.sleep_seconds,
         "skipped": skipped,
         "reconcile_report": reconcile_report,
+        "screened_refresh": screened_refresh,
         "fmp_discover": fmp_discover,
         "dynamic_watchlist": state.dynamic_watchlist,
         "scan": scan,
@@ -725,10 +743,31 @@ async fn tick_regular(
     apply_regime_profile(state, rules, &regime);
     let mut tick_rules = effective_rules(rules, state);
 
+    let screened_refresh = match crate::watchlist::screened_refresh::apply_screened_refresh_if_due(
+        state,
+        &tick_rules,
+        rules_path,
+        market,
+        if at_open {
+            crate::watchlist::screened_refresh::ScreenedRefreshTrigger::AtOpen
+        } else {
+            crate::watchlist::screened_refresh::ScreenedRefreshTrigger::Periodic
+        },
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(err) => {
+            tracing::warn!("screened watchlist refresh failed: {err:#}");
+            Some(json!({ "error": format!("{err:#}") }))
+        }
+    };
+
     let fmp_discover = match crate::fmp::apply_fmp_discover_if_due(
         state,
         &tick_rules,
         rules_path,
+        Some(market),
         if at_open {
             crate::fmp::FmpDiscoverTrigger::AtOpen
         } else {
@@ -1049,6 +1088,7 @@ async fn tick_regular(
         "monitor_adjustments": monitor_adjustments,
         "monitoring": monitoring_metrics(state, &tick_rules),
         "scan": scan,
+        "screened_refresh": screened_refresh,
         "fmp_discover": fmp_discover,
         "dynamic_watchlist": state.dynamic_watchlist,
         "capital_check": capital_check_to_json(&capital),

@@ -496,7 +496,24 @@ pub struct WatchlistScreenedConfig {
     pub enabled: bool,
     pub top_n: u32,
     pub min_score: f64,
+    /// Minimum days between full pool screens on periodic trigger only (open/premarket still run daily).
     pub refresh_days: u32,
+    /// Screen candidate pool once per premarket session.
+    #[serde(default = "default_true")]
+    pub run_premarket: bool,
+    /// Screen at the first regular tick after the open.
+    #[serde(default = "default_true")]
+    pub run_at_open: bool,
+    /// Re-screen during regular hours (playbook-qualified names can rotate intraday).
+    #[serde(default = "default_screened_refresh_minutes")]
+    pub refresh_every_minutes: u32,
+    /// Persist screened symbols into rules YAML `watchlists.thematic` on each refresh.
+    #[serde(default)]
+    pub write_thematic: bool,
+}
+
+fn default_screened_refresh_minutes() -> u32 {
+    120
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -534,6 +551,9 @@ pub struct FmpSourcesConfig {
     pub movers_only: bool,
     /// Also write `rules/universe/fmp-discovered.yaml` on each refresh.
     pub write_pool: bool,
+    /// Only rotate movers into `dynamic_watchlist` when they pass playbook entry filters.
+    #[serde(default = "default_true")]
+    pub require_playbook_pass: bool,
     /// Deprecated: ignored. Kept so older YAML still parses.
     #[serde(default)]
     pub discover_every_days: Option<u32>,
@@ -962,6 +982,10 @@ impl Default for WatchlistScreenedConfig {
             top_n: 12,
             min_score: 0.0,
             refresh_days: 7,
+            run_premarket: true,
+            run_at_open: true,
+            refresh_every_minutes: default_screened_refresh_minutes(),
+            write_thematic: false,
         }
     }
 }
@@ -1000,6 +1024,7 @@ impl Default for FmpSourcesConfig {
             max_add_per_refresh: 5,
             movers_only: false,
             write_pool: true,
+            require_playbook_pass: true,
             discover_every_days: None,
         }
     }

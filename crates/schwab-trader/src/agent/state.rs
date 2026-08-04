@@ -24,9 +24,12 @@ pub struct TraderState {
     pub open_positions: HashMap<String, SwingPosition>,
     pub pending_buys: Vec<PendingBuy>,
     pub dynamic_watchlist: Vec<String>,
-    /// Symbols last injected by FMP discover (rotated on each multi-day refresh).
+    /// Symbols last injected by FMP discover (rotated on each refresh).
     #[serde(default)]
     pub fmp_dynamic_symbols: Vec<String>,
+    /// Symbols last promoted from screened candidate pool (rotated on each refresh).
+    #[serde(default)]
+    pub screened_dynamic_symbols: Vec<String>,
     #[serde(default)]
     pub last_fmp_discover_at: Option<DateTime<Utc>>,
     #[serde(default)]
@@ -37,6 +40,14 @@ pub struct TraderState {
     /// Trading day (ET) of last at-open FMP run.
     #[serde(default)]
     pub last_fmp_open_day: Option<NaiveDate>,
+    #[serde(default)]
+    pub last_screened_refresh_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub last_screened_refresh: Option<Value>,
+    #[serde(default)]
+    pub last_screened_premarket_day: Option<NaiveDate>,
+    #[serde(default)]
+    pub last_screened_open_day: Option<NaiveDate>,
     pub tick_count: u64,
     pub last_llm_review_tick: Option<u64>,
     pub last_llm_summary: Option<Value>,
