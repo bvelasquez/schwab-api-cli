@@ -418,6 +418,20 @@ sources:
 
 Requires `FMP_API_KEY` in `.env`. Manual: `schwab-trader watchlist discover --rules-file … --write-pool`.
 
+FMP movers are only added to `dynamic_watchlist` when they **pass the same playbook entry filters** as `scan` (`require_playbook_pass`, default true).
+
+### Screened pool refresh (`watchlists.screened`)
+
+While the agent runs, the **candidate pool** (`candidate_pool_file`) is screened with playbook filters and top-N qualifiers are **auto-promoted** into `dynamic_watchlist` (priority over FMP):
+
+1. **Premarket** — once (`run_premarket: true`)
+2. **At open** — first regular tick (`run_at_open: true`)
+3. **Periodic** — every `refresh_every_minutes` (default 120) during regular hours
+
+No manual `watchlist build --write` is required for the agent to scan qualifiers (optional `write_thematic: true` persists YAML). Dynamic capacity is `max(max_dynamic_symbols, screened.top_n)` when screened is enabled.
+
+Manual full refresh: `schwab-trader watchlist build --rules-file … --write`.
+
 ### Watch TUI
 
 `schwab-trader watch` surfaces this geometry:
