@@ -126,6 +126,14 @@ execution:
     max_seconds: 30        # deadline for those retries
 ```
 
+## Paper simulation slippage
+
+`simulation.fill_slippage_pct` (default 0) applies a spread-cost haircut to virtual fills:
+entry credit is reduced by X% and exit debit increased by X% (e.g. 5.0 = 5%). This makes
+paper P/L honest about bid/ask — the live sim should not look systematically better than
+reality. The synthetic backtest is a separate model (daily-close BS fills) and does not
+apply this; treat backtest as gate research, sim as paper P/L.
+
 If placement fails after `max_attempts`, the position stays open without broker-side
 protection and is retried every subsequent tick (`reconcile_protective_orders`) until it
 succeeds. Tick JSON reports `monitoring.unprotected_count` — treat a nonzero value the same
@@ -155,6 +163,7 @@ Two different mechanisms — do not confuse them:
 |-------|----------|
 | `risk.blocked_events` | **Manual kill switch.** Any non-empty list pauses **all** new entries until cleared. Not date-aware. |
 | `risk.blocked_dates` | **Calendar.** Each entry has `date` (`YYYY-MM-DD`), `lead_days`, and `label`. New entries pause when `date - lead_days ≤ today ≤ date`. Exits and protective-order reconcile still run. |
+| `risk.post_event_entry_window_days` | **Post-event IV-harvest window.** For this many calendar days after the most recent `blocked_dates` event, the tick flags `post_event_window` (tick JSON + LLM context). IV is typically richest right after FOMC/CPI/NFP settles; entries already resume mechanically after the event — this only surfaces the opportunity, no mechanical relaxation. |
 
 ```yaml
 risk:
@@ -225,6 +234,24 @@ the VIX quote is unavailable.
 
 Requires `strategies.iron_condor.enabled: true` for condor regimes. Vertical call credits use the same delta/width rules as puts.
 
+### Put-credit guard (`regime.put_credit_guard`)
+
+When VIX is at/above `vix_above` AND the benchmark is below its short-term SMA
+(`require_benchmark_above_sma`, e.g. 20), put-credit entries are blocked. This is the
+backtest-proven killer zone: every historical stop-loss lived at VIX 18–22 — selling puts
+into an elevated-vol tape that is already below its trend line.
+
+```yaml
+regime:
+  put_credit_guard:
+    vix_above: 18.0
+    require_benchmark_above_sma: 20
+```
+
+Applied in both the live agent and the synthetic backtest (benchmark-level, so it applies
+to every symbol on the watchlist). Fail-closed: a missing VIX quote pauses entries via
+`pause_on_missing_vix` anyway.
+
 ### Regime-mismatch early take
 
 When `exit_rules.thesis.regime_mismatch.enabled: true`, each tick compares the
@@ -260,6 +287,7 @@ Mechanical filters on vertical candidates (`entry_rules.vertical`):
 | `max_adverse_day_change_pct` | Reject puts on a down day (or calls on an up day) beyond this % move |
 | `reject_short_inside_1sigma` | Reject shorts inside 1σ expected move. **Fail-closed** when chain IV is missing (never silently passes). |
 | `min_iv_rv_ratio` | Reject when `chain_iv / realized_vol <` threshold (e.g. `1.15`). Realized vol uses `regime.realized_vol_lookback` (default 20). **Fail-closed** when IV or RV is missing. |
+| `put_credit_max_rsi2` / `call_credit_min_rsi2` | **Timing gates.** Reject put credits when the underlying's 2-period RSI is above `put_credit_max_rsi2` (no puts into a rip) and call credits when RSI(2) is below `call_credit_min_rsi2` (no calls into a dump). **Fail-closed** when daily candles are unavailable. Sell premium into 2-day extremes only. |
 
 Iron condors honor `entry_rules.iron_condor.min_iv_rv_ratio` the same way.
 
@@ -277,6 +305,8 @@ Controls scan order and the live LLM proceed gate. Defaults are intentionally st
 | `proceed_cache_minutes` | `45` | How long a cached proceed remains valid between LLM selection reviews |
 | `entry_attempt_cooldown_minutes` | `30` | After a non-fill attempt, wait before retrying the same candidate |
 | `promote_redeploy_symbol` | `false` | After thesis redeploy cooldown, optionally scan that symbol first |
+| `fail_open_on_llm_defer` | **`true`** | When `false`, LLM `skip`/`defer`/`hold` **block** entries (fail-closed). When `true`, only `unexpected_catalyst` vetoes block; other defers are ignored (fail-open). |
+| `post_stop_tightening` | `None` | **Post-stop caution.** For `cooldown_days` after a stop-loss exit, entries require `min_iv_rv_ratio` and `min_short_otm_pct` at the tightened values (max of base and tightened). Prevents stacking losses right after a stop. Example: `{ enabled: true, min_iv_rv_ratio: 1.25, min_short_otm_pct: 6.0, cooldown_days: 14 }`. |
 
 Set `require_llm_proceed: false` only when you intentionally want mechanical-only entries
 (still subject to all rules gates). With `llm.veto_entries: true` and the default policy,

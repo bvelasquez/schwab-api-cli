@@ -24,6 +24,8 @@ pub async fn run(runtime: &RuntimeConfig, command: OptionsCommands) -> Result<()
             symbol,
             contract_type,
             strike_count,
+            strike,
+            range,
             from_date,
             to_date,
         } => {
@@ -34,6 +36,8 @@ pub async fn run(runtime: &RuntimeConfig, command: OptionsCommands) -> Result<()
                     symbol: &symbol,
                     contract_type: Some(ct),
                     strike_count,
+                    strike: strike.as_deref(),
+                    range: range.as_deref(),
                     include_underlying_quote: Some(true),
                     from_date: from_date.as_deref(),
                     to_date: to_date.as_deref(),

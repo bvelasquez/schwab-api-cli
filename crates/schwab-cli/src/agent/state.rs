@@ -86,6 +86,24 @@ pub struct AgentState {
     /// Most recent selection-phase decision (for linking to fills).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_llm_entry_decision: Option<crate::agent::scorecard::LlmEntryDecisionRecord>,
+    /// Calendar date through which post-stop caution mode is active (tightened entry
+    /// gates via `entry_policy.post_stop_tightening`). Set on stop-loss exits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_tightening_until: Option<chrono::NaiveDate>,
+}
+
+impl AgentState {
+    /// True when post-stop caution (tightened entry gates) is active on `today`.
+    pub fn stop_tightening_active(&self, today: chrono::NaiveDate) -> bool {
+        self.stop_tightening_until.is_some_and(|until| today <= until)
+    }
+
+    /// Arm post-stop caution for `cooldown_days` starting `today` (no-op when 0).
+    pub fn arm_stop_tightening(&mut self, today: chrono::NaiveDate, cooldown_days: u32) {
+        if cooldown_days > 0 {
+            self.stop_tightening_until = Some(today + chrono::Duration::days(cooldown_days as i64));
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -258,6 +276,23 @@ pub fn record_stop_loss_exit(state: &mut AgentState, underlying: &str) {
         underlying: underlying.to_uppercase(),
     });
     prune_stop_loss_records(&mut state.recent_stop_loss_exits, 45);
+}
+
+/// Arm post-stop caution mode (tightened entry gates) after a stop-loss exit.
+/// Uses `entry_policy.post_stop_tightening` cooldown; no-op when disabled.
+pub fn arm_post_stop_tightening(
+    rules: &RulesConfig,
+    state: &mut AgentState,
+    today: chrono::NaiveDate,
+) {
+    if let Some(cfg) = rules
+        .entry_policy
+        .post_stop_tightening
+        .as_ref()
+        .filter(|c| c.enabled)
+    {
+        state.arm_stop_tightening(today, cfg.cooldown_days);
+    }
 }
 
 fn prune_stop_loss_records(records: &mut Vec<StopLossExitRecord>, keep_days: i64) {

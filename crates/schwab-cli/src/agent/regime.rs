@@ -38,6 +38,7 @@ pub struct OptionsRegimeSnapshot {
     pub vix_symbol: String,
     pub benchmark_last: f64,
     pub vix: Option<f64>,
+    pub above_sma_20: bool,
     pub above_sma_50: bool,
     pub above_sma_200: bool,
     pub preferred_strategy: String,
@@ -53,6 +54,7 @@ impl OptionsRegimeSnapshot {
             "vix_symbol": self.vix_symbol,
             "benchmark_last": self.benchmark_last,
             "vix": self.vix,
+            "above_sma_20": self.above_sma_20,
             "above_sma_50": self.above_sma_50,
             "above_sma_200": self.above_sma_200,
             "preferred_strategy": self.preferred_strategy,
@@ -60,6 +62,30 @@ impl OptionsRegimeSnapshot {
             "signals": self.signals,
         })
     }
+}
+
+/// True when the put-credit guard blocks put entries: VIX at/above `vix_above` and
+/// the benchmark trading below its short-term SMA (`require_benchmark_above_sma`).
+pub fn put_credit_guard_active(
+    cfg: &OptionsRegimeConfig,
+    snapshot: &OptionsRegimeSnapshot,
+) -> bool {
+    let Some(guard) = &cfg.put_credit_guard else {
+        return false;
+    };
+    let vix_elevated = snapshot
+        .vix
+        .is_some_and(|v| v >= guard.vix_above);
+    if !vix_elevated {
+        return false;
+    }
+    let trend_ok = match guard.require_benchmark_above_sma {
+        20 => snapshot.above_sma_20,
+        50 => snapshot.above_sma_50,
+        200 => snapshot.above_sma_200,
+        _ => snapshot.above_sma_50,
+    };
+    !trend_ok
 }
 
 /// Entry pause decision: hostile class, VIX outside pause bands, or (fail-closed)
@@ -86,7 +112,8 @@ pub async fn detect_options_regime(
     }
 
     let benchmark = cfg.benchmark_symbol.trim().to_uppercase();
-    let (last, above_sma_50, above_sma_200) = benchmark_trend(market, &benchmark).await?;
+    let (last, above_sma_20, above_sma_50, above_sma_200) =
+        benchmark_trend(market, &benchmark).await?;
     let vix = fetch_vix(market, &cfg.vix_symbol).await.ok();
 
     let class = classify_options_regime(cfg, vix, above_sma_50, above_sma_200);
@@ -99,6 +126,7 @@ pub async fn detect_options_regime(
         vix_symbol: cfg.vix_symbol.clone(),
         benchmark_last: last,
         vix,
+        above_sma_20,
         above_sma_50,
         above_sma_200,
         preferred_strategy: preferred,
@@ -162,6 +190,7 @@ fn neutral_snapshot(cfg: &OptionsRegimeConfig) -> OptionsRegimeSnapshot {
         vix_symbol: cfg.vix_symbol.clone(),
         benchmark_last: 0.0,
         vix: None,
+        above_sma_20: true,
         above_sma_50: true,
         above_sma_200: true,
         preferred_strategy: "put_credit".into(),
@@ -204,7 +233,10 @@ fn extract_quote_last_price(raw: &Value, symbol: &str) -> Option<f64> {
         .filter(|v| *v > 0.0)
 }
 
-async fn benchmark_trend(market: &MarketDataApi, symbol: &str) -> Result<(f64, bool, bool)> {
+async fn benchmark_trend(
+    market: &MarketDataApi,
+    symbol: &str,
+) -> Result<(f64, bool, bool, bool)> {
     let history = market
         .price_history()
         .get(
@@ -232,10 +264,12 @@ async fn benchmark_trend(market: &MarketDataApi, symbol: &str) -> Result<(f64, b
         .unwrap_or_default();
 
     let last = *closes.last().unwrap_or(&0.0);
+    let sma_20 = crate::agent::technical::sma_value(&closes, 20);
     let sma_50 = sma(&closes, 50);
     let sma_200 = sma(&closes, 200);
     Ok((
         last,
+        sma_20.is_some_and(|s| last >= s),
         sma_50.is_some_and(|s| last >= s),
         sma_200.is_some_and(|s| last >= s),
     ))

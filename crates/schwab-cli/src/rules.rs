@@ -47,6 +47,10 @@ pub struct RulesConfig {
 pub struct SimulationConfig {
     /// Virtual risk budget for paper P&L (defaults to risk.max_portfolio_risk_usd).
     pub starting_budget_usd: f64,
+    /// Spread slippage (percent, e.g. 5.0 = 5%): paper entry credit is reduced and
+    /// exit debit increased by this % to approximate bid/ask cost on virtual fills.
+    #[serde(default)]
+    pub fill_slippage_pct: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -263,6 +267,38 @@ pub struct EntryPolicyConfig {
     /// Require LLM `proceed` before live entries (uses proceed_cache_minutes between reviews).
     pub require_llm_proceed: bool,
     pub proceed_cache_minutes: u32,
+    /// When false, LLM `skip`/`defer`/`hold` block entries unless only `unexpected_catalyst` would veto (fail-closed).
+    #[serde(default = "default_true")]
+    pub fail_open_on_llm_defer: bool,
+    /// Post-stop caution mode: for `cooldown_days` after a stop-loss exit, entries use
+    /// tightened IV/RV and OTM cushions (`PostStopTightening`). Omit/None to disable.
+    #[serde(default)]
+    pub post_stop_tightening: Option<PostStopTightening>,
+}
+
+/// Post-stop-loss caution: temporarily raise entry quality after eating a stop.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct PostStopTightening {
+    pub enabled: bool,
+    /// Minimum chain IV / realized-vol ratio while caution is active (e.g. 1.25).
+    pub min_iv_rv_ratio: f64,
+    /// Minimum short OTM cushion % of spot while caution is active (e.g. 6.0).
+    pub min_short_otm_pct: f64,
+    /// Calendar days after a stop exit during which the tightened gates apply.
+    pub cooldown_days: u32,
+}
+
+impl Default for PostStopTightening {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            min_iv_rv_ratio: 1.25,
+            min_short_otm_pct: 6.0,
+            cooldown_days: 14,
+        }
+    }
 }
 
 impl Default for EntryPolicyConfig {
@@ -274,6 +310,8 @@ impl Default for EntryPolicyConfig {
             promote_redeploy_symbol: false,
             require_llm_proceed: true,
             proceed_cache_minutes: default_proceed_cache_minutes(),
+            fail_open_on_llm_defer: true,
+            post_stop_tightening: None,
         }
     }
 }
@@ -338,6 +376,14 @@ pub struct VerticalEntryRules {
     /// by more than this many percent (puts: down day; calls: up day). Omit to skip.
     #[serde(default)]
     pub max_adverse_day_change_pct: Option<f64>,
+    /// Reject put-credit candidates when the underlying's 2-period RSI is above this
+    /// (do not sell puts into a rip). Fail-closed when daily candles are unavailable.
+    #[serde(default)]
+    pub put_credit_max_rsi2: Option<f64>,
+    /// Reject call-credit candidates when the underlying's 2-period RSI is below this
+    /// (do not sell calls into a dump). Fail-closed when daily candles are unavailable.
+    #[serde(default)]
+    pub call_credit_min_rsi2: Option<f64>,
     pub max_open_positions: u32,
     pub max_contracts_per_trade: u32,
 }
@@ -360,6 +406,8 @@ impl Default for VerticalEntryRules {
             min_iv_rv_ratio: None,
             min_short_otm_pct: None,
             max_adverse_day_change_pct: None,
+            put_credit_max_rsi2: None,
+            call_credit_min_rsi2: None,
             max_open_positions: 3,
             max_contracts_per_trade: 2,
         }
@@ -377,6 +425,10 @@ pub struct IronCondorEntryRules {
     /// Same meaning as `VerticalEntryRules::min_iv_rv_ratio` (fail-closed when set).
     #[serde(default)]
     pub min_iv_rv_ratio: Option<f64>,
+    /// Require BOTH short wings outside the 1σ expected move before opening a condor
+    /// (the GLD post-mortem gate — v4 keeps condors disabled; gate for re-enable).
+    #[serde(default)]
+    pub require_shorts_outside_1sigma: bool,
     pub max_open_positions: u32,
     pub max_contracts_per_trade: u32,
 }
@@ -390,6 +442,7 @@ impl Default for IronCondorEntryRules {
             wing_width: 5.0,
             short_delta: 0.16,
             min_iv_rv_ratio: None,
+            require_shorts_outside_1sigma: false,
             max_open_positions: 2,
             max_contracts_per_trade: 1,
         }
@@ -557,6 +610,10 @@ pub struct RiskConfig {
     /// Correlated underlyings — cap concurrent open positions per group.
     #[serde(default)]
     pub correlation_groups: Vec<CorrelationGroupConfig>,
+    /// Calendar days after the most recent `blocked_dates` event during which the tick
+    /// flags a post-event IV-harvest window (LLM context + journal; no mechanical change).
+    #[serde(default)]
+    pub post_event_entry_window_days: u32,
     /// Halt new entries when sleeve drawdown from HWM reaches this % (e.g. 15.0).
     /// `null` / omit / `0` = disabled. Exits always continue.
     #[serde(default)]
@@ -612,6 +669,7 @@ impl Default for RiskConfig {
             blocked_events: vec![],
             blocked_dates: vec![],
             correlation_groups: vec![],
+            post_event_entry_window_days: 0,
             max_drawdown_halt_pct: None,
             drawdown_sleeve_usd: None,
         }
@@ -655,6 +713,19 @@ impl RiskConfig {
                 .any(|s| s.eq_ignore_ascii_case(underlying))
         })
     }
+
+    /// Calendar days since the most recent `blocked_dates` event ended (0 on the event
+    /// day, 1 the day after, …). `None` when no blocked event precedes `today`.
+    pub fn days_since_last_blocked_event(&self, today: chrono::NaiveDate) -> Option<u32> {
+        let mut recent: Vec<chrono::NaiveDate> = self
+            .blocked_dates
+            .iter()
+            .filter_map(|b| chrono::NaiveDate::parse_from_str(b.date.trim(), "%Y-%m-%d").ok())
+            .filter(|d| *d <= today)
+            .collect();
+        recent.sort();
+        recent.last().map(|d| (today - *d).num_days().max(0) as u32)
+    }
 }
 
 /// Maps market regime → preferred options structure.
@@ -682,6 +753,32 @@ pub struct OptionsRegimeConfig {
     /// regime class → preferred strategy: `put_credit`, `call_credit`, `iron_condor`, `pause`.
     #[serde(default)]
     pub strategy_map: std::collections::HashMap<String, String>,
+    /// Optional guard for put credits in the dangerous VIX band: when VIX is at/above
+    /// `vix_above`, put-credit entries additionally require the benchmark to be trading
+    /// at/above its SMA(`require_benchmark_above_sma`). Cuts entries into breakdowns
+    /// where all the historical stops live (VIX 18-22 zone). Omit/None to disable.
+    #[serde(default)]
+    pub put_credit_guard: Option<PutCreditGuard>,
+}
+
+/// Put-credit trend guard: no new put credits when VIX is elevated and the benchmark
+/// is below its short-term trend SMA.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PutCreditGuard {
+    /// Guard activates when VIX is at or above this value (e.g. 18.0).
+    pub vix_above: f64,
+    /// While the guard is active, benchmark must close at/above this SMA (e.g. 20).
+    pub require_benchmark_above_sma: u32,
+}
+
+impl Default for PutCreditGuard {
+    fn default() -> Self {
+        Self {
+            vix_above: 18.0,
+            require_benchmark_above_sma: 20,
+        }
+    }
 }
 
 fn default_realized_vol_lookback() -> usize {
@@ -712,6 +809,7 @@ impl Default for OptionsRegimeConfig {
             pause_on_missing_vix: true,
             realized_vol_lookback: default_realized_vol_lookback(),
             strategy_map,
+            put_credit_guard: None,
         }
     }
 }

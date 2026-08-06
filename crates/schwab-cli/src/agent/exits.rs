@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
+use super::chains_util::{find_expiry_strikes, format_chain_strike};
 use schwab_market_data::endpoints::chains::ChainQuery;
 use schwab_market_data::MarketDataApi;
 use serde::{Deserialize, Serialize};
@@ -713,14 +714,6 @@ fn iron_condor_legs_from_group(group: &OptionPositionGroup) -> Result<(f64, f64,
     ))
 }
 
-fn format_chain_strike(strike: f64) -> String {
-    if (strike.fract() * 10.0).round() as i64 % 10 == 0 {
-        format!("{strike:.1}")
-    } else {
-        format!("{strike:.2}")
-    }
-}
-
 pub fn monitor_snapshot_json(
     group: &OptionPositionGroup,
     tracked: Option<&TrackedPosition>,
@@ -878,22 +871,6 @@ fn vertical_legs(group: &OptionPositionGroup) -> Result<(&OptionPositionLeg, &Op
         .find(|l| l.quantity > 0.0)
         .context("no long leg")?;
     Ok((short, long))
-}
-
-fn find_expiry_strikes(chain: &Value, map_key: &str, expiry: &str) -> Result<Value> {
-    let map = chain
-        .get(map_key)
-        .context("chain missing exp date map")?
-        .as_object()
-        .context("exp date map not an object")?;
-
-    for (key, strikes) in map {
-        let date_part = key.split(':').next().unwrap_or(key);
-        if date_part == expiry || key.starts_with(expiry) {
-            return Ok(strikes.clone());
-        }
-    }
-    anyhow::bail!("expiry {expiry} not in chain")
 }
 
 fn strike_quote_field(strike_map: &Value, strike: f64, field: &str) -> Result<f64> {
@@ -1586,6 +1563,7 @@ mod tests {
 
     #[test]
     fn format_chain_strike_uses_one_decimal_for_whole_strikes() {
+        use crate::agent::chains_util::format_chain_strike;
         assert_eq!(format_chain_strike(282.0), "282.0");
         assert_eq!(format_chain_strike(282.5), "282.50");
     }

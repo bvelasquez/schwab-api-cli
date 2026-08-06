@@ -240,6 +240,17 @@ pub fn pick_iron_condor(
     if credit < ic.min_credit {
         return None;
     }
+    // Both wings outside 1σ expected move (GLD post-mortem gate). Fail-closed: when
+    // IV is missing the check cannot pass, so no condor is picked.
+    if ic.require_shorts_outside_1sigma {
+        let sigma = (iv_pct / 100.0).max(0.01);
+        let em = spot * sigma * (put.dte.max(1) as f64 / 365.0).sqrt();
+        let put_dist = (spot - put.short_strike).max(0.0);
+        let call_dist = (call.short_strike - spot).max(0.0);
+        if put_dist < em || call_dist < em {
+            return None;
+        }
+    }
     if let Some(min_ratio) = ic.min_iv_rv_ratio {
         let rv = put.realized_vol_pct;
         if rv <= 0.0 || iv_pct / rv < min_ratio {
