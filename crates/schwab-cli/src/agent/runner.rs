@@ -29,6 +29,10 @@ use crate::rules::{
 use crate::safety::{execute_trading_order, require_trading_approval};
 use crate::trade_audio::{self, TradeAudioEvent};
 
+use super::chains_util::{
+    fetch_chain_for_expiry, fetch_vertical_entry_chain, find_expiry_strikes, merge_strike_maps,
+    vertical_entry_strike_count,
+};
 use super::exits::{
     candidate_fails_thesis_gates, evaluate_position_monitor, exit_signal_json_for_account,
     find_tracked_position, option_group_from_tracked, reconcile_open_positions, stable_position_key,
@@ -39,25 +43,29 @@ use super::llm::OpenRouterClient;
 use super::market_context::{
     iron_condor_entry_market_context, market_context_summary_for_llm, vertical_entry_market_context,
 };
-use super::regime::{detect_options_regime, OptionsRegimeSnapshot};
+use super::regime::{detect_options_regime, put_credit_guard_active, OptionsRegimeSnapshot};
 use super::risk::{drawdown_to_json, record_live_realized_pnl, update_drawdown};
 use super::roll::{
     original_width_from_params, roll_biased_entry_rules, roll_eligible, roll_money_ok, roll_net,
     spread_type_from_tracked, RollEligibility,
 };
-use super::spread_analytics::{analytics_from_json, entry_analytics_pass, passes_min_iv_rv_ratio};
+use super::spread_analytics::{
+    analytics_from_json, entry_analytics_pass, entry_analytics_reject_reason,
+    passes_min_iv_rv_ratio,
+};
 use super::volatility::{fetch_realized_vol_pct, iv_rv_ratio};
 use super::paths::{active_state_path, load_agent_state, load_sim_agent_state};
 use super::protective;
 use super::resilience;
 use super::sim::{ensure_ledger, record_sim_entry, record_sim_exit};
+use super::technical;
 use super::schedule::{self, AgentSession};
 use super::state::{
-    backfill_entry_baselines_from_actions, candidate_fingerprint, entry_attempt_cooldown_active,
-    entry_proceed_cache_valid, is_stop_loss_exit_reason, is_thesis_exit_reason,
-    record_entry_attempt, record_stop_loss_exit, save_state, stop_loss_re_entry_blocked,
-    update_peak_profit_pct, AgentState, EntryProceedCache, PendingOrder, PendingOrderAction,
-    RedeploySignal, TrackedPosition,
+    arm_post_stop_tightening, backfill_entry_baselines_from_actions, candidate_fingerprint,
+    entry_attempt_cooldown_active, entry_proceed_cache_valid, is_stop_loss_exit_reason,
+    is_thesis_exit_reason, record_entry_attempt, record_stop_loss_exit, save_state,
+    stop_loss_re_entry_blocked, update_peak_profit_pct, AgentState, EntryProceedCache,
+    PendingOrder, PendingOrderAction, RedeploySignal, TrackedPosition,
 };
 use super::telegram_format::{
     format_action_telegram, format_llm_review_telegram, format_market_open_telegram,
@@ -506,6 +514,7 @@ pub async fn tick_once(
                             Ok(DefensiveRollOutcome::StopCompleted { detail, reason }) => {
                                 handled_as_roll = true;
                                 record_stop_loss_exit(state, &tracked.underlying);
+                                arm_post_stop_tightening(rules, state, today);
                                 state.redeploy_signal = None;
                                 state.entry_proceed_cache = None;
                                 result.skipped.push(format!(
@@ -530,6 +539,7 @@ pub async fn tick_once(
                     if !handled_as_roll {
                         if is_stop_loss_exit_reason(&eval.reason) {
                             record_stop_loss_exit(state, &tracked.underlying);
+                            arm_post_stop_tightening(rules, state, today);
                             state.redeploy_signal = None;
                             state.entry_proceed_cache = None;
                         }
@@ -637,6 +647,7 @@ pub async fn tick_once(
                             Ok(DefensiveRollOutcome::StopCompleted { detail, reason }) => {
                                 handled_as_roll = true;
                                 record_stop_loss_exit(state, &group.underlying);
+                                arm_post_stop_tightening(rules, state, today);
                                 state.redeploy_signal = None;
                                 state.entry_proceed_cache = None;
                                 result.skipped.push(format!(
@@ -661,6 +672,7 @@ pub async fn tick_once(
                     if !handled_as_roll {
                         if is_stop_loss_exit_reason(&eval.reason) {
                             record_stop_loss_exit(state, &group.underlying);
+                            arm_post_stop_tightening(rules, state, today);
                             state.redeploy_signal = None;
                             state.entry_proceed_cache = None;
                         }
@@ -724,6 +736,50 @@ pub async fn tick_once(
         .map(|s| s.preferred_strategy.as_str())
         .unwrap_or("put_credit");
     let trading_halted = state.trading_halted_reason.is_some();
+
+    // Put-credit guard: benchmark-level — no new puts when VIX is elevated and the
+    // benchmark is below its short-term SMA (where every historical stop lives).
+    let put_credit_guard = rules.regime.enabled
+        && rules.regime.put_credit_guard.is_some()
+        && regime_snap
+            .as_ref()
+            .is_some_and(|s| put_credit_guard_active(&rules.regime, s));
+    // Post-event IV-harvest window: days after the most recent macro blackout event.
+    let post_event_window = rules.risk.post_event_entry_window_days > 0
+        && rules
+            .risk
+            .days_since_last_blocked_event(today)
+            .is_some_and(|d| (1..=rules.risk.post_event_entry_window_days as u32).contains(&d));
+    if let Some(obj) = result.monitoring.as_object_mut() {
+        obj.insert("post_event_window".into(), json!(post_event_window));
+        obj.insert("put_credit_guard_active".into(), json!(put_credit_guard));
+    } else {
+        result.monitoring = json!({
+            "post_event_window": post_event_window,
+            "put_credit_guard_active": put_credit_guard,
+        });
+    }
+    if put_credit_guard {
+        result.skipped.push(
+            "put-credit guard active — VIX elevated + benchmark below short SMA (no new puts)"
+                .into(),
+        );
+    }
+    if state.stop_tightening_active(today) {
+        result.skipped.push(format!(
+            "post-stop caution active until {} — tightened IV/RV + OTM entry gates",
+            state
+                .stop_tightening_until
+                .map(|d| d.to_string())
+                .unwrap_or_default()
+        ));
+    }
+    if post_event_window {
+        result.skipped.push(format!(
+            "post-event IV-harvest window active ({}d) — premium typically rich",
+            rules.risk.post_event_entry_window_days
+        ));
+    }
 
     if entries_paused {
         result.skipped.push(format!(
@@ -810,6 +866,7 @@ pub async fn tick_once(
                 want_vertical,
                 want_condor,
                 vertical_type,
+                put_credit_guard,
             )
             .await
             {
@@ -845,6 +902,7 @@ pub async fn tick_once(
                     true,
                     false,
                     "put_credit",
+                    put_credit_guard,
                 )
                 .await
                 {
@@ -975,6 +1033,13 @@ pub async fn tick_once(
                             result.skipped.push(format!(
                                 "LLM veto entries (catalyst): {}",
                                 review.entry_reasoning
+                            ));
+                        } else if !rules.entry_policy.fail_open_on_llm_defer {
+                            llm_veto_entries = true;
+                            state.entry_proceed_cache = None;
+                            result.skipped.push(format!(
+                                "LLM skip/defer honored (fail-closed; category={}): {}",
+                                review.veto_category, review.entry_reasoning
                             ));
                         } else {
                             // Fail-open: ignore calendar/math/vague defer.
@@ -1585,6 +1650,22 @@ struct ScanEntriesResult {
     skipped: Vec<String>,
 }
 
+/// Result of one vertical entry evaluation (signal, soft skip, or hard error via `Result::Err`).
+enum VerticalEntryOutcome {
+    Signal(Value),
+    Skip(String),
+}
+
+fn thesis_gate_skip_reason(rules: &RulesConfig, analytics: &super::spread_analytics::SpreadAnalytics) -> Option<String> {
+    candidate_fails_thesis_gates(rules, analytics).map(|code| match code {
+        "thesis_pop_deterioration" => "thesis: POP below exit floor".into(),
+        "thesis_delta_breach" => "thesis: short delta at exit threshold".into(),
+        "thesis_near_strike" => "thesis: short too close (OTM cushion)".into(),
+        "thesis_inside_1sigma" => "thesis: short inside 1σ".into(),
+        other => format!("thesis gate: {other}"),
+    })
+}
+
 async fn scan_entries_for_account(
     market: &MarketDataApi,
     rules: &RulesConfig,
@@ -1595,6 +1676,7 @@ async fn scan_entries_for_account(
     want_vertical: bool,
     want_condor: bool,
     vertical_type: &str,
+    put_credit_guard: bool,
 ) -> Result<ScanEntriesResult> {
     let mut result = ScanEntriesResult {
         entries: Vec::new(),
@@ -1621,6 +1703,7 @@ async fn scan_entries_for_account(
         want_vertical,
         want_condor,
         vertical_type,
+        put_credit_guard,
         &mut result,
     )
     .await?;
@@ -1641,6 +1724,7 @@ async fn scan_entries_for_account(
             want_vertical,
             want_condor,
             vertical_type,
+            put_credit_guard,
             &mut result,
         )
         .await?;
@@ -1663,6 +1747,7 @@ async fn scan_watchlist_tier(
     want_vertical: bool,
     want_condor: bool,
     vertical_type: &str,
+    put_credit_guard: bool,
     result: &mut ScanEntriesResult,
 ) -> Result<()> {
     let policy = &rules.entry_policy;
@@ -1701,29 +1786,52 @@ async fn scan_watchlist_tier(
         let vertical_rules = rules.effective_vertical_entry(&sym);
 
         if rules.strategies.vertical.enabled && want_vertical {
-            match evaluate_vertical_entry(
-                market,
-                rules,
-                &vertical_rules,
-                &sym,
-                today,
-                state,
-                account_hash,
-                vertical_type,
-            )
-            .await
-            {
-                Ok(Some(signal)) => {
-                    result.entries.push((
-                        account_hash.to_string(),
-                        StrategyKind::Vertical,
-                        signal,
-                    ));
-                    if policy.mode == EntryScanMode::FirstQualifying {
-                        break;
+            // Put-credit guard: no new puts when VIX is elevated and the benchmark is
+            // below its short-term SMA (benchmark-level, so skip this symbol).
+            if put_credit_guard && vertical_type.eq_ignore_ascii_case("put_credit") {
+                result.skipped.push(format!(
+                    "{sym} vertical: put-credit guard active — VIX elevated + benchmark below short SMA"
+                ));
+                continue;
+            }
+            // Post-stop caution: raise IV/RV + OTM cushions for cooldown_days after a stop.
+            let vertical_rules = apply_post_stop_caution(rules, state, today, &vertical_rules);
+            // RSI(2) timing gate: no puts into a rip / no calls into a dump.
+            match rsi_entry_gate(market, &sym, vertical_type, &vertical_rules).await {
+                Ok(Some(skip)) => {
+                    result.skipped.push(format!("{sym} vertical: {skip}"));
+                }
+                Ok(None) => {
+                    match evaluate_vertical_entry(
+                        market,
+                        rules,
+                        &vertical_rules,
+                        &sym,
+                        today,
+                        state,
+                        account_hash,
+                        vertical_type,
+                    )
+                    .await
+                    {
+                        Ok(VerticalEntryOutcome::Signal(signal)) => {
+                            result.entries.push((
+                                account_hash.to_string(),
+                                StrategyKind::Vertical,
+                                signal,
+                            ));
+                            if policy.mode == EntryScanMode::FirstQualifying {
+                                break;
+                            }
+                        }
+                        Ok(VerticalEntryOutcome::Skip(reason)) => {
+                            result
+                                .skipped
+                                .push(format!("{sym} vertical: no entry — {reason}"));
+                        }
+                        Err(e) => result.skipped.push(format!("{sym} vertical: {e:#}")),
                     }
                 }
-                Ok(None) => {}
                 Err(e) => result.skipped.push(format!("{sym} vertical: {e:#}")),
             }
         }
@@ -1755,6 +1863,79 @@ async fn scan_watchlist_tier(
 
 fn entry_execution_requires_llm(rules: &RulesConfig) -> bool {
     rules.llm.enabled && rules.llm.veto_entries && rules.entry_policy.require_llm_proceed
+}
+
+/// Post-stop caution: temporarily raise IV/RV + OTM cushions after a stop-loss exit
+/// (`entry_policy.post_stop_tightening`). Returns a clone with tightened gates.
+fn apply_post_stop_caution(
+    rules: &RulesConfig,
+    state: &AgentState,
+    today: NaiveDate,
+    entry: &VerticalEntryRules,
+) -> VerticalEntryRules {
+    let Some(cfg) = rules
+        .entry_policy
+        .post_stop_tightening
+        .as_ref()
+        .filter(|c| c.enabled)
+    else {
+        return entry.clone();
+    };
+    if !state.stop_tightening_active(today) {
+        return entry.clone();
+    }
+    let mut e = entry.clone();
+    e.min_iv_rv_ratio = Some(cfg.min_iv_rv_ratio.max(e.min_iv_rv_ratio.unwrap_or(0.0)));
+    e.min_short_otm_pct = Some(cfg.min_short_otm_pct.max(e.min_short_otm_pct.unwrap_or(0.0)));
+    e
+}
+
+/// RSI(2) timing gate for directional credits (fail-closed when candles missing).
+async fn rsi_entry_gate(
+    market: &MarketDataApi,
+    sym: &str,
+    vertical_type: &str,
+    entry: &VerticalEntryRules,
+) -> Result<Option<String>> {
+    let max = if vertical_type.eq_ignore_ascii_case("put_credit") {
+        entry.put_credit_max_rsi2
+    } else {
+        None
+    };
+    let min = if vertical_type.eq_ignore_ascii_case("call_credit") {
+        entry.call_credit_min_rsi2
+    } else {
+        None
+    };
+    if max.is_none() && min.is_none() {
+        return Ok(None);
+    }
+    let closes = match technical::fetch_daily_closes(market, sym).await {
+        Ok(c) => c,
+        Err(e) => {
+            return Ok(Some(format!(
+                "RSI(2) gate fail-closed — no daily closes ({e:#})"
+            )));
+        }
+    };
+    let r = technical::rsi2(&closes);
+    if let Some(max) = max {
+        if r.map_or(true, |r| r > max) {
+            return Ok(Some(format!(
+                "RSI(2) {:.1} above {max:.1} — no puts into a rip",
+                r.unwrap_or(f64::NAN)
+            )));
+        }
+    }
+    if let Some(min) = min {
+        if r.map_or(true, |r| r < min) {
+            return Ok(Some(format!(
+                "RSI(2) {:.1} below {min:.1} — no calls into a dump",
+                r.unwrap_or(f64::NAN)
+            )));
+        }
+    }
+    Ok(None)
 }
 
 fn redeploy_cooldown_active(rules: &RulesConfig, sig: &RedeploySignal) -> bool {
@@ -2028,10 +2209,12 @@ async fn evaluate_vertical_entry(
     state: &AgentState,
     account_hash: &str,
     spread_type: &str,
-) -> Result<Option<Value>> {
+) -> Result<VerticalEntryOutcome> {
     let open_count = state.count_open_for_strategy(account_hash, StrategyKind::Vertical);
     if open_count + state.pending_entry_count() >= entry.max_open_positions {
-        return Ok(None);
+        return Ok(VerticalEntryOutcome::Skip(
+            "max open vertical positions".into(),
+        ));
     }
 
     let is_put = !spread_type.eq_ignore_ascii_case("call_credit");
@@ -2042,50 +2225,157 @@ async fn evaluate_vertical_entry(
         "callExpDateMap"
     };
 
-    let chain = market
+    let bootstrap = market
         .chains()
         .get(&ChainQuery {
             symbol: underlying,
             contract_type: Some(contract_type),
-            strike_count: Some(120),
+            strike_count: Some(30),
             include_underlying_quote: Some(true),
             ..Default::default()
         })
         .await?;
 
-    let (expiry, strike_map) =
-        pick_expiry_map(&chain, map_key, entry.dte_min, entry.dte_max, today)?;
-    let underlying_price = chain
+    let underlying_price = bootstrap
         .pointer("/underlying/last")
-        .or_else(|| chain.pointer("/underlyingPrice"))
+        .or_else(|| bootstrap.pointer("/underlyingPrice"))
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
 
     if underlying_price <= 0.0 {
-        return Ok(None);
+        return Ok(VerticalEntryOutcome::Skip("missing underlying price".into()));
     }
 
-    // Never fall back to a fixed % OTM strike — that bypasses the delta band and
-    // recreates ~20–25Δ "cheap premium" picks (QQQ 655/650 Jul 2026 post-mortem).
-    let Some(short_strike) = pick_strike_by_delta(
+    let mut chain =
+        fetch_vertical_entry_chain(
+            market,
+            underlying,
+            contract_type,
+            underlying_price,
+            entry.max_width,
+        )
+        .await?;
+
+    let (mut expiry, mut strike_map) =
+        pick_expiry_map(&chain, map_key, entry.dte_min, entry.dte_max, today)?;
+
+    let mut short_strike = pick_strike_by_delta(
         &strike_map,
         entry.short_delta_min,
         entry.short_delta_max,
         is_put,
-    ) else {
-        return Ok(None);
+    );
+
+    if short_strike.is_none() {
+        for mult in [0.93_f64, 0.90, 0.87] {
+            let biased_anchor = if is_put {
+                underlying_price * mult
+            } else {
+                underlying_price * (2.0 - mult)
+            };
+            if let Ok(biased_chain) = fetch_vertical_entry_chain(
+                market,
+                underlying,
+                contract_type,
+                biased_anchor,
+                entry.max_width,
+            )
+            .await
+            {
+                if let Ok((exp, map)) =
+                    pick_expiry_map(&biased_chain, map_key, entry.dte_min, entry.dte_max, today)
+                {
+                    if let Some(s) = pick_strike_by_delta(
+                        &map,
+                        entry.short_delta_min,
+                        entry.short_delta_max,
+                        is_put,
+                    ) {
+                        chain = biased_chain;
+                        expiry = exp;
+                        strike_map = map;
+                        short_strike = Some(s);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    let Some(short_strike) = short_strike else {
+        return Ok(VerticalEntryOutcome::Skip(format!(
+            "no short in |delta| {:.2}-{:.2}",
+            entry.short_delta_min, entry.short_delta_max
+        )));
     };
-    let long_strike = pick_wing_strike(&strike_map, short_strike, entry.max_width, is_put)?;
+
+    let exp_str = expiry.to_string();
+    let strike_map = if pick_wing_strike(&strike_map, short_strike, entry.max_width, is_put).is_err() {
+        if let Ok(wing_chain) = fetch_chain_for_expiry(
+            market,
+            underlying,
+            contract_type,
+            if is_put {
+                short_strike - entry.max_width
+            } else {
+                short_strike + entry.max_width
+            },
+            &exp_str,
+            vertical_entry_strike_count(underlying_price, entry.max_width),
+        )
+        .await
+        {
+            if let Ok(mut wing_map) = find_expiry_strikes(&wing_chain, map_key, &exp_str) {
+                merge_strike_maps(&mut wing_map, &strike_map);
+                wing_map
+            } else {
+                strike_map
+            }
+        } else {
+            strike_map
+        }
+    } else {
+        strike_map
+    };
+
+    let long_strike = if let Ok(long) =
+        pick_wing_strike(&strike_map, short_strike, entry.max_width, is_put)
+    {
+        long
+    } else {
+        let target = if is_put {
+            short_strike - entry.max_width
+        } else {
+            short_strike + entry.max_width
+        };
+        if estimate_spread_credit(&strike_map, short_strike, target).is_ok() {
+            target
+        } else {
+            return Ok(VerticalEntryOutcome::Skip(format!(
+                "no wing beyond short {short_strike} (target long {target:.1} not quoted)"
+            )));
+        }
+    };
+
     let width = (short_strike - long_strike).abs();
     if width < entry.max_width * 0.5 {
-        return Ok(None);
+        return Ok(VerticalEntryOutcome::Skip(format!(
+            "spread width {width:.1} too narrow (max_width {})",
+            entry.max_width
+        )));
     }
-    let credit = estimate_spread_credit(&strike_map, short_strike, long_strike)?;
+    let credit = estimate_spread_credit(&strike_map, short_strike, long_strike)
+        .context("estimate spread credit")?;
     if credit < entry.min_credit {
-        return Ok(None);
+        return Ok(VerticalEntryOutcome::Skip(format!(
+            "credit ${credit:.2} below min ${:.2}",
+            entry.min_credit
+        )));
     }
     if !entry_quality_ok(&strike_map, short_strike, long_strike, width, credit, entry) {
-        return Ok(None);
+        return Ok(VerticalEntryOutcome::Skip(
+            "quote width too wide vs credit or credit/width below entry floor".into(),
+        ));
     }
 
     let lookback = rules.regime.realized_vol_lookback.max(5);
@@ -2110,17 +2400,19 @@ async fn evaluate_vertical_entry(
     );
 
     let analytics = analytics_from_json(market_context.get("analytics").unwrap_or(&json!({})));
-    if let Some(ref a) = analytics {
-        if !entry_analytics_pass(entry, a) {
-            return Ok(None);
-        }
-        if candidate_fails_thesis_gates(rules, a).is_some() {
-            return Ok(None);
-        }
-    } else {
-        // Analytics unavailable — cannot verify delta band / 1σ / IV-RV gates.
-        return Ok(None);
+    let Some(ref a) = analytics else {
+        return Ok(VerticalEntryOutcome::Skip(
+            "analytics unavailable".into(),
+        ));
+    };
+    if let Some(reason) = entry_analytics_reject_reason(entry, a) {
+        return Ok(VerticalEntryOutcome::Skip(reason));
     }
+    if let Some(reason) = thesis_gate_skip_reason(rules, a) {
+        return Ok(VerticalEntryOutcome::Skip(reason));
+    }
+    debug_assert!(entry_analytics_pass(entry, a));
+    debug_assert!(candidate_fails_thesis_gates(rules, a).is_none());
 
     let right = if is_put { 'P' } else { 'C' };
     let candidate_id = candidate_position_id(
@@ -2137,7 +2429,9 @@ async fn evaluate_vertical_entry(
         || state.has_pending_position(&candidate_id)
         || has_legacy_duplicate(state, account_hash, underlying, &expiry.to_string())
     {
-        return Ok(None);
+        return Ok(VerticalEntryOutcome::Skip(
+            "duplicate position or pending order".into(),
+        ));
     }
 
     let resolved_type = if is_put { "put_credit" } else { "call_credit" };
@@ -2154,7 +2448,7 @@ async fn evaluate_vertical_entry(
         session: None,
     };
 
-    Ok(Some(json!({
+    Ok(VerticalEntryOutcome::Signal(json!({
         "type": "entry",
         "strategy": "vertical",
         "account_hash": account_hash,
@@ -2180,35 +2474,49 @@ async fn evaluate_condor_entry(
         return Ok(None);
     }
 
-    let chain = market
+    let bootstrap = market
         .chains()
         .get(&ChainQuery {
             symbol: underlying,
             contract_type: Some("ALL"),
-            strike_count: Some(80),
+            strike_count: Some(30),
             include_underlying_quote: Some(true),
             ..Default::default()
         })
         .await?;
 
-    let underlying_price = chain
+    let underlying_price = bootstrap
         .pointer("/underlying/last")
-        .or_else(|| chain.pointer("/underlyingPrice"))
+        .or_else(|| bootstrap.pointer("/underlyingPrice"))
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
     if underlying_price <= 0.0 {
         return Ok(None);
     }
 
+    let put_chain = fetch_vertical_entry_chain(
+        market,
+        underlying,
+        "PUT",
+        underlying_price,
+        entry.wing_width,
+    )
+    .await?;
+    let call_chain = fetch_vertical_entry_chain(
+        market,
+        underlying,
+        "CALL",
+        underlying_price,
+        entry.wing_width,
+    )
+    .await?;
+
     let (expiry, put_map) =
-        pick_expiry_map(&chain, "putExpDateMap", entry.dte_min, entry.dte_max, today)?;
-    let (_, call_map) = pick_expiry_map(
-        &chain,
-        "callExpDateMap",
-        entry.dte_min,
-        entry.dte_max,
-        today,
-    )?;
+        pick_expiry_map(&put_chain, "putExpDateMap", entry.dte_min, entry.dte_max, today)?;
+    let exp_str = expiry.to_string();
+    let call_map = find_expiry_strikes(&call_chain, "callExpDateMap", &exp_str)
+        .context("call expiry not in OTM chain")?;
+    let chain = &put_chain;
 
     // `short_delta` is |delta|, not an OTM%. Use a practical band around the target.
     let delta_min = (entry.short_delta - 0.06).max(0.06);
@@ -2306,6 +2614,24 @@ async fn evaluate_condor_entry(
         entry.max_contracts_per_trade as f64,
         realized_vol_pct,
     );
+
+    // Both-wings-outside-1σ gate (GLD post-mortem): reject condors whose short sits
+    // inside the expected move. Fail-closed when the check is unavailable.
+    if entry.require_shorts_outside_1sigma
+        && market_context
+            .get("shorts_outside_1sigma")
+            .and_then(|v| v.as_bool())
+            != Some(true)
+    {
+        anyhow::bail!(
+            "shorts_outside_1sigma {} — reject condor (require both wings outside 1σ)",
+            market_context
+                .get("shorts_outside_1sigma")
+                .and_then(|v| v.as_bool())
+                .map(|b| b.to_string())
+                .unwrap_or_else(|| "unavailable".into())
+        );
+    }
 
     Ok(Some(json!({
         "type": "entry",
@@ -3132,7 +3458,7 @@ async fn try_defensive_roll(
     )
     .await
     {
-        Ok(Some(mut signal)) => {
+        Ok(VerticalEntryOutcome::Signal(mut signal)) => {
             let new_credit = signal
                 .get("estimated_credit")
                 .and_then(|v| v.as_f64())
@@ -3164,10 +3490,10 @@ async fn try_defensive_roll(
             }
             signal
         }
-        Ok(None) => {
+        Ok(VerticalEntryOutcome::Skip(reason)) => {
             return Ok(DefensiveRollOutcome::StopCompleted {
                 detail: Some(close_detail),
-                reason: "no_roll_candidate".into(),
+                reason: format!("no_roll_candidate:{reason}"),
             });
         }
         Err(e) => {

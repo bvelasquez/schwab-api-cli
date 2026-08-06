@@ -116,6 +116,8 @@ pub fn run_backtest(
         let closes_bench = cache.closes_through(&bench, *day);
         let spot_bench = cache.close_on_date(&bench, *day).unwrap_or(0.0);
         let (above50, above200) = sma_flags(&closes_bench, spot_bench);
+        let above20 = crate::agent::technical::sma_value(&closes_bench, 20)
+            .is_some_and(|s| spot_bench >= s);
         let vix = cache.vix_on_date(&rules.regime.vix_symbol, *day);
         let class = if rules.regime.enabled {
             classify_options_regime(&rules.regime, vix, above50, above200)
@@ -130,6 +132,19 @@ pub fn run_backtest(
                 .pause_entries_vix_below
                 .is_some_and(|floor| vix.is_some_and(|v| v <= floor));
         let blocked = !rules.risk.active_blocked_date_labels(*day).is_empty();
+        // Put-credit guard (benchmark-level): no puts when VIX elevated + bench below SMA.
+        let put_credit_guard = rules
+            .regime
+            .put_credit_guard
+            .as_ref()
+            .is_some_and(|g| {
+                vix.is_some_and(|v| v >= g.vix_above)
+                    && match g.require_benchmark_above_sma {
+                        20 => !above20,
+                        50 => !above50,
+                        _ => !above50,
+                    }
+            });
 
         for pos in open.drain(..) {
             match process_open(
@@ -162,6 +177,7 @@ pub fn run_backtest(
                 as_of,
                 &preferred,
                 vix.unwrap_or(18.0),
+                put_credit_guard,
                 &mut open,
                 &mut skip_counts,
             )? {
@@ -611,12 +627,18 @@ fn try_entry(
     as_of: chrono::DateTime<Utc>,
     preferred: &str,
     iv_pct: f64,
+    put_credit_guard: bool,
     open: &mut Vec<OpenBt>,
     skips: &mut HashMap<String, u32>,
 ) -> Result<Option<Value>> {
     if rules.risk.max_trades_per_day > 0 && state.trades_today >= rules.risk.max_trades_per_day {
         *skips.entry("max_trades_per_day".into()).or_insert(0) += 1;
         return Ok(None);
+    }
+    // Post-stop caution: temporarily raise IV/RV + OTM cushions after a stop exit.
+    let caution_active = state.stop_tightening_active(day);
+    if caution_active {
+        *skips.entry("post_stop_caution".into()).or_insert(0) += 1;
     }
 
     for item in rules.watchlist_items() {
@@ -670,12 +692,19 @@ fn try_entry(
                 if state.open_positions.contains_key(&id) {
                     continue;
                 }
-                let opened = insert_condor(state, account, day, as_of, c, margin, &id);
+                let opened = insert_condor(state, account, day, as_of, c.clone(), margin, &id);
                 journal::append_backtest_event_at(
                     rules_path,
                     as_of,
                     "sim_entry_filled",
-                    json!({ "position_id": id, "strategy": "iron_condor" }),
+                    json!({
+                        "position_id": id,
+                        "strategy": "iron_condor",
+                        "underlying": c.underlying,
+                        "expiry": c.expiry.to_string(),
+                        "dte": c.dte,
+                        "entry_credit": c.credit,
+                    }),
                 )?;
                 open.push(opened);
                 return Ok(Some(json!({"action":"entry","strategy":"iron_condor","id": id})));
@@ -693,21 +722,60 @@ fn try_entry(
             continue;
         }
         let is_put = preferred != "call_credit";
+        if put_credit_guard && is_put {
+            *skips.entry("put_credit_guard".into()).or_insert(0) += 1;
+            continue;
+        }
         let entry = &rules.entry_rules.vertical;
+        let mut entry = entry.clone();
+        if caution_active {
+            if let Some(cfg) = rules
+                .entry_policy
+                .post_stop_tightening
+                .as_ref()
+                .filter(|c| c.enabled)
+            {
+                entry.min_iv_rv_ratio =
+                    Some(cfg.min_iv_rv_ratio.max(entry.min_iv_rv_ratio.unwrap_or(0.0)));
+                entry.min_short_otm_pct =
+                    Some(cfg.min_short_otm_pct.max(entry.min_short_otm_pct.unwrap_or(0.0)));
+            }
+        }
+        // RSI(2) timing gate (fail-closed when candles missing).
+        if (is_put && entry.put_credit_max_rsi2.is_some())
+            || (!is_put && entry.call_credit_min_rsi2.is_some())
+        {
+            match crate::agent::technical::rsi2(&closes) {
+                Some(r) => {
+                    if is_put && entry.put_credit_max_rsi2.is_some_and(|max| r > max) {
+                        *skips.entry("rsi2_gate".into()).or_insert(0) += 1;
+                        continue;
+                    }
+                    if !is_put && entry.call_credit_min_rsi2.is_some_and(|min| r < min) {
+                        *skips.entry("rsi2_gate".into()).or_insert(0) += 1;
+                        continue;
+                    }
+                }
+                None => {
+                    *skips.entry("rsi2_gate".into()).or_insert(0) += 1;
+                    continue;
+                }
+            }
+        }
         let Some(v) = pick_vertical(
             &sym,
             day,
             spot,
             iv_pct,
             &closes,
-            entry,
+            &entry,
             is_put,
             entry.max_contracts_per_trade,
         ) else {
             *skips.entry("no_vertical_candidate".into()).or_insert(0) += 1;
             continue;
         };
-        if let Err(reason) = vertical_passes_entry_gates(rules, entry, &v, spot) {
+        if let Err(reason) = vertical_passes_entry_gates(rules, &entry, &v, spot) {
             *skips.entry(reason).or_insert(0) += 1;
             continue;
         }
@@ -726,12 +794,20 @@ fn try_entry(
         if state.open_positions.contains_key(&id) {
             continue;
         }
-        let opened = insert_vertical(state, account, day, as_of, v, margin, &id, 0, false);
+        let opened = insert_vertical(state, account, day, as_of, v.clone(), margin, &id, 0, false);
         journal::append_backtest_event_at(
             rules_path,
             as_of,
             "sim_entry_filled",
-            json!({ "position_id": id, "strategy": "vertical" }),
+            json!({
+                "position_id": id,
+                "strategy": "vertical",
+                "underlying": v.underlying,
+                "expiry": v.expiry.to_string(),
+                "dte": v.dte,
+                "entry_credit": v.credit,
+                "short_delta": v.short_delta,
+            }),
         )?;
         open.push(opened);
         return Ok(Some(json!({"action":"entry","strategy":"vertical","id": id})));

@@ -14,6 +14,8 @@ pub mod risk;
 pub mod roll;
 pub mod scorecard;
 pub mod backtest;
+pub mod chains_util;
+pub mod technical;
 pub mod sim;
 pub mod volatility;
 pub mod runner;

@@ -711,6 +711,77 @@ pub fn entry_analytics_pass(entry: &crate::rules::VerticalEntryRules, a: &Spread
     true
 }
 
+/// Human-readable reason when [`entry_analytics_pass`] would return false.
+pub fn entry_analytics_reject_reason(
+    entry: &crate::rules::VerticalEntryRules,
+    a: &SpreadAnalytics,
+) -> Option<String> {
+    match a.short_delta {
+        Some(d) => {
+            let abs = d.abs();
+            if abs < entry.short_delta_min || abs > entry.short_delta_max {
+                return Some(format!(
+                    "short |delta| {abs:.3} outside {:.2}-{:.2}",
+                    entry.short_delta_min, entry.short_delta_max
+                ));
+            }
+        }
+        None => return Some("missing short delta".into()),
+    }
+    if let Some(min) = entry.min_pop_pct {
+        let pop = a.spread_pop_pct.unwrap_or(0.0);
+        if pop < min {
+            return Some(format!("POP {pop:.1}% below min {min:.1}%"));
+        }
+    }
+    if let Some(min) = entry.min_distance_to_be_pct {
+        let dist = a.distance_to_be_pct.unwrap_or(0.0);
+        if dist < min {
+            return Some(format!(
+                "distance to B/E {dist:.2}% below min {min:.1}%"
+            ));
+        }
+    }
+    if let Some(min_otm) = entry.min_short_otm_pct {
+        let otm = a.short_otm_pct.unwrap_or(0.0);
+        if otm < min_otm {
+            return Some(format!("short OTM {otm:.2}% below min {min_otm:.1}%"));
+        }
+    }
+    let min_ctw = entry.min_credit_to_width_pct.unwrap_or(12.5);
+    let ctw = a.credit_to_width_pct.unwrap_or(0.0);
+    if ctw < min_ctw {
+        return Some(format!(
+            "credit/width {ctw:.1}% below min {min_ctw:.1}%"
+        ));
+    }
+    if entry.reject_short_inside_1sigma && a.short_strike_inside_1sigma != Some(false) {
+        return Some("short inside 1σ expected move".into());
+    }
+    if let Some(min_ratio) = entry.min_iv_rv_ratio {
+        match a.iv_rv_ratio {
+            Some(ratio) if ratio >= min_ratio => {}
+            Some(ratio) => {
+                return Some(format!(
+                    "IV/RV ratio {ratio:.2} below min {min_ratio:.2}"
+                ));
+            }
+            None => return Some("IV/RV ratio unavailable".into()),
+        }
+    }
+    if let Some(max_adverse) = entry.max_adverse_day_change_pct {
+        if let Some(chg) = a.underlying_change_pct {
+            let adverse = if a.is_put_spread { -chg } else { chg };
+            if adverse > max_adverse {
+                return Some(format!(
+                    "adverse day move {adverse:.2}% exceeds max {max_adverse:.1}%"
+                ));
+            }
+        }
+    }
+    None
+}
+
 /// Shared IV/RV check for iron condors (and any caller with only the ratio threshold).
 pub fn passes_min_iv_rv_ratio(min_ratio: Option<f64>, iv_rv: Option<f64>) -> bool {
     match min_ratio {

@@ -51,20 +51,22 @@ pub async fn notify_entry_attempt(
 
     let (title, detail) = match status {
         "filled" => (
-            "BUY FILLED",
-            format!("{symbol} ×{qty} @ {price}"),
+            "Bought (live)",
+            format!("{symbol} — {qty} shares @ {price}"),
         ),
         "simulated" => (
-            "SIM BUY",
-            format!("{symbol} ×{qty} @ {price}"),
+            "Bought (paper trade)",
+            format!("{symbol} — {qty} shares @ {price}"),
         ),
         "submitted" => (
-            "BUY WORKING",
+            "Buy order working",
             inner
                 .get("reason")
                 .and_then(|v| v.as_str())
-                .map(|r| format!("{symbol} ×{qty} @ {price} — {r}"))
-                .unwrap_or_else(|| format!("{symbol} ×{qty} @ {price} — awaiting fill")),
+                .map(|r| format!("{symbol} — {qty} shares @ {price}\n{r}"))
+                .unwrap_or_else(|| {
+                    format!("{symbol} — {qty} shares @ {price}\nWaiting for fill at Schwab.")
+                }),
         ),
         "dry_run" => return,
         "skipped" => return,
@@ -73,6 +75,131 @@ pub async fn notify_entry_attempt(
     let _ = tg
         .send(&format!("schwab-trader [{}]\n{title}\n{detail}", rules.trader_id))
         .await;
+}
+
+/// Plain-language line for mechanical / thesis exit codes (journal + Telegram).
+pub fn exit_reason_plain_english(reason: &str) -> &'static str {
+    match reason {
+        "stop_loss" => "Stop-loss hit — cut the loss.",
+        "profit_target" => "Profit target reached — taking gains.",
+        "time_stop" => "Held long enough — closed on the time rule.",
+        "eod_flatten" => "End of day — closed before the bell.",
+        "overnight_flatten" => "No overnight hold — closed at the open.",
+        "oco_filled" => "Bracket order filled at Schwab (stop or target).",
+        "manual_close_all" => "Closed manually (close-all).",
+        "thesis_profit_giveback" => "Gave back too much profit from the peak — closed.",
+        "thesis_below_sma" => "Price fell below the trend line — closed.",
+        "thesis_rs_deterioration" => "Momentum vs the market weakened — closed.",
+        "thesis_regime" => "Market regime turned choppy — closed while still green.",
+        _ if reason.starts_with("thesis_") => "Trade thesis broke — closed.",
+        _ => "Position closed.",
+    }
+}
+
+fn closure_action(exit: &Value) -> Option<&str> {
+    exit.get("action").and_then(|v| v.as_str())
+}
+
+fn is_position_closure_event(exit: &Value) -> bool {
+    exit.get("exit_reason")
+        .or_else(|| exit.get("reason"))
+        .and_then(|v| v.as_str())
+        .is_some()
+}
+
+fn format_usd(price: f64) -> String {
+    format!("${price:.2}")
+}
+
+fn format_closure_telegram(exit: &Value, simulate: bool) -> Option<(String, String)> {
+    let symbol = exit.get("symbol").and_then(|v| v.as_str()).unwrap_or("?");
+
+    if let Some(action) = closure_action(exit) {
+        match action {
+            "sim_exit_plan_tightened" | "exit_plan_tightened" => {
+                let old = exit
+                    .get("old_profit_limit")
+                    .and_then(|v| v.as_f64())
+                    .map(format_usd);
+                let new = exit
+                    .get("new_profit_limit")
+                    .and_then(|v| v.as_f64())
+                    .map(format_usd);
+                let detail = match (old, new) {
+                    (Some(o), Some(n)) => format!(
+                        "{symbol} — still holding. Profit target trimmed {o} → {n} (recent volatility / range)."
+                    ),
+                    _ => format!(
+                        "{symbol} — still holding. Profit target was tightened to match current conditions."
+                    ),
+                };
+                let title = if simulate {
+                    "Profit target adjusted (paper)".to_string()
+                } else {
+                    "Profit target adjusted".to_string()
+                };
+                return Some((title, detail));
+            }
+            "sim_trailing_stop_tightened" | "trailing_stop_tightened" => {
+                let new_stop = exit
+                    .get("new_stop")
+                    .and_then(|v| v.as_f64())
+                    .map(format_usd);
+                let detail = match new_stop {
+                    Some(s) => format!(
+                        "{symbol} — still holding. Trailing stop raised to {s} to protect gains."
+                    ),
+                    None => format!("{symbol} — still holding. Trailing stop was raised."),
+                };
+                let title = if simulate {
+                    "Stop raised (paper)".to_string()
+                } else {
+                    "Stop raised at Schwab".to_string()
+                };
+                return Some((title, detail));
+            }
+            _ => {}
+        }
+    }
+
+    if !is_position_closure_event(exit) {
+        return None;
+    }
+
+    let reason_code = exit
+        .get("exit_reason")
+        .or_else(|| exit.get("reason"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("exit");
+    let why = exit_reason_plain_english(reason_code);
+
+    let price = exit
+        .get("fill_price")
+        .or_else(|| exit.get("exit_price"))
+        .and_then(|v| v.as_f64());
+    let price_line = price
+        .map(|p| format!(" @ {}", format_usd(p)))
+        .unwrap_or_default();
+
+    let pnl_line = exit
+        .get("pnl_usd")
+        .and_then(|v| v.as_f64())
+        .zip(exit.get("pnl_pct").and_then(|v| v.as_f64()))
+        .map(|(usd, pct)| format!("\nP&L: {}{:.2} ({:+.1}%)", if usd >= 0.0 { "+" } else { "" }, usd, pct))
+        .or_else(|| {
+            exit.get("pnl_usd")
+                .and_then(|v| v.as_f64())
+                .map(|usd| format!("\nP&L: {}{:.2}", if usd >= 0.0 { "+" } else { "" }, usd))
+        })
+        .unwrap_or_default();
+
+    let title = if simulate {
+        "Sold (paper trade)".to_string()
+    } else {
+        "Sold (live)".to_string()
+    };
+    let detail = format!("{symbol}{price_line}\n{why}{pnl_line}");
+    Some((title, detail))
 }
 
 pub async fn notify_closure_exits(
@@ -85,12 +212,14 @@ pub async fn notify_closure_exits(
         return;
     }
     for exit in exits {
-        let reason = exit
-            .get("exit_reason")
-            .or_else(|| exit.get("reason"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("exit");
-        trade_audio::speak_exit_reason(reason);
+        if is_position_closure_event(exit) {
+            let reason = exit
+                .get("exit_reason")
+                .or_else(|| exit.get("reason"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("exit");
+            trade_audio::speak_exit_reason(reason);
+        }
     }
 
     let Some(tg) = tg else { return };
@@ -98,25 +227,12 @@ pub async fn notify_closure_exits(
         return;
     }
     for exit in exits {
-        let symbol = exit
-            .get("symbol")
-            .and_then(|v| v.as_str())
-            .unwrap_or("?");
-        let reason = exit
-            .get("exit_reason")
-            .or_else(|| exit.get("reason"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("exit");
-        let price = exit
-            .get("fill_price")
-            .or_else(|| exit.get("exit_price"))
-            .and_then(|v| v.as_f64())
-            .map(|p| format!(" @ ${p:.2}"))
-            .unwrap_or_default();
-        let prefix = if simulate { "SIM SELL" } else { "SELL" };
+        let Some((title, detail)) = format_closure_telegram(exit, simulate) else {
+            continue;
+        };
         let _ = tg
             .send(&format!(
-                "schwab-trader [{}]\n{prefix} {symbol}\n{reason}{price}",
+                "schwab-trader [{}]\n{title}\n{detail}",
                 rules.trader_id
             ))
             .await;
@@ -388,4 +504,49 @@ pub async fn notify_tick_summary(
             rules.trader_id
         ))
         .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn plan_tighten_reads_as_hold_not_sell() {
+        let exit = json!({
+            "symbol": "XLP",
+            "action": "sim_exit_plan_tightened",
+            "old_profit_limit": 89.67,
+            "new_profit_limit": 89.48,
+        });
+        let (title, detail) = format_closure_telegram(&exit, true).unwrap();
+        assert!(title.contains("paper"));
+        assert!(detail.contains("still holding"));
+        assert!(detail.contains("89.67"));
+        assert!(!title.to_lowercase().contains("sold"));
+    }
+
+    #[test]
+    fn sim_exit_includes_plain_reason_and_pnl() {
+        let exit = json!({
+            "symbol": "XLE",
+            "exit_reason": "thesis_profit_giveback",
+            "exit_price": 61.5,
+            "pnl_usd": 4.2,
+            "pnl_pct": 1.1,
+        });
+        let (title, detail) = format_closure_telegram(&exit, true).unwrap();
+        assert!(title.contains("paper"));
+        assert!(detail.contains("peak"));
+        assert!(detail.contains("+4.20"));
+    }
+
+    #[test]
+    fn unknown_adjustment_without_exit_reason_is_skipped() {
+        assert!(format_closure_telegram(
+            &json!({ "symbol": "X", "action": "something_else" }),
+            true
+        )
+        .is_none());
+    }
 }

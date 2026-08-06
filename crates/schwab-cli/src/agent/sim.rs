@@ -168,6 +168,19 @@ pub fn reset_sim(state: &mut AgentState, rules: &RulesConfig) {
     });
 }
 
+/// Fractional spread slippage on paper fills from `simulation.fill_slippage_pct`.
+/// Entry credit is reduced and exit debit increased by this fraction to approximate
+/// bid/ask cost (the backlog "widen close debit" item).
+pub fn fill_slippage_fraction(rules: &RulesConfig) -> f64 {
+    rules
+        .simulation
+        .as_ref()
+        .map(|s| s.fill_slippage_pct)
+        .unwrap_or(0.0)
+        .max(0.0)
+        / 100.0
+}
+
 pub fn record_sim_entry(
     rules_path: &Path,
     state: &mut AgentState,
@@ -232,6 +245,7 @@ pub fn record_sim_entry(
         .and_then(|v| v.as_f64())
         .or_else(|| params.get("limit_credit").and_then(|v| v.as_f64()))
         .unwrap_or(0.0);
+    let credit = credit * (1.0 - fill_slippage_fraction(rules));
     let underlying = params
         .get("underlying")
         .and_then(|v| v.as_str())
@@ -317,10 +331,12 @@ pub fn record_sim_exit(
         .with_context(|| format!("sim position {position_id} not found"))?;
     let entry_credit = tracked.entry_credit.unwrap_or(mark.entry_credit);
     let contracts = tracked.contracts.max(1) as f64;
-    let pnl_per_spread = (entry_credit - mark.debit_to_close) * 100.0;
+    // Widen the close debit for slippage so paper P/L is honest about spread cost.
+    let debit_to_close = mark.debit_to_close * (1.0 + fill_slippage_fraction(rules));
+    let pnl_per_spread = (entry_credit - debit_to_close) * 100.0;
     let pnl_usd = pnl_per_spread * contracts;
     let pnl_pct = if entry_credit > f64::EPSILON {
-        ((entry_credit - mark.debit_to_close) / entry_credit) * 100.0
+        ((entry_credit - debit_to_close) / entry_credit) * 100.0
     } else {
         0.0
     };
@@ -337,7 +353,7 @@ pub fn record_sim_exit(
         strategy: tracked.strategy.clone(),
         contracts: tracked.contracts,
         entry_credit,
-        exit_debit: mark.debit_to_close,
+        exit_debit: debit_to_close,
         opened_at: tracked.opened_at,
         closed_at: Utc::now(),
         pnl_usd,

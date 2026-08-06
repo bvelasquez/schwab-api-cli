@@ -531,6 +531,10 @@ pub enum OptionsCommands {
         #[arg(long)]
         strike_count: Option<u32>,
         #[arg(long)]
+        strike: Option<String>,
+        #[arg(long)]
+        range: Option<String>,
+        #[arg(long)]
         from_date: Option<String>,
         #[arg(long)]
         to_date: Option<String>,
