@@ -287,7 +287,7 @@ Mechanical filters on vertical candidates (`entry_rules.vertical`):
 | `max_adverse_day_change_pct` | Reject puts on a down day (or calls on an up day) beyond this % move |
 | `reject_short_inside_1sigma` | Reject shorts inside 1σ expected move. **Fail-closed** when chain IV is missing (never silently passes). |
 | `min_iv_rv_ratio` | Reject when `chain_iv / realized_vol <` threshold (e.g. `1.15`). Realized vol uses `regime.realized_vol_lookback` (default 20). **Fail-closed** when IV or RV is missing. |
-| `put_credit_max_rsi2` / `call_credit_min_rsi2` | **Timing gates.** Reject put credits when the underlying's 2-period RSI is above `put_credit_max_rsi2` (no puts into a rip) and call credits when RSI(2) is below `call_credit_min_rsi2` (no calls into a dump). **Fail-closed** when daily candles are unavailable. Sell premium into 2-day extremes only. |
+| `put_credit_max_rsi2` / `call_credit_min_rsi2` | **Timing gates.** Reject put credits when the underlying's 2-period RSI is above `put_credit_max_rsi2` (no puts into a rip) and call credits when RSI(2) is below `call_credit_min_rsi2` (no calls into a dump). **Fail-closed** when daily candles are unavailable. Backtest sensitivity (45/60/65/70/off) found the put side counterproductive — the put-credit guard below is the real breakdown protection — so the pilot ships `put_credit_max_rsi2: null`. The call side (55) is kept: it only fires on call-credit scans. |
 
 Iron condors honor `entry_rules.iron_condor.min_iv_rv_ratio` the same way.
 

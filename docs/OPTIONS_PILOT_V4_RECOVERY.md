@@ -36,14 +36,17 @@ Implemented P0-P3 enhancements; all validated by a fresh synthetic backtest
 | Variant | Trades | P/L | ROI | Win% | MaxDD | Stops |
 |---|---|---|---|---|---|---|
 | v4 baseline | 33 | +$220 | 5.5% | 67% | 6.0% | 7 |
-| **v4.1 (shipped)** | **11** | **+$298** | **7.4%** | **91%** | **1.8%** | **1** |
+| **v4.1 (shipped)** | **18** | **+$346** | **8.7%** | **83%** | **1.9%** | **3** |
 
 ### New mechanical gates (code + rules)
 
 - **Put-credit guard** (`regime.put_credit_guard`): when VIX ≥ 18 AND benchmark below its
   20DMA, no new put credits. Backtest showed every historical stop lived at VIX 18–22.
-- **RSI(2) timing** (`put_credit_max_rsi2: 45`, `call_credit_min_rsi2: 55`): no puts into a
-  rip, no calls into a dump — sell premium into 2-day extremes only. Fail-closed on missing candles.
+- **RSI(2) timing** (`put_credit_max_rsi2`, `call_credit_min_rsi2`): no puts into a rip, no calls
+  into a dump. **Put side DISABLED after sensitivity test** (45/60/65/70/off → the gate removed
+  ~4 winners to avoid 1 extra stop; off = +$346-353 vs +$298 at 45). The put-credit guard does
+  the breakdown protection. Call side kept at 55 (only fires on call-credit scans; did not fire
+  once in the backtest period). Re-enable the put side only if live sim shows stop clustering.
 - **`high_vol_chop → call_credit`** (was put_credit): chop below the 50DMA is bearish tilt;
   selling puts there was the path to every stop.
 - **Post-stop caution** (`entry_policy.post_stop_tightening`): 14d after a stop, entries require
