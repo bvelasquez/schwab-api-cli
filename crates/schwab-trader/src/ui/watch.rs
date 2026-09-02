@@ -22,7 +22,7 @@ use crate::ui::live::{list_position_monitors, WatchLiveSnapshot};
 use crate::ui::positions_panel::{positions_content_height, render_positions_panel, CARD_HEIGHT};
 use crate::ui::render::{
     candidate_lines, capital_lines, entry_attempt_lines, journal_lines, llm_lines, log_lines,
-    market_conditions_panel_lines, overview_agent_lines, position_lines,
+    market_conditions_panel_lines, overview_agent_lines, plan_pnl_panel_lines, position_lines,
     position_rules_context_lines, rules_summary,
 };
 use schwab_cli::market_conditions::MarketConditionsSnapshot;
@@ -497,9 +497,10 @@ fn render_overview(
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(5),
+            Constraint::Length(4),
             Constraint::Length(8),
-            Constraint::Length(7),
             Constraint::Length(6),
+            Constraint::Length(5),
             Constraint::Min(3),
         ])
         .split(area);
@@ -515,10 +516,15 @@ fn render_overview(
         rows[0],
     );
 
+    f.render_widget(
+        wrap_paragraph(plan_pnl_panel_lines(ctx)).block(panel_block("Plan P/L")),
+        rows[1],
+    );
+
     let top = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(rows[1]);
+        .split(rows[2]);
 
     let agent_title = if simulate {
         "Agent (simulation)"
@@ -539,7 +545,7 @@ fn render_overview(
 
     f.render_widget(
         wrap_paragraph(capital_lines(ctx)).block(panel_block("Capital")),
-        rows[2],
+        rows[3],
     );
 
     f.render_widget(
@@ -553,12 +559,12 @@ fn render_overview(
         } else {
             "Live Positions (preview)"
         })),
-        rows[3],
+        rows[4],
     );
 
     render_scroll(
         f,
-        rows[4],
+        rows[5],
         log_lines(ctx),
         scroll.log_scroll.scroll,
         "Agent Log",

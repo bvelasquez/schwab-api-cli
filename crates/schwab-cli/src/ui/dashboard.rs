@@ -18,9 +18,13 @@ pub fn render_dashboard(ctx: &DashboardContext) -> String {
     let full_max = width;
 
     let now = chrono::Local::now().format("%a %d %b %Y  %H:%M");
+    let mode = if ctx.simulate { "PAPER" } else { "LIVE" };
     let mut out = String::new();
     out.push('\n');
-    out.push_str(&rule(&format!("✦ Schwab Agent  ·  {now}")));
+    out.push_str(&rule(&format!("✦ Schwab Agent  ·  {mode}  ·  {now}")));
+    out.push_str("\n\n");
+
+    out.push_str(&render_plan_pnl_panel(ctx, full_max));
     out.push_str("\n\n");
 
     let agent_panel = render_agent_panel(ctx, col_inner);
@@ -73,10 +77,50 @@ pub fn render_dashboard(ctx: &DashboardContext) -> String {
     out
 }
 
+fn render_plan_pnl_panel(ctx: &DashboardContext, inner: usize) -> String {
+    let (total, roi_pct, realized, unrealized) =
+        crate::ui::tui_render::plan_pnl_summary(ctx, None);
+    let sleeve = crate::agent::risk::sleeve_base_usd(&ctx.state, &ctx.rules);
+    let pnl_style = if total >= 0.0 {
+        Style::new().green().bold()
+    } else {
+        Style::new().red().bold()
+    };
+    let dim = Style::new().dim();
+    let mut lines = vec![format!(
+        "  {}   {}",
+        pnl_style.apply_to(format!("${total:+.2}")),
+        pnl_style.apply_to(format!("{roi_pct:+.1}% ROI")),
+    )];
+    if ctx.state.open_positions.is_empty() {
+        lines.push(format!(
+            "  {}",
+            dim.apply_to(format!("sleeve ${sleeve:.0}  ·  realized only (flat)"))
+        ));
+    } else {
+        lines.push(format!(
+            "  {}",
+            dim.apply_to(format!(
+                "sleeve ${sleeve:.0}  ·  closed ${realized:+.2}  ·  open ${unrealized:+.2}"
+            ))
+        ));
+    }
+    panel("Plan P/L", &lines, inner)
+}
+
 fn render_agent_panel(ctx: &DashboardContext, inner: usize) -> String {
     let dim = Style::new().dim();
     let green = Style::new().green();
     let mut lines = Vec::new();
+
+    if ctx.simulate {
+        lines.push(format!(
+            "  {}  {:<12} {}",
+            status_dot(true),
+            "mode",
+            Style::new().yellow().bold().apply_to("PAPER")
+        ));
+    }
 
     if ctx.daemon.running {
         let pid = ctx

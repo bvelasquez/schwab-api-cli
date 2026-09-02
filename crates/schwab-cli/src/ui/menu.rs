@@ -63,7 +63,7 @@ fn menu_choices() -> Vec<String> {
 
 pub async fn show_dashboard(runtime: &RuntimeConfig, file: Option<PathBuf>) -> Result<()> {
     let rules_path = resolve_rules_file(file, runtime.is_interactive())?;
-    let ctx = DashboardContext::load(&rules_path)?;
+    let ctx = DashboardContext::load_mode(&rules_path, runtime.simulate)?;
 
     if runtime.output == crate::output::OutputFormat::Json {
         runtime.emit(ResponseEnvelope::ok("dashboard", ctx.to_json()));

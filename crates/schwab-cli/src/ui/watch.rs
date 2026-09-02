@@ -26,7 +26,7 @@ use super::positions_panel::{positions_content_height, render_positions_panel, C
 use super::theme::{self, footer_block, key_style};
 use super::tui_render::{
     activity_lines, agent_status_lines, daemon_hint, header_line, latest_llm_lines,
-    llm_history_lines, market_conditions_panel_lines, risk_gauge,
+    llm_history_lines, market_conditions_panel_lines, plan_pnl_panel_lines, risk_gauge,
     rules_detail_lines, rules_summary_lines,
 };
 use crate::market_conditions::MarketConditionsSnapshot;
@@ -53,6 +53,7 @@ pub struct WatchConfig {
     pub market_conditions: Arc<Mutex<MarketConditionsSnapshot>>,
     pub agent_health: Option<SharedAgentHealth>,
     pub spread_snapshot: Arc<std::sync::RwLock<SpreadLiveSnapshot>>,
+    pub simulate: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -119,7 +120,11 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
     let spread_snapshot = &config.spread_snapshot;
 
     let mut tab = WatchTab::Overview;
-    let mut ctx = DashboardContext::load_with_shared_snapshot(rules_path, market_snapshot)?;
+    let mut ctx = DashboardContext::load_with_shared_snapshot(
+        rules_path,
+        market_snapshot,
+        config.simulate,
+    )?;
     let mut last_refresh = Instant::now();
     let mut status_msg = match agent_mode {
         WatchAgentMode::Embedded => "agent running in-process".to_string(),
@@ -172,6 +177,7 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
                             match DashboardContext::load_with_shared_snapshot(
                                 rules_path,
                                 market_snapshot,
+                                config.simulate,
                             ) {
                                 Ok(c) => {
                                     ctx = c;
@@ -189,7 +195,11 @@ pub fn run_watch_tui(config: &WatchConfig) -> Result<()> {
                 }
             }
         } else if last_refresh.elapsed() >= REFRESH_INTERVAL {
-            if let Ok(c) = DashboardContext::load_with_shared_snapshot(rules_path, market_snapshot)
+            if let Ok(c) = DashboardContext::load_with_shared_snapshot(
+                rules_path,
+                market_snapshot,
+                config.simulate,
+            )
             {
                 ctx = c;
             }
@@ -269,9 +279,14 @@ fn draw_ui(
         .split(area);
 
     let mut idx = 0usize;
+    let header_title = if ctx.simulate {
+        "Schwab Options · PAPER"
+    } else {
+        "Schwab Options"
+    };
     f.render_widget(
         wrap_paragraph(header_line(ctx, agent_mode, agent_health))
-            .block(theme::chrome_block("Schwab Options")),
+            .block(theme::chrome_block(header_title)),
         outer[idx],
     );
     idx += 1;
@@ -333,6 +348,7 @@ fn draw_ui(
             ctx,
             agent_mode,
             agent_health,
+            live_spread,
             market_conditions,
         ),
         WatchTab::Rules => render_rules_tab(f, content, ctx, state),
@@ -375,22 +391,25 @@ fn render_overview(
     ctx: &DashboardContext,
     agent_mode: WatchAgentMode,
     agent_health: Option<&SharedAgentHealth>,
+    live_spread: Option<&SpreadLiveSnapshot>,
     market_conditions: &Arc<Mutex<MarketConditionsSnapshot>>,
 ) {
     let show_hint = matches!(agent_mode, WatchAgentMode::MonitorOnly) && !ctx.daemon.running;
     let main_constraints = if show_hint {
         vec![
             Constraint::Length(5),
+            Constraint::Length(4),
             Constraint::Length(9),
-            Constraint::Length(8),
+            Constraint::Length(7),
             Constraint::Min(4),
             Constraint::Length(3),
         ]
     } else {
         vec![
             Constraint::Length(5),
+            Constraint::Length(4),
             Constraint::Length(9),
-            Constraint::Length(8),
+            Constraint::Length(7),
             Constraint::Min(4),
         ]
     };
@@ -411,10 +430,15 @@ fn render_overview(
         rows[0],
     );
 
+    f.render_widget(
+        wrap_paragraph(plan_pnl_panel_lines(ctx, live_spread)).block(panel_block("Plan P/L")),
+        rows[1],
+    );
+
     let top = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(rows[1]);
+        .split(rows[2]);
 
     f.render_widget(
         wrap_paragraph(agent_status_lines(ctx, agent_mode, agent_health))
@@ -438,16 +462,16 @@ fn render_overview(
 
     f.render_widget(
         wrap_paragraph(latest_llm_lines(ctx)).block(panel_block("Last LLM")),
-        rows[2],
+        rows[3],
     );
 
     f.render_widget(
         wrap_paragraph(activity_lines(ctx)).block(panel_block("Recent Activity")),
-        rows[3],
+        rows[4],
     );
 
     if show_hint {
-        f.render_widget(wrap_paragraph(daemon_hint(ctx)), rows[4]);
+        f.render_widget(wrap_paragraph(daemon_hint(ctx)), rows[5]);
     }
 }
 

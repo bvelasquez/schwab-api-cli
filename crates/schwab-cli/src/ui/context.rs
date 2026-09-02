@@ -7,7 +7,8 @@ use serde_json::{json, Value};
 
 use crate::agent::state::AgentState;
 use crate::agent::{
-    daemon_status, default_state_path, load_agent_state, load_state, state_summary, DaemonStatus,
+    active_state_path, daemon_status, load_agent_state, load_sim_agent_state, load_state,
+    state_summary, DaemonStatus,
 };
 use crate::auth_reminder::{load_auth_reminder, AuthReminder};
 use crate::market_hours::ResolvedMarketStatus;
@@ -26,21 +27,30 @@ pub struct DashboardContext {
     pub log_tail: Vec<String>,
     pub market_status: ResolvedMarketStatus,
     pub auth_reminder: Option<AuthReminder>,
+    /// True when this context is bound to `--simulate` paper state.
+    pub simulate: bool,
 }
 
 impl DashboardContext {
     pub fn load(rules_path: &Path) -> Result<Self> {
-        Self::load_with_snapshot(rules_path, None)
+        Self::load_mode(rules_path, false)
+    }
+
+    pub fn load_mode(rules_path: &Path, simulate: bool) -> Result<Self> {
+        Self::load_with_snapshot(rules_path, simulate, None)
     }
 
     pub fn load_with_snapshot(
         rules_path: &Path,
+        simulate: bool,
         live_market: Option<&MarketSnapshot>,
     ) -> Result<Self> {
         let rules = RulesConfig::load(rules_path)?;
-        let state_path = default_state_path(rules_path);
+        let state_path = active_state_path(rules_path, simulate);
         let state = if state_path.exists() {
             load_state(&state_path)?
+        } else if simulate {
+            load_sim_agent_state(rules_path, &rules.agent_id)
         } else {
             load_agent_state(rules_path, &rules.agent_id)
         };
@@ -58,21 +68,24 @@ impl DashboardContext {
             log_tail,
             market_status,
             auth_reminder,
+            simulate,
         })
     }
 
     pub fn load_with_shared_snapshot(
         rules_path: &Path,
         live_market: &Arc<Mutex<MarketSnapshot>>,
+        simulate: bool,
     ) -> Result<Self> {
         let snapshot = live_market.lock().ok().map(|g| g.clone());
-        Self::load_with_snapshot(rules_path, snapshot.as_ref())
+        Self::load_with_snapshot(rules_path, simulate, snapshot.as_ref())
     }
 
     pub fn to_json(&self) -> Value {
         json!({
             "rules_path": self.rules_path,
             "state_path": self.state_path,
+            "simulate": self.simulate,
             "daemon": {
                 "running": self.daemon.running,
                 "pid": self.daemon.pid,
@@ -195,3 +208,26 @@ pub fn tail_lines(path: &Path, n: usize) -> Vec<String> {
         .rev()
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::paths::{default_state_path, sim_state_path};
+
+    #[test]
+    fn load_mode_binds_simulate_to_sim_state_path() {
+        let path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../rules/options-rules.example.yaml");
+        if !path.exists() {
+            return;
+        }
+        let live = DashboardContext::load_mode(&path, false).unwrap();
+        let sim = DashboardContext::load_mode(&path, true).unwrap();
+        assert!(!live.simulate);
+        assert!(sim.simulate);
+        assert_eq!(live.state_path, default_state_path(&path));
+        assert_eq!(sim.state_path, sim_state_path(&path));
+        assert_ne!(live.state_path, sim.state_path);
+    }
+}
+

@@ -25,7 +25,7 @@ pub mod telegram_format;
 
 pub use daemon::{daemon_status, spawn_background, stop_daemon, DaemonStatus};
 pub use paths::{
-    default_state_path, load_agent_state, load_sim_agent_state, log_path, pid_path,
+    active_state_path, load_agent_state, load_sim_agent_state, log_path, pid_path,
     sim_journal_path, sim_state_path,
 };
 pub use runner::run_agent_loop;
