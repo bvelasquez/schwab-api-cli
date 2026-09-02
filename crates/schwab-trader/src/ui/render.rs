@@ -42,23 +42,57 @@ pub fn overview_agent_lines(ctx: &WatchContext, health: &AgentHealth, agent_mode
                 .add_modifier(Modifier::BOLD),
         )]));
     }
-    if let Some(stats) = crate::sim::compute_stats(&ctx.state) {
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![Span::styled(
-            "Simulation",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )]));
-        lines.push(Line::from(format!(
-            "equity: ${:.2} │ ROI {:.2}% │ closed {} │ win {:.1}%",
-            stats.current_equity_usd,
-            stats.roi_pct,
-            stats.closed_trades,
-            stats.win_rate_pct
-        )));
-    }
     lines
+}
+
+/// Full-width overview strip for plan dollar P/L + ROI %.
+pub fn plan_pnl_panel_lines(ctx: &WatchContext) -> Vec<Line<'static>> {
+    let sleeve = ctx.rules.capital.fixed_sleeve_cap_usd.max(0.01);
+    let (pnl_usd, roi_pct, detail) = if let Some(stats) = crate::sim::compute_stats(&ctx.state) {
+        let pnl = stats.current_equity_usd - stats.starting_cash_usd;
+        let detail = format!(
+            "sleeve ${:.0}  ·  equity ${:.0}  ·  closed {}",
+            stats.starting_cash_usd, stats.current_equity_usd, stats.closed_trades
+        );
+        (pnl, stats.roi_pct, detail)
+    } else {
+        let monitors = crate::ui::live::list_position_monitors(
+            &ctx.rules,
+            &ctx.state,
+            ctx.live.as_ref(),
+            chrono::Utc::now(),
+        );
+        let open_pnl: f64 = monitors.iter().map(|m| m.pnl_usd).sum();
+        let roi = (open_pnl / sleeve) * 100.0;
+        let detail = if monitors.is_empty() {
+            format!("sleeve ${sleeve:.0}  ·  flat (open marks only in live)")
+        } else {
+            format!("sleeve ${sleeve:.0}  ·  {} open", monitors.len())
+        };
+        (open_pnl, roi, detail)
+    };
+    let color = if pnl_usd >= 0.0 {
+        Color::LightGreen
+    } else {
+        Color::Red
+    };
+    vec![
+        Line::from(vec![
+            Span::styled(
+                format!("  ${pnl_usd:+.2}"),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("   "),
+            Span::styled(
+                format!("{roi_pct:+.1}% ROI"),
+                Style::default().fg(color).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(Span::styled(
+            format!("  {detail}"),
+            Style::default().fg(Color::DarkGray),
+        )),
+    ]
 }
 
 pub fn capital_lines(ctx: &WatchContext) -> Vec<Line<'static>> {

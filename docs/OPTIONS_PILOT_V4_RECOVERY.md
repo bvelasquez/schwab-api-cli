@@ -2,6 +2,12 @@
 
 **Status:** paper / `--simulate` only until all promotion gates pass.
 
+**v4.2 frequency unlock (2026-08-27):** entry gates eased so mid-teens VIX can
+clear paper trades. Outside-1σ reject is **off**; short delta **0.12–0.20**;
+`min_iv_rv_ratio` **1.05**; `min_short_otm_pct` **4**; `min_pop_pct` **68**.
+Risk stack unchanged (QQQ/SPY only, max 1, 2× stop, put-credit guard, VIX pause
+bands, LLM must `proceed`). Re-backtest before any live promotion.
+
 Start the agent:
 
 ```bash
@@ -62,6 +68,30 @@ Implemented P0-P3 enhancements; all validated by a fresh synthetic backtest
 
 Backtest caveat: synthetic BS marks; the 11-trade sample is small — the sim run now is the
 real test. Re-run the sweep before trusting per-trade differences:
+
+```bash
+schwab agent backtest run --rules-file rules/options-pilot-8709.yaml --from 2025-01-01 --fresh --json
+schwab agent backtest report --rules-file rules/options-pilot-8709.yaml --json
+```
+
+## v4.2 frequency unlock (2026-08-27, paper)
+
+After ~3 weeks of regular sessions with **zero** entry signals, diagnosis showed
+the v4.1 stack was self-contradictory in mid-teens VIX: `reject_short_inside_1sigma`
+plus a 10–16Δ band almost never clears (12Δ shorts sit inside 1σ when vol is calm).
+
+| Setting | v4.1 | v4.2 |
+|---|---|---|
+| `reject_short_inside_1sigma` | `true` | **`false`** |
+| `short_delta_min` / `max` | 0.10 / 0.16 | **0.12 / 0.20** |
+| `min_iv_rv_ratio` | 1.15 | **1.05** |
+| `min_short_otm_pct` | 5.0 | **4.0** |
+| `min_pop_pct` | 72 | **68** |
+
+Unchanged: universe, condors off, max 1 position, 2× always-armed stop, profit 60%,
+put-credit guard, VIX pause &lt;14 / ≥22, LLM `require_llm_proceed`, paper slippage 5%.
+
+Re-run backtest after collecting ≥5 paper round trips (do not promote on YAML alone):
 
 ```bash
 schwab agent backtest run --rules-file rules/options-pilot-8709.yaml --from 2025-01-01 --fresh --json

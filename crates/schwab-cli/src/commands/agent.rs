@@ -48,17 +48,17 @@ pub async fn run(runtime: &RuntimeConfig, command: AgentCommands) -> Result<()> 
         AgentCommands::Status { rules_file } => {
             if runtime.output == OutputFormat::Json {
                 if let Some(rules_path) = rules_file {
-                    let ctx = DashboardContext::load(&rules_path)?;
+                    let ctx = DashboardContext::load_mode(&rules_path, runtime.simulate)?;
                     runtime.emit(ResponseEnvelope::ok("agent status", ctx.to_json()));
                 } else {
                     emit_legacy_status(runtime)?;
                 }
             } else if let Some(rules_path) = rules_file {
-                let ctx = DashboardContext::load(&rules_path)?;
+                let ctx = DashboardContext::load_mode(&rules_path, runtime.simulate)?;
                 print!("{}", render_dashboard(&ctx));
                 stdout().flush().ok();
             } else if let Ok(rules_path) = resolve_rules_file(None, runtime.is_interactive()) {
-                let ctx = DashboardContext::load(&rules_path)?;
+                let ctx = DashboardContext::load_mode(&rules_path, runtime.simulate)?;
                 print!("{}", render_dashboard(&ctx));
                 stdout().flush().ok();
             } else {

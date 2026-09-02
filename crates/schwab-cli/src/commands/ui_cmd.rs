@@ -130,6 +130,7 @@ pub async fn run_watch(
         market_conditions,
         agent_health,
         spread_snapshot,
+        simulate: runtime.simulate,
     };
 
     let watch_result = tokio::task::spawn_blocking(move || run_watch_tui(&watch_config))

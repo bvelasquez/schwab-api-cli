@@ -7,8 +7,10 @@ use ratatui::widgets::Gauge;
 use super::agent_health::{format_tick_error, SharedAgentHealth};
 use super::context::DashboardContext;
 use super::market_status::market_label;
+use super::spread_live::{list_spread_monitors, SpreadLiveSnapshot};
 use super::watch::WatchAgentMode;
 use super::{ago_secs, format_duration_secs};
+use crate::agent::risk::{realized_pnl_usd, sleeve_base_usd};
 use crate::auth_reminder::AuthReminderLevel;
 use crate::market_conditions::{market_conditions_lines, MarketConditionsSnapshot};
 
@@ -141,6 +143,16 @@ pub fn header_line(
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
+        if ctx.simulate {
+            Span::styled(
+                "PAPER ",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::raw("")
+        },
         daemon,
         Span::raw("· "),
         Span::styled(mkt_label.to_string(), mkt_style),
@@ -172,6 +184,9 @@ pub fn agent_status_lines(
         }
     };
     lines.push(kv_line("daemon", daemon_val, 12));
+    if ctx.simulate {
+        lines.push(kv_line("mode", "PAPER".into(), 12));
+    }
 
     let session = ctx.effective_session();
     let (mkt_label, _) = market_label(ctx.market_status, Some(session));
@@ -781,6 +796,63 @@ fn kv_line(key: &str, value: String, key_width: usize) -> Line<'static> {
         ),
         Span::raw(value),
     ])
+}
+
+/// Plan sleeve P/L: realized (+ open mark when available) and ROI vs sleeve budget.
+pub fn plan_pnl_summary(
+    ctx: &DashboardContext,
+    live_spread: Option<&SpreadLiveSnapshot>,
+) -> (f64, f64, f64, f64) {
+    let realized = realized_pnl_usd(&ctx.state);
+    let unrealized = list_spread_monitors(&ctx.rules, &ctx.state, live_spread)
+        .iter()
+        .map(|m| m.pnl_usd)
+        .sum::<f64>();
+    let total = realized + unrealized;
+    let sleeve = sleeve_base_usd(&ctx.state, &ctx.rules).max(0.01);
+    let roi_pct = (total / sleeve) * 100.0;
+    (total, roi_pct, realized, unrealized)
+}
+
+/// Full-width overview strip — always visible (not buried in Agent).
+pub fn plan_pnl_panel_lines(
+    ctx: &DashboardContext,
+    live_spread: Option<&SpreadLiveSnapshot>,
+) -> Vec<Line<'static>> {
+    let (total, roi_pct, realized, unrealized) = plan_pnl_summary(ctx, live_spread);
+    let sleeve = sleeve_base_usd(&ctx.state, &ctx.rules);
+    let color = if total >= 0.0 {
+        Color::LightGreen
+    } else {
+        Color::Red
+    };
+    let mut lines = vec![Line::from(vec![
+        Span::styled(
+            format!("  ${total:+.2}"),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("   "),
+        Span::styled(
+            format!("{roi_pct:+.1}% ROI"),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("   sleeve ${sleeve:.0}"),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ])];
+    if ctx.state.open_positions.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "  realized only (flat)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            format!("  closed ${realized:+.2}  ·  open mark ${unrealized:+.2}"),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+    lines
 }
 
 fn short_model(model: &str) -> String {
