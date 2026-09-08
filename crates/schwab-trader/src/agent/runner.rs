@@ -37,6 +37,7 @@ use crate::regime::detect_regime;
 use crate::risk::{monitoring_metrics, update_drawdown};
 use crate::rules::TraderRules;
 use crate::shuffle::{build_entry_shuffle_context, entry_shuffle_block_from_scan};
+use schwab_cli::rules_reload::{wait_for_next_tick, ReloadAttempt, RulesReloader};
 use crate::sim::{compute_stats, snapshot_equity};
 use crate::sources::{attach_feeds_to_context, fetch_feeds_for_phase};
 use crate::ui::health::{update_health, SharedAgentHealth};
@@ -121,8 +122,30 @@ pub async fn run_agent_loop(
     schwab_cli::trade_audio::init(runtime.no_audio);
 
     let mut consecutive_failures: u32 = 0;
+    let mut reloader = RulesReloader::new(rules.watch_paths(rules_path));
+    if !options.once {
+        reloader.spawn_sighup_listener();
+        let _ = std::fs::write(
+            crate::agent::paths::pid_path(rules_path),
+            std::process::id().to_string(),
+        );
+    }
+    let mut account = account;
+    let mut llm_client = llm_client;
+    let mut telegram = telegram;
 
     loop {
+        if !options.once {
+            apply_trader_rules_reload(
+                rules_path,
+                &mut rules,
+                &mut reloader,
+                &mut account,
+                &mut llm_client,
+                &mut telegram,
+            );
+        }
+
         // Soft re-auth probe so a fresh `schwab auth login` is picked up mid-run.
         if let Err(err) = refresh_access_token_soft(&api).await {
             tracing::debug!("access token probe: {err:#}");
@@ -204,7 +227,14 @@ pub async fn run_agent_loop(
                 if options.once {
                     break;
                 }
-                sleep(Duration::from_secs(outcome.next_sleep_seconds)).await;
+                // Ignore YAML this process just wrote (learn / watchlist patch) so we
+                // do not skip the rest of the tick interval.
+                reloader.resync();
+                wait_for_next_tick(
+                    Duration::from_secs(outcome.next_sleep_seconds),
+                    &reloader,
+                )
+                .await;
             }
             Err(err) => {
                 consecutive_failures = consecutive_failures.saturating_add(1);
@@ -239,6 +269,52 @@ pub async fn run_agent_loop(
     }
 
     Ok(())
+}
+
+fn apply_trader_rules_reload(
+    rules_path: &Path,
+    rules: &mut TraderRules,
+    reloader: &mut RulesReloader,
+    account: &mut String,
+    llm_client: &mut Option<OpenRouterClient>,
+    telegram: &mut Option<TelegramNotifier>,
+) {
+    let force = reloader.take_force();
+    match reloader.try_load(force, || TraderRules::load(rules_path)) {
+        ReloadAttempt::Unchanged => {}
+        ReloadAttempt::Failed { error } => {
+            let msg = format!("rules reload failed — keeping previous rules: {error}");
+            tracing::error!("{msg}");
+            let _ = crate::agent::paths::append_trader_log(rules_path, &msg);
+        }
+        ReloadAttempt::Loaded { value: new, summary } => {
+            if new.trader_id != rules.trader_id {
+                let msg = format!(
+                    "rules reload rejected — trader_id changed from `{}` to `{}` (restart required); keeping previous rules",
+                    rules.trader_id, new.trader_id
+                );
+                tracing::error!("{msg}");
+                let _ = crate::agent::paths::append_trader_log(rules_path, &msg);
+                return;
+            }
+            *rules = new;
+            rules.log_validation_hints();
+            reloader.set_paths(rules.watch_paths(rules_path));
+            if let Ok(a) = rules.primary_account() {
+                *account = a.hash.clone();
+            }
+            *telegram = notify::telegram_from_rules(&rules.notify).ok().flatten();
+            if rules.llm.enabled {
+                if llm_client.is_none() {
+                    *llm_client = OpenRouterClient::from_env().ok();
+                }
+            } else {
+                *llm_client = None;
+            }
+            tracing::info!("{summary}");
+            let _ = crate::agent::paths::append_trader_log(rules_path, &summary);
+        }
+    }
 }
 
 async fn resilient_startup_retry(

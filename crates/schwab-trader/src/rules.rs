@@ -1517,6 +1517,22 @@ impl TraderRules {
         out
     }
 
+    /// Rules YAML plus documented includes (`watchlists.candidate_pool_file`).
+    pub fn watch_paths(&self, rules_path: &Path) -> Vec<PathBuf> {
+        let mut paths = vec![rules_path.to_path_buf()];
+        if let Some(rel) = &self.watchlists.candidate_pool_file {
+            let rel = rel.trim();
+            if !rel.is_empty() {
+                let pool = rules_path
+                    .parent()
+                    .map(|p| p.join(rel))
+                    .unwrap_or_else(|| PathBuf::from(rel));
+                paths.push(pool);
+            }
+        }
+        paths
+    }
+
     /// Symbols from candidate pool file + inline list (for screening / prefetch).
     pub fn candidate_pool_symbols(&self, rules_path: &Path) -> Result<Vec<String>> {
         let mut out = Vec::new();
@@ -1690,5 +1706,15 @@ mod tests {
             crate::capital::ExitRangeContext::none(),
         );
         assert!((pct - 3.75).abs() < 0.01);
+    }
+
+    #[test]
+    fn watch_paths_include_candidate_pool_file() {
+        let mut rules = TraderRules::default();
+        rules.watchlists.candidate_pool_file = Some("universe/sp100-liquid.yaml".into());
+        let rules_path = Path::new("/tmp/rules/trader.yaml");
+        let paths = rules.watch_paths(rules_path);
+        assert_eq!(paths[0], rules_path);
+        assert!(paths[1].ends_with("universe/sp100-liquid.yaml"));
     }
 }
