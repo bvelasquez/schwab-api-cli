@@ -23,6 +23,7 @@ mod output;
 mod plan;
 mod portfolio;
 mod rules;
+mod rules_reload;
 mod safety;
 mod safety_config;
 mod tls;

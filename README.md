@@ -378,7 +378,10 @@ schwab agent run rules/<file>.yaml --dry-run --once --json
 schwab agent run rules/<file>.yaml --trust --yes        # foreground
 schwab agent run rules/<file>.yaml --background --trust --yes --json
 schwab agent stop rules/<file>.yaml --json
+schwab agent reload rules/<file>.yaml --json   # SIGHUP: reload YAML, keep process
 ```
+
+Rules YAML is hot-reloaded while watch/agent is running (invalid files keep the old rules). Rebuild/restart only for code changes. See `rules/README.md`.
 
 ### Monitoring a background agent
 

@@ -418,6 +418,13 @@ pub fn all_commands() -> Vec<CommandSpec> {
             requires_auth: false,
         },
         CommandSpec {
+            path: "agent reload",
+            description: "SIGHUP a running watch/agent so it reloads rules YAML without restart",
+            http: None,
+            mutation: false,
+            requires_auth: false,
+        },
+        CommandSpec {
             path: "agent close-all",
             description: "Close all option spreads tracked in agent state (not whole account)",
             http: Some("POST /accounts/{accountNumber}/orders"),
