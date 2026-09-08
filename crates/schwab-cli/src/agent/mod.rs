@@ -23,7 +23,9 @@ pub mod schedule;
 pub mod state;
 pub mod telegram_format;
 
-pub use daemon::{daemon_status, spawn_background, stop_daemon, DaemonStatus};
+pub use daemon::{
+    daemon_status, request_reload, spawn_background, stop_daemon, DaemonStatus,
+};
 pub use paths::{
     active_state_path, load_agent_state, load_sim_agent_state, log_path, pid_path,
     sim_journal_path, sim_state_path,

@@ -26,6 +26,9 @@ use crate::order_status::{
 use crate::rules::{
     EntryScanMode, LlmPhase, RulesConfig, VerticalEntryRules, WatchlistItemConfig, WatchlistRole,
 };
+use crate::rules_reload::{
+    options_watch_paths, wait_for_next_tick, ReloadAttempt, RulesReloader,
+};
 use crate::safety::{execute_trading_order, require_trading_approval};
 use crate::trade_audio::{self, TradeAudioEvent};
 
@@ -96,7 +99,11 @@ pub async fn run_agent_loop(
     once: bool,
     watch_health: Option<SharedAgentHealth>,
 ) -> Result<()> {
-    let rules = RulesConfig::load(rules_path)?;
+    let mut rules = RulesConfig::load(rules_path)?;
+    let mut reloader = RulesReloader::new(options_watch_paths(rules_path));
+    if !once {
+        reloader.spawn_sighup_listener();
+    }
     let state_path = active_state_path(rules_path, runtime.simulate);
     let mut state = if runtime.simulate {
         load_sim_agent_state(rules_path, &rules.agent_id)
@@ -124,10 +131,10 @@ pub async fn run_agent_loop(
 
     let trader = runtime.build_api()?;
     let market = runtime.build_market_api()?;
-    let telegram = TelegramNotifier::from_env(&rules.notify.telegram)
+    let mut telegram = TelegramNotifier::from_env(&rules.notify.telegram)
         .ok()
         .flatten();
-    let llm_client = if rules.llm.enabled {
+    let mut llm_client = if rules.llm.enabled {
         match OpenRouterClient::from_env() {
             Ok(client) => Some(client),
             Err(e) => {
@@ -151,7 +158,25 @@ pub async fn run_agent_loop(
     let mut last_logged_error: Option<String> = None;
     let mut auth_notified = false;
 
+    if !once {
+        let _ = std::fs::write(
+            super::paths::pid_path(rules_path),
+            std::process::id().to_string(),
+        );
+    }
+
     loop {
+        if !once {
+            apply_options_rules_reload(
+                rules_path,
+                &mut rules,
+                &mut reloader,
+                &mut telegram,
+                &mut llm_client,
+                watch_health.as_ref(),
+            );
+        }
+
         // Soft re-auth probe so a fresh `schwab auth login` is picked up mid-run.
         if let Err(err) = trader.client().oauth().ensure_access_token().await {
             tracing::debug!("access token probe: {err}");
@@ -234,7 +259,12 @@ pub async fn run_agent_loop(
                     break;
                 }
 
-                tokio::time::sleep(std::time::Duration::from_secs(result.next_sleep_seconds)).await;
+                reloader.resync();
+                wait_for_next_tick(
+                    std::time::Duration::from_secs(result.next_sleep_seconds),
+                    &reloader,
+                )
+                .await;
             }
             Err(e) => {
                 consecutive_errors += 1;
@@ -309,6 +339,65 @@ pub async fn run_agent_loop(
     }
 
     Ok(())
+}
+
+fn apply_options_rules_reload(
+    rules_path: &std::path::Path,
+    rules: &mut RulesConfig,
+    reloader: &mut RulesReloader,
+    telegram: &mut Option<TelegramNotifier>,
+    llm_client: &mut Option<OpenRouterClient>,
+    watch_health: Option<&SharedAgentHealth>,
+) {
+    let force = reloader.take_force();
+    match reloader.try_load(force, || RulesConfig::load(rules_path)) {
+        ReloadAttempt::Unchanged => {}
+        ReloadAttempt::Failed { error } => {
+            let msg = format!(
+                "rules reload failed — keeping previous rules: {error}"
+            );
+            tracing::error!("{msg}");
+            let _ = super::paths::append_agent_log(rules_path, &msg);
+            if let Some(h) = watch_health {
+                if let Ok(mut g) = h.lock() {
+                    g.record_error(&msg);
+                }
+            }
+        }
+        ReloadAttempt::Loaded { value: new, summary } => {
+            if new.agent_id != rules.agent_id {
+                let msg = format!(
+                    "rules reload rejected — agent_id changed from `{}` to `{}` (restart required); keeping previous rules",
+                    rules.agent_id, new.agent_id
+                );
+                tracing::error!("{msg}");
+                let _ = super::paths::append_agent_log(rules_path, &msg);
+                return;
+            }
+            *rules = new;
+            reloader.set_paths(options_watch_paths(rules_path));
+            *telegram = TelegramNotifier::from_env(&rules.notify.telegram)
+                .ok()
+                .flatten();
+            if rules.llm.enabled {
+                if llm_client.is_none() {
+                    match OpenRouterClient::from_env() {
+                        Ok(client) => *llm_client = Some(client),
+                        Err(e) => {
+                            let msg = format!(
+                                "rules reloaded but LLM still disabled: {e:#}"
+                            );
+                            let _ = super::paths::append_agent_log(rules_path, &msg);
+                        }
+                    }
+                }
+            } else {
+                *llm_client = None;
+            }
+            tracing::info!("{summary}");
+            let _ = super::paths::append_agent_log(rules_path, &summary);
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

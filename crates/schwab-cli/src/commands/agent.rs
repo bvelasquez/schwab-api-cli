@@ -7,8 +7,8 @@ use serde_json::json;
 
 use crate::agent::{
     analysis_report, compute_stats, load_agent_state, load_sim_agent_state, load_state, log_path,
-    pid_path, reset_sim, run_agent_loop, save_state, sim_journal_path, sim_state_path,
-    spawn_background, state_summary, stop_daemon,
+    pid_path, request_reload, reset_sim, run_agent_loop, save_state, sim_journal_path,
+    sim_state_path, spawn_background, state_summary, stop_daemon,
 };
 use crate::cli::{AgentBacktestCommands, AgentCommands, AgentSimCommands};
 use crate::config::RuntimeConfig;
@@ -110,6 +110,18 @@ pub async fn run(runtime: &RuntimeConfig, command: AgentCommands) -> Result<()> 
             runtime.emit(ResponseEnvelope::ok(
                 "agent stop",
                 json!({ "stopped": true, "rules": file }),
+            ));
+        }
+        AgentCommands::Reload { file } => {
+            let pid = request_reload(&file)?;
+            runtime.emit(ResponseEnvelope::ok(
+                "agent reload",
+                json!({
+                    "signalled": "SIGHUP",
+                    "pid": pid,
+                    "rules": file,
+                    "note": "process keeps running; invalid YAML keeps previous rules",
+                }),
             ));
         }
         AgentCommands::CloseAll { file } => {

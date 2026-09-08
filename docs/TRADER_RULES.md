@@ -695,6 +695,9 @@ schwab-trader agent run rules/my-trader.yaml --dry-run --once --json
 schwab-trader watch --rules-file rules/my-trader.yaml --simulate
 schwab-trader sim report --rules-file rules/my-trader.yaml --json
 
+# Reload rules YAML without restarting watch (SIGHUP to pid file)
+schwab-trader agent reload --rules-file rules/my-trader.yaml --json
+
 # Live (requires disclaimer + --trust --yes)
 schwab disclaimer accept --yes
 schwab-trader watch --rules-file rules/my-trader.yaml --trust --yes

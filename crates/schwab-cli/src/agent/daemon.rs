@@ -100,6 +100,18 @@ pub fn stop_daemon(rules_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Signal a running agent (background `agent run` or a loop that wrote this pid file)
+/// to reload rules YAML. The process stays up; invalid YAML is ignored by the loop.
+pub fn request_reload(rules_path: &Path) -> Result<u32> {
+    let pid_file = pid_path(rules_path);
+    crate::rules_reload::send_sighup_to_pid_file(&pid_file).with_context(|| {
+        format!(
+            "no running agent pid at {} — for `schwab watch`, send SIGHUP to that process, or wait for the next file-poll (≤1s during sleep)",
+            pid_file.display()
+        )
+    })
+}
+
 fn read_pid(path: &Path) -> Result<u32> {
     let content = fs::read_to_string(path)?;
     content

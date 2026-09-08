@@ -1387,6 +1387,42 @@ entry_rules:
     }
 
     #[test]
+    fn hot_reload_applies_new_tick_interval_and_rejects_bad_yaml() {
+        use crate::rules_reload::{ReloadAttempt, RulesReloader};
+
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../rules/options-rules.example.yaml");
+        if !src.exists() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("options-rules.yaml");
+        let original = std::fs::read_to_string(&src).unwrap();
+        std::fs::write(&path, &original).unwrap();
+
+        let mut reloader = RulesReloader::new(vec![path.clone()]);
+        let loaded = RulesConfig::load(&path).unwrap();
+        assert_eq!(loaded.schedule.tick_interval_seconds, 60);
+
+        let updated = original.replace("tick_interval_seconds: 60", "tick_interval_seconds: 90");
+        std::fs::write(&path, updated).unwrap();
+        match reloader.try_load(false, || RulesConfig::load(&path)) {
+            ReloadAttempt::Loaded { value, summary } => {
+                assert_eq!(value.schedule.tick_interval_seconds, 90);
+                assert_eq!(value.agent_id, loaded.agent_id);
+                assert!(summary.contains("rules reloaded"));
+            }
+            other => panic!("expected reload, got {other:?}"),
+        }
+
+        std::fs::write(&path, "version: 1\nagent_id: [\n").unwrap();
+        match reloader.try_load(false, || RulesConfig::load(&path)) {
+            ReloadAttempt::Failed { error } => assert!(error.contains("parse") || error.contains("yaml") || !error.is_empty()),
+            other => panic!("expected fail-closed, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn blocked_dates_respect_lead_window() {
         let risk = RiskConfig {
             blocked_dates: vec![
