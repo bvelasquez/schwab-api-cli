@@ -23,6 +23,7 @@ pub mod output;
 pub mod plan;
 pub mod portfolio;
 pub mod rules;
+pub mod rules_reload;
 pub mod safety;
 pub mod safety_config;
 pub mod tls;

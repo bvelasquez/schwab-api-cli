@@ -150,6 +150,7 @@ pub fn instructions_json(safety: &SafetyConfig) -> Value {
             "dry_run_tick": "schwab agent run rules.yaml --dry-run --once --json",
             "live_daemon": "schwab agent run rules.yaml --trust --yes",
             "status": "schwab agent status --rules-file rules.yaml --json",
+            "reload": "schwab agent reload rules.yaml --json",
             "example_rules": "rules/options-rules.example.yaml",
             "llm_schema_reference": "docs/LLM_SCHEMA_REFERENCE.md",
             "note": "Agent auto-executes vertical and iron condor entries/exits within safety.json and rules.yaml risk limits"

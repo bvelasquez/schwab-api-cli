@@ -168,6 +168,10 @@ pub enum AgentCommands {
     Status {
         rules_file: PathBuf,
     },
+    /// Ask a running watch/agent process to reload rules YAML (SIGHUP)
+    Reload {
+        rules_file: PathBuf,
+    },
 }
 
 #[derive(Debug, Subcommand)]

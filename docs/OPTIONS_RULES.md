@@ -40,7 +40,10 @@ schwab agent run rules/options-rules.example.yaml --trust --yes --json
 # 6. Background daemon (pid + log next to rules file)
 schwab agent run rules/options-rules.example.yaml --background --trust --yes --json
 schwab agent stop rules/options-rules.example.yaml --json
+schwab agent reload rules/options-rules.example.yaml --json
 ```
+
+While the agent is running, edits to this YAML are **hot-reloaded** (fail-closed). See `rules/README.md`. Code changes still need a rebuild and restart.
 
 ## Exit rules (automatic)
 

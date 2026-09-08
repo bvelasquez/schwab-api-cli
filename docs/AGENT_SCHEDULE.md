@@ -92,3 +92,12 @@ schwab agent run rules/my-options.yaml --trust --yes
 ```
 
 Overnight ticks show `overnight` session in console; regular ticks show `regular`.
+
+## Rules hot-reload
+
+Edit `rules/*.yaml` while `schwab watch` / `schwab agent run` is running. The loop detects the file change (content hash, ≤1s while sleeping), validates, and uses the new thresholds on the next tick. Open positions and journals are not reset.
+
+- Success: agent log line `rules reloaded from [...] mtime=... digest=...`
+- Bad YAML: `rules reload failed — keeping previous rules: ...` (process stays up)
+- Force: `schwab agent reload rules/my-options.yaml` (SIGHUP) or `kill -HUP <pid>`
+- Code/binary changes still require rebuild + restart. `--simulate` is unaffected.
