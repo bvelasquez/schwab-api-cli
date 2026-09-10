@@ -162,10 +162,15 @@ pub enum AgentCommands {
         rules_file: PathBuf,
         #[arg(long)]
         once: bool,
+        /// Detach as a background daemon (writes trader-*.pid and trader-*.log next to rules)
         #[arg(long)]
         background: bool,
     },
     Status {
+        rules_file: PathBuf,
+    },
+    /// Stop a background agent started with `agent run --background`
+    Stop {
         rules_file: PathBuf,
     },
     /// Ask a running watch/agent process to reload rules YAML (SIGHUP)

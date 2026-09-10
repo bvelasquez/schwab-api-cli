@@ -224,6 +224,7 @@ pub fn format_background_data(data: &Value) -> String {
     for (key, label_text) in [
         ("pid", "pid"),
         ("rules", "rules"),
+        ("rules_file", "rules"),
         ("pid_file", "pid file"),
         ("log_file", "log file"),
     ] {

@@ -1,11 +1,14 @@
 use anyhow::{Context, Result};
 use serde_json::json;
 
+use crate::agent::daemon::{background_extra_args, spawn_background, stop_daemon};
+use crate::agent::paths::{log_path, pid_path};
 use crate::agent::runner::{run_agent_loop, AgentRunOptions};
 use crate::agent::state::load_state;
 use crate::cli::AgentCommands;
 use crate::config::TraderRuntime;
 use crate::rules::TraderRules;
+use schwab_cli::output::OutputFormat;
 
 pub async fn run(runtime: &TraderRuntime, command: AgentCommands) -> Result<()> {
     match command {
@@ -15,7 +18,32 @@ pub async fn run(runtime: &TraderRuntime, command: AgentCommands) -> Result<()> 
             background,
         } => {
             if background {
-                anyhow::bail!("background mode not implemented yet; run in foreground");
+                if once {
+                    anyhow::bail!("--background cannot be combined with --once");
+                }
+                let extra = background_extra_args(
+                    runtime.dry_run,
+                    runtime.simulate,
+                    runtime.trust,
+                    runtime.yes,
+                    runtime.output == OutputFormat::Json,
+                    runtime.no_audio,
+                );
+                let pid = spawn_background(&rules_file, &extra)?;
+                runtime.emit(
+                    schwab_cli::output::ResponseEnvelope::ok(
+                        "agent background",
+                        json!({
+                            "pid": pid,
+                            "pid_file": pid_path(&rules_file),
+                            "log_file": log_path(&rules_file),
+                            "rules": rules_file,
+                            "simulate": runtime.simulate,
+                        }),
+                    )
+                    .with_inputs(json!({ "rules_file": rules_file })),
+                );
+                return Ok(());
             }
             run_agent_loop(
                 runtime,
@@ -26,6 +54,17 @@ pub async fn run(runtime: &TraderRuntime, command: AgentCommands) -> Result<()> 
                 },
             )
             .await
+        }
+        AgentCommands::Stop { rules_file } => {
+            stop_daemon(&rules_file)?;
+            runtime.emit(
+                schwab_cli::output::ResponseEnvelope::ok(
+                    "agent stop",
+                    json!({ "stopped": true, "rules": rules_file }),
+                )
+                .with_inputs(json!({ "rules_file": rules_file })),
+            );
+            Ok(())
         }
         AgentCommands::Status { rules_file } => {
             let rules = TraderRules::load(&rules_file)?;
