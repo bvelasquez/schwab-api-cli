@@ -130,6 +130,8 @@ Global flags: `--json`, `--yes`, `--trust`, `--dry-run`
 | [plans/TRADE_PLAN.md](plans/TRADE_PLAN.md) | Humans + LLMs | Equity trade plan format |
 | [docs/OPTIONS_RULES.md](docs/OPTIONS_RULES.md) | Operators | Options agent quick reference |
 | [docs/AGENT_SCHEDULE.md](docs/AGENT_SCHEDULE.md) | Operators | Regular / overnight / at-open sessions |
+| [docs/TRADER_RULES.md](docs/TRADER_RULES.md) | Operators | Equity swing trader (`schwab-trader`) |
+| [docs/JARVIS_PAPER_HOST.md](docs/JARVIS_PAPER_HOST.md) | Operators | Jarvis paper-host migration (Phase 0: systemd + deploy scripts) |
 
 Machine-readable discovery: `schwab instructions --json`, `schwab plan schema --json`, `schwab agent schema --json`, `schwab plan prompt --json`.
 

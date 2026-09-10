@@ -40,12 +40,17 @@ schwab-trader rules validate rules/trader-rules.example.yaml --json
 
 # Paper trading one tick
 schwab-trader agent run rules/my-trader.yaml --simulate --once --json
+
+# Background paper daemon (pid/log next to rules)
+schwab-trader agent run rules/my-trader.yaml --background --simulate --json
+schwab-trader agent stop rules/my-trader.yaml
 ```
 
 ## Documentation
 
 - [Trader rules & playbook](https://github.com/bvelasquez/schwab-api-cli/blob/main/docs/TRADER_RULES.md)
 - [Live rollout checklist](https://github.com/bvelasquez/schwab-api-cli/blob/main/docs/TRADER_ROLLOUT.md)
+- [Jarvis paper host](https://github.com/bvelasquez/schwab-api-cli/blob/main/docs/JARVIS_PAPER_HOST.md)
 - [Full project README](https://github.com/bvelasquez/schwab-api-cli)
 
 ## License
