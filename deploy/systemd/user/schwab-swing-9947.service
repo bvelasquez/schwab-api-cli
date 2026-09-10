@@ -1,0 +1,29 @@
+# Schwab equity swing paper agent (account suffix 9947)
+#
+# systemd is the supervisor — run the agent in the foreground (no --background).
+# Paper only: never add --trust or --yes to this unit.
+#
+# WorkingDirectory defaults to the personal clone path. Override with a drop-in:
+#   systemctl --user edit schwab-swing-9947.service
+#   [Service]
+#   WorkingDirectory=/path/to/schwab-api-cli
+#
+# Linger (required so this user unit stays up after logout):
+#   sudo loginctl enable-linger %u
+
+[Unit]
+Description=Schwab equity swing paper agent (9947)
+Documentation=file://%h/projects/schwabinvestbot/docs/JARVIS_PAPER_HOST.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/schwabinvestbot
+Environment=SCHWAB_REPO=%h/projects/schwabinvestbot
+ExecStart=%h/.cargo/bin/schwab-trader agent run rules/trader-swing-9947.yaml --simulate
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
