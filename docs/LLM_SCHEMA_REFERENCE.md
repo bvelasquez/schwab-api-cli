@@ -334,7 +334,7 @@ notify:
 
 **Stop example:** Entry credit $0.25/share, `stop_loss_pct: 200` → mechanical stop at **$0.50/share** debit to close.
 
-**Critical:** Mechanical exits use **option chain** `debit_to_close` (short ask − long bid), **not** Schwab `net_market_value`. The monitor LLM receives `mechanical_rules.stop_triggered` — only alert a stop hit when that field is `true`.
+**Critical:** Mechanical exits use **option chain** `debit_to_close` (short ask − long bid), **not** Schwab `net_market_value`. The monitor LLM receives `mechanical_rules.stop_triggered` — only alert a stop hit when that field is `true`. If a leg bid/ask is blank, `market_context.quote_degraded` is `true` and `quote_fallback` lists the substitute (`mark` / `last` / opposite / last-good). That is **not** an executable fill.
 
 ### Field reference — `risk`
 
@@ -385,6 +385,7 @@ Each `open_positions[]` item in the LLM context JSON includes:
 | `market_context.short_delta` | Short leg delta |
 | `market_context.short_otm_pct` | % OTM on short strike |
 | `market_context.watch_near_short_strike` | Price near short strike |
+| `market_context.quote_degraded` | `true` when a wing used mark/last/opposite/last-good instead of NBBO |
 | `net_market_value` | Schwab leg MV sum in **dollars** — **do not** use for stop/profit rules |
 
 ### LLM response schema (options agent)

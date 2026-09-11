@@ -374,6 +374,7 @@ mod tests {
                 profit_pct: -64.3,
                 dte: 35,
                 source: "test".into(),
+                ..Default::default()
             },
             analytics: None,
             imminent_exit: None,
@@ -425,6 +426,7 @@ mod tests {
                 profit_pct: 50.0,
                 dte: 25,
                 source: "test".into(),
+                ..Default::default()
             },
             analytics: Some(analytics),
             imminent_exit: Some("profit_target".into()),
@@ -477,6 +479,7 @@ mod tests {
                 profit_pct: 14.7,
                 dte: 30,
                 source: "test".into(),
+                ..Default::default()
             },
             analytics: Some(analytics),
             imminent_exit: None,
@@ -530,6 +533,7 @@ mod tests {
                 profit_pct: -34.0,
                 dte: 28,
                 source: "test".into(),
+                ..Default::default()
             },
             analytics: Some(analytics),
             imminent_exit: None,

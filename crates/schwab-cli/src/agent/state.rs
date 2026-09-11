@@ -172,6 +172,13 @@ pub struct TrackedPosition {
     /// Linked `llm_entry_decision` id when entry followed a selection proceed / fail-open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llm_decision_id: Option<String>,
+    /// Last non-optimistic chain debit-to-close (used when a wing's NBBO is blank).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_good_debit_to_close: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_good_short_ask: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_good_long_bid: Option<f64>,
 }
 
 pub fn update_peak_profit_pct(position: &mut TrackedPosition, profit_pct: f64) {
@@ -397,6 +404,9 @@ impl Default for TrackedPosition {
             rolls_used: 0,
             last_roll_at: None,
             llm_decision_id: None,
+            last_good_debit_to_close: None,
+            last_good_short_ask: None,
+            last_good_long_bid: None,
         }
     }
 }
