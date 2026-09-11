@@ -57,6 +57,8 @@ While the agent is running, edits to this YAML are **hot-reloaded** (fail-closed
 
 Exits run **before** entry scans each regular tick. Marks come from live option chain **`debit_to_close`** (not Schwab `net_market_value`).
 
+If a wing is missing NBBO (`bid`/`ask` null or 0 — common on event days for far OTM longs), the mark does **not** abort. Fallback order: requested side → Schwab `mark` → `last` → opposite side → last-good quote from a prior tick. Monitor context sets `quote_degraded` (and `quote_fallback`) so the LLM knows the print is fail-soft. Mechanical **stop-loss still evaluates** on that mark; **profit-target is skipped** when the substitute is opposite-side or last-good so `--simulate` does not invent a cheap fill. A 0.00 bid is treated as missing (using it would inflate debit and can falsely fire the 2× stop).
+
 Monitor LLM context includes `mechanical_rules.stop_triggered` — only treat a stop as hit when that field is `true`. See [LLM_SCHEMA_REFERENCE.md](LLM_SCHEMA_REFERENCE.md#field-reference--exit_rules-mechanical--authoritative).
 
 ### Defensive rolling

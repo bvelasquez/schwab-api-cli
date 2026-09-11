@@ -39,7 +39,7 @@ use super::chains_util::{
 use super::exits::{
     candidate_fails_thesis_gates, evaluate_position_monitor, exit_signal_json_for_account,
     find_tracked_position, option_group_from_tracked, reconcile_open_positions, stable_position_key,
-    ExitEvaluation,
+    update_last_good_close_quotes, ExitEvaluation,
 };
 use super::journal;
 use super::llm::OpenRouterClient;
@@ -550,9 +550,12 @@ pub async fn tick_once(
             let preferred_for_exits = regime_snap.as_ref().map(|s| s.preferred_strategy.as_str());
             let monitor =
                 evaluate_position_monitor(market, &group, rules, today, Some(&tracked), preferred_for_exits).await?;
-            if let Some(profit) = monitor.mark.as_ref().map(|m| m.profit_pct) {
-                if let Some(p) = state.open_positions.get_mut(&position_id) {
+            if let Some(p) = state.open_positions.get_mut(&position_id) {
+                if let Some(profit) = monitor.mark.as_ref().map(|m| m.profit_pct) {
                     update_peak_profit_pct(p, profit);
+                }
+                if let Some(mark) = monitor.mark.as_ref() {
+                    update_last_good_close_quotes(p, mark);
                 }
             }
             if !group.legs.is_empty() {
@@ -676,9 +679,12 @@ pub async fn tick_once(
                 )
                 .await?;
                 let position_id = stable_position_key(&account.hash, group);
-                if let Some(profit) = monitor.mark.as_ref().map(|m| m.profit_pct) {
-                    if let Some(p) = state.open_positions.get_mut(&position_id) {
+                if let Some(p) = state.open_positions.get_mut(&position_id) {
+                    if let Some(profit) = monitor.mark.as_ref().map(|m| m.profit_pct) {
                         update_peak_profit_pct(p, profit);
+                    }
+                    if let Some(mark) = monitor.mark.as_ref() {
+                        update_last_good_close_quotes(p, mark);
                     }
                 }
 

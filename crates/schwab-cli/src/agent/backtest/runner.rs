@@ -327,6 +327,7 @@ fn process_open(
                 profit_pct,
                 dte,
                 source: "bs".into(),
+                ..Default::default()
             };
             let open_strategy = if v.is_put { "put_credit" } else { "call_credit" };
             let exit = evaluate_all_exits(
@@ -390,6 +391,7 @@ fn process_open(
                 profit_pct,
                 dte,
                 source: "bs".into(),
+                ..Default::default()
             };
             // Condors: mechanical + regime-mismatch (no greek thesis analytics).
             let exit = evaluate_all_exits(
