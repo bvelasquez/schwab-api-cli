@@ -150,6 +150,13 @@ fn format_monitor_greeks_suffix(ctx: &Value) -> String {
     {
         parts.push(format!("~{pop:.0}% OTM prob"));
     }
+    if ctx
+        .get("quote_degraded")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        parts.push("quote degraded".into());
+    }
     if parts.is_empty() {
         String::new()
     } else {
