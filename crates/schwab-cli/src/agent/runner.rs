@@ -106,9 +106,9 @@ pub async fn run_agent_loop(
     }
     let state_path = active_state_path(rules_path, runtime.simulate);
     let mut state = if runtime.simulate {
-        load_sim_agent_state(rules_path, &rules.agent_id)
+        load_sim_agent_state(rules_path, &rules.agent_id)?
     } else {
-        load_agent_state(rules_path, &rules.agent_id)
+        load_agent_state(rules_path, &rules.agent_id)?
     };
     state.agent_id = rules.agent_id.clone();
     let _ = backfill_entry_baselines_from_actions(&mut state);

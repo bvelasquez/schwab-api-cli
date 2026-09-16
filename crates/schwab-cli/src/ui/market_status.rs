@@ -48,8 +48,9 @@ pub fn save_market_hours_cache(rules_path: &Path, hours: &Value) -> std::io::Res
         fetched_at: Utc::now(),
         hours: hours.clone(),
     };
-    let content = serde_json::to_string_pretty(&payload)?;
-    fs::write(path, content)
+    let content = serde_json::to_string_pretty(&payload)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    schwab_api::write_atomic_sync(&path, content)
 }
 
 pub fn load_market_hours_cache(rules_path: &Path) -> Option<Value> {

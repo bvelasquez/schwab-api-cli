@@ -127,9 +127,9 @@ pub async fn run(runtime: &RuntimeConfig, command: AgentCommands) -> Result<()> 
         AgentCommands::CloseAll { file } => {
             let rules = RulesConfig::load(&file)?;
             let state = if runtime.simulate {
-                load_sim_agent_state(&file, &rules.agent_id)
+                load_sim_agent_state(&file, &rules.agent_id)?
             } else {
-                load_agent_state(&file, &rules.agent_id)
+                load_agent_state(&file, &rules.agent_id)?
             };
             let api = runtime.build_api()?;
             let plan = build_agent_options_flatten_plan(&api, &rules, &state).await?;
@@ -144,9 +144,9 @@ pub async fn run(runtime: &RuntimeConfig, command: AgentCommands) -> Result<()> 
         } => {
             let rules = RulesConfig::load(&rules_file)?;
             let mut state = if simulate {
-                load_sim_agent_state(&rules_file, &rules.agent_id)
+                load_sim_agent_state(&rules_file, &rules.agent_id)?
             } else {
-                load_agent_state(&rules_file, &rules.agent_id)
+                load_agent_state(&rules_file, &rules.agent_id)?
             };
             let from_journal =
                 crate::agent::scorecard::aggregate_from_journal(&rules_file, simulate)?;
@@ -237,7 +237,7 @@ async fn run_sim(runtime: &RuntimeConfig, command: AgentSimCommands) -> Result<(
     match command {
         AgentSimCommands::Stats { file } => {
             let rules = RulesConfig::load(&file)?;
-            let mut state = load_sim_agent_state(&file, &rules.agent_id);
+            let mut state = load_sim_agent_state(&file, &rules.agent_id)?;
             state.agent_id = rules.agent_id.clone();
             let stats = compute_stats(&state, &rules);
             runtime.emit(ResponseEnvelope::ok(
@@ -251,7 +251,7 @@ async fn run_sim(runtime: &RuntimeConfig, command: AgentSimCommands) -> Result<(
         }
         AgentSimCommands::Report { file, output } => {
             let rules = RulesConfig::load(&file)?;
-            let mut state = load_sim_agent_state(&file, &rules.agent_id);
+            let mut state = load_sim_agent_state(&file, &rules.agent_id)?;
             state.agent_id = rules.agent_id.clone();
             let report = analysis_report(&state, &rules);
             if let Some(path) = output {
@@ -271,7 +271,7 @@ async fn run_sim(runtime: &RuntimeConfig, command: AgentSimCommands) -> Result<(
             }
             let rules = RulesConfig::load(&file)?;
             let path = sim_state_path(&file);
-            let mut state = load_sim_agent_state(&file, &rules.agent_id);
+            let mut state = load_sim_agent_state(&file, &rules.agent_id)?;
             state.agent_id = rules.agent_id.clone();
             reset_sim(&mut state, &rules);
             save_state(&path, &state)?;
