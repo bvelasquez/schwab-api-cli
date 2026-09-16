@@ -101,24 +101,34 @@ pub fn append_agent_log(rules_path: &Path, line: &str) -> std::io::Result<()> {
 }
 
 /// Load persisted state for a rules file, migrating legacy `agent-state.json` when agent_id matches.
-pub fn load_agent_state(rules_path: &Path, agent_id: &str) -> super::state::AgentState {
+///
+/// A missing file is an empty default. An existing empty or corrupt file is an error so the
+/// agent cannot silently wipe open positions after a disk-full truncate.
+pub fn load_agent_state(rules_path: &Path, agent_id: &str) -> anyhow::Result<super::state::AgentState> {
     load_agent_state_from(rules_path, agent_id, false)
 }
 
-pub fn load_sim_agent_state(rules_path: &Path, agent_id: &str) -> super::state::AgentState {
+pub fn load_sim_agent_state(
+    rules_path: &Path,
+    agent_id: &str,
+) -> anyhow::Result<super::state::AgentState> {
     load_agent_state_from(rules_path, agent_id, true)
 }
 
-fn load_agent_state_from(rules_path: &Path, agent_id: &str, simulate: bool) -> super::state::AgentState {
+fn load_agent_state_from(
+    rules_path: &Path,
+    agent_id: &str,
+    simulate: bool,
+) -> anyhow::Result<super::state::AgentState> {
     use super::state::{load_state, save_state};
 
     let state_path = active_state_path(rules_path, simulate);
     if state_path.exists() {
-        return load_state(&state_path).unwrap_or_default();
+        return load_state(&state_path);
     }
 
     if simulate {
-        return load_state(&state_path).unwrap_or_default();
+        return Ok(super::state::AgentState::default());
     }
 
     let legacy = rules_runtime_dir(rules_path).join("agent-state.json");
@@ -127,12 +137,12 @@ fn load_agent_state_from(rules_path: &Path, agent_id: &str, simulate: bool) -> s
             if state.agent_id.is_empty() || state.agent_id == agent_id {
                 let canonical = default_state_path(rules_path);
                 let _ = save_state(&canonical, &state);
-                return state;
+                return Ok(state);
             }
         }
     }
 
-    load_state(&state_path).unwrap_or_default()
+    Ok(super::state::AgentState::default())
 }
 
 #[cfg(test)]
@@ -162,5 +172,16 @@ mod tests {
         let a = default_state_path(Path::new("rules/options-rules.example.yaml"));
         let b = default_state_path(Path::new("rules/my-options.yaml"));
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn load_sim_state_errors_on_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let rules = dir.path().join("options-pilot-8709.yaml");
+        std::fs::write(&rules, "version: 1\nagent_id: options-pilot-8709\n").unwrap();
+        let state_path = sim_state_path(&rules);
+        std::fs::write(&state_path, "").unwrap();
+        let err = load_sim_agent_state(&rules, "options-pilot-8709").unwrap_err();
+        assert!(err.to_string().contains("empty"), "{err}");
     }
 }

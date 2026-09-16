@@ -166,7 +166,7 @@ impl SchwabClient {
         }
 
         let bytes = response.bytes().await?;
-        if bytes.is_empty() {
+        if bytes.is_empty() || bytes.iter().all(u8::is_ascii_whitespace) {
             return Err(ApiError::Other("Unexpected empty response body".into()));
         }
 

@@ -149,7 +149,7 @@ pub async fn execute_agent_options_flatten(
 
     // Drop closed positions from agent state when not simulating.
     if !runtime.simulate {
-        let mut state = load_agent_state(rules_path, &rules.agent_id);
+        let mut state = load_agent_state(rules_path, &rules.agent_id)?;
         for target in &plan.managed_closes {
             state.open_positions.remove(&target.position_id);
         }

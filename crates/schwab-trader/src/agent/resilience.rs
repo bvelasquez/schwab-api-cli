@@ -53,6 +53,9 @@ pub fn classify_error_message(msg: &str) -> AgentErrorClass {
         || lower.contains("status: 502")
         || lower.contains("status: 503")
         || lower.contains("status: 504")
+        || lower.contains("unexpected empty response body")
+        || lower.contains("no space left")
+        || lower.contains("os error 28")
     {
         return AgentErrorClass::Recoverable;
     }
@@ -103,6 +106,12 @@ mod tests {
             classify_error_message("Not authenticated: No refresh token on disk"),
             AgentErrorClass::AuthFatal
         );
+        assert_eq!(
+            classify_error_message(
+                "Not authenticated: token file is empty (/home/jarvis/.config/schwabinvestbot/tokens.json). Run `schwab auth login`"
+            ),
+            AgentErrorClass::AuthFatal
+        );
     }
 
     #[test]
@@ -121,6 +130,14 @@ mod tests {
         );
         assert_eq!(
             classify_error_message("HTTP request failed: timeout"),
+            AgentErrorClass::Recoverable
+        );
+        assert_eq!(
+            classify_error_message("Unexpected empty response body"),
+            AgentErrorClass::Recoverable
+        );
+        assert_eq!(
+            classify_error_message("No space left on device (os error 28)"),
             AgentErrorClass::Recoverable
         );
     }

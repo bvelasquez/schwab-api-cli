@@ -83,20 +83,24 @@ impl TokenStore {
 
     pub async fn load(&self) -> Result<Option<Tokens>> {
         match fs::read_to_string(&self.path).await {
-            Ok(raw) => Ok(Some(serde_json::from_str(&raw)?)),
+            Ok(raw) if raw.trim().is_empty() => Err(ApiError::NotAuthenticated(format!(
+                "token file is empty ({}). Run `schwab auth login`",
+                self.path.display()
+            ))),
+            Ok(raw) => serde_json::from_str(&raw).map(Some).map_err(|e| {
+                ApiError::NotAuthenticated(format!(
+                    "token file is invalid ({}): {e}. Run `schwab auth login`",
+                    self.path.display()
+                ))
+            }),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(err) => Err(ApiError::TokenStore(err.to_string())),
         }
     }
 
     pub async fn save(&self, tokens: &Tokens) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)
-                .await
-                .map_err(|e| ApiError::TokenStore(e.to_string()))?;
-        }
         let raw = serde_json::to_string_pretty(tokens)?;
-        fs::write(&self.path, raw)
+        crate::atomic::write_atomic(&self.path, raw)
             .await
             .map_err(|e| ApiError::TokenStore(e.to_string()))?;
         Ok(())
@@ -276,5 +280,41 @@ mod tests {
             obtained_at: Utc::now() - chrono::Duration::days(6),
         };
         assert!(tokens.refresh_expires_in_seconds() < 2 * 86400);
+    }
+
+    #[tokio::test]
+    async fn empty_token_file_is_not_authenticated() {
+        let dir = std::env::temp_dir().join(format!(
+            "schwab-empty-tokens-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let path = dir.join("tokens.json");
+        tokio::fs::write(&path, b"").await.unwrap();
+        let store = TokenStore::new(dir.clone());
+        let err = store.load().await.expect_err("empty tokens must fail");
+        let msg = err.to_string();
+        assert!(msg.contains("token file is empty"), "{msg}");
+        assert!(msg.contains("schwab auth login"), "{msg}");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn invalid_token_json_is_not_authenticated() {
+        let dir = std::env::temp_dir().join(format!(
+            "schwab-bad-tokens-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or(1)
+        ));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        tokio::fs::write(dir.join("tokens.json"), b"{not-json")
+            .await
+            .unwrap();
+        let store = TokenStore::new(dir.clone());
+        let err = store.load().await.expect_err("invalid tokens must fail");
+        let msg = err.to_string();
+        assert!(msg.contains("token file is invalid"), "{msg}");
+        let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 }
