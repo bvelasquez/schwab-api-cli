@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -448,15 +448,19 @@ pub fn load_state(path: &Path) -> Result<AgentState> {
         return Ok(AgentState::default());
     }
     let content = fs::read_to_string(path)?;
-    Ok(serde_json::from_str(&content)?)
+    if content.trim().is_empty() {
+        anyhow::bail!(
+            "agent state file is empty: {} (disk-full truncate?). Restore from backup before the agent overwrites it.",
+            path.display()
+        );
+    }
+    serde_json::from_str(&content).with_context(|| format!("parse agent state {}", path.display()))
 }
 
 pub fn save_state(path: &Path, state: &AgentState) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
     let content = serde_json::to_string_pretty(state)?;
-    fs::write(path, content)?;
+    schwab_api::write_atomic_sync(path, content)
+        .with_context(|| format!("write agent state {}", path.display()))?;
     Ok(())
 }
 
@@ -730,5 +734,29 @@ mod tests {
         assert!(stop_loss_re_entry_blocked(&rules, &state, "IWM").is_some());
         rules.risk.re_entry_after_stop_loss.enabled = false;
         assert!(stop_loss_re_entry_blocked(&rules, &state, "IWM").is_none());
+    }
+
+    #[test]
+    fn empty_state_file_is_error_not_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agent-sim-state.json");
+        std::fs::write(&path, "").unwrap();
+        let err = load_state(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("agent state file is empty"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn save_state_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agent-sim-state.json");
+        let mut state = AgentState::default();
+        state.agent_id = "options-pilot-8709".into();
+        save_state(&path, &state).unwrap();
+        let loaded = load_state(&path).unwrap();
+        assert_eq!(loaded.agent_id, "options-pilot-8709");
+        assert!(!path.with_file_name("agent-sim-state.json.tmp").exists());
     }
 }

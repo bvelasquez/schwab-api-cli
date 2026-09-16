@@ -28,6 +28,7 @@ ssh -o BatchMode=yes "${JARVIS_SSH}" env REPO="${JARVIS_REPO}" bash -s <<'REMOTE
 set -euo pipefail
 
 repo="${REPO:-$HOME/projects/schwabinvestbot}"
+export PATH="$HOME/.cargo/bin:$PATH"
 cd "$repo"
 
 echo "==> git fetch/pull --ff-only origin main"
