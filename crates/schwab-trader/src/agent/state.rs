@@ -197,7 +197,14 @@ impl TraderState {
             });
         }
         let raw = fs::read_to_string(path)?;
-        let mut state: TraderState = serde_json::from_str(&raw)?;
+        if raw.trim().is_empty() {
+            anyhow::bail!(
+                "trader state file is empty: {} (disk-full truncate?). Restore from backup before the agent overwrites it.",
+                path.display()
+            );
+        }
+        let mut state: TraderState = serde_json::from_str(&raw)
+            .with_context(|| format!("parse trader state {}", path.display()))?;
         if state.trader_id.is_empty() {
             state.trader_id = trader_id.to_string();
         }
@@ -205,11 +212,9 @@ impl TraderState {
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
         let raw = serde_json::to_string_pretty(self)?;
-        fs::write(path, raw)?;
+        schwab_api::write_atomic_sync(path, raw)
+            .with_context(|| format!("write trader state {}", path.display()))?;
         Ok(())
     }
 

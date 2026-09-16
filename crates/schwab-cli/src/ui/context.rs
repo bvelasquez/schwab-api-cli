@@ -50,9 +50,9 @@ impl DashboardContext {
         let state = if state_path.exists() {
             load_state(&state_path)?
         } else if simulate {
-            load_sim_agent_state(rules_path, &rules.agent_id)
+            load_sim_agent_state(rules_path, &rules.agent_id)?
         } else {
-            load_agent_state(rules_path, &rules.agent_id)
+            load_agent_state(rules_path, &rules.agent_id)?
         };
         let daemon = daemon_status(rules_path);
         let log_tail = tail_lines(&daemon.log_file, LOG_TAIL_LINES);

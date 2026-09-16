@@ -1,5 +1,6 @@
 //! Charles Schwab Trader API client (`https://api.schwabapi.com/trader/v1`).
 
+pub mod atomic;
 pub mod auth;
 pub mod client;
 pub mod config;
@@ -8,6 +9,7 @@ pub mod error;
 pub mod models;
 pub mod query;
 
+pub use atomic::{write_atomic, write_atomic_sync};
 pub use auth::{OAuthClient, TokenStore, Tokens};
 pub use client::SchwabClient;
 pub use config::ClientConfig;
