@@ -261,6 +261,26 @@ pub fn passes_entry_filters(
             _ => {}
         }
     }
+    for period in &entry.require_below_sma {
+        match *period {
+            9 => {
+                if snap.above_sma_9 == Some(true) {
+                    return Some("above SMA 9 (pullback required)".into());
+                }
+            }
+            20 => {
+                if snap.above_sma_20 == Some(true) {
+                    return Some("above SMA 20 (pullback required)".into());
+                }
+            }
+            50 => {
+                if snap.above_sma_50 == Some(true) {
+                    return Some("above SMA 50 (pullback required)".into());
+                }
+            }
+            _ => {}
+        }
+    }
     if let Some(rsi) = snap.rsi_14 {
         if rsi < entry.rsi_14_range[0] || rsi > entry.rsi_14_range[1] {
             return Some(format!("RSI {rsi:.1} outside range"));
@@ -650,5 +670,51 @@ mod tests {
                 .is_some_and(|r| r.contains("missing atr_14")),
             "got {reason:?}"
         );
+    }
+
+    #[test]
+    fn require_below_sma_defaults_empty_and_inert() {
+        let rules = TraderRules {
+            version: 1,
+            trader_id: "t".into(),
+            accounts: vec![],
+            ..TraderRules::default()
+        };
+        assert!(rules.playbook.entry.require_below_sma.is_empty());
+        let snap = base_snap();
+        let reason = passes_entry_filters(&snap, &rules.playbook.entry, &rules.technical, &rules);
+        assert!(reason.is_none(), "got {reason:?}");
+    }
+
+    #[test]
+    fn rejects_extension_above_required_sma() {
+        let mut rules = TraderRules {
+            version: 1,
+            trader_id: "t".into(),
+            accounts: vec![],
+            ..TraderRules::default()
+        };
+        rules.playbook.entry.require_below_sma = vec![9];
+        let snap = base_snap(); // above_sma_9 = Some(true) → extended, not a pullback
+        let reason = passes_entry_filters(&snap, &rules.playbook.entry, &rules.technical, &rules);
+        assert!(
+            reason.as_deref().is_some_and(|r| r.contains("pullback required")),
+            "got {reason:?}"
+        );
+    }
+
+    #[test]
+    fn accepts_shallow_pullback_below_sma9() {
+        let mut rules = TraderRules {
+            version: 1,
+            trader_id: "t".into(),
+            accounts: vec![],
+            ..TraderRules::default()
+        };
+        rules.playbook.entry.require_below_sma = vec![9];
+        let mut snap = base_snap();
+        snap.above_sma_9 = Some(false); // pullback into the 9-day MA, still above SMA20/50
+        let reason = passes_entry_filters(&snap, &rules.playbook.entry, &rules.technical, &rules);
+        assert!(reason.is_none(), "got {reason:?}");
     }
 }
