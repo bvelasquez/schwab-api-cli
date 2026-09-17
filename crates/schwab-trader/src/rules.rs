@@ -258,6 +258,9 @@ pub struct EntryConfig {
     pub min_avg_volume_20d: f64,
     pub max_spread_pct: f64,
     pub require_above_sma: Vec<u32>,
+    /// SMA periods the price must be BELOW to qualify (shallow-pullback / not-extended gate).
+    /// Empty (default) disables the check, so this is additive for existing rules files.
+    pub require_below_sma: Vec<u32>,
     pub rsi_14_range: [f64; 2],
     pub max_positions: u32,
     pub max_new_entries_per_day: u32,
@@ -832,6 +835,7 @@ impl Default for EntryConfig {
             min_avg_volume_20d: 500_000.0,
             max_spread_pct: 0.5,
             require_above_sma: vec![20, 50],
+            require_below_sma: vec![],
             rsi_14_range: [45.0, 65.0],
             max_positions: 4,
             max_new_entries_per_day: 1,

@@ -57,6 +57,7 @@ rules/universe/fmp-discovered.yaml
 rules/trader-swing-p1-*.yaml
 rules/trader-swing-*-baseline.yaml
 rules/p1-sizing-results.json
+rules/measure-frozen.yaml
 
 # Personal agent rules (account-specific hashes — copy from *-example.yaml locally)
 rules/*-8709.yaml
