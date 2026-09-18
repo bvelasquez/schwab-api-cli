@@ -1,0 +1,186 @@
+[
+ {
+  "arm": "C",
+  "tag": "W1",
+  "fills": null,
+  "closed": 27,
+  "roi": 10.889659984000177,
+  "exp": 15.888562481944607,
+  "pnl": 428.9911870125044,
+  "exits": {
+   "profit_target": 13,
+   "stop_loss": 12,
+   "thesis_rs_deterioration": 1,
+   "time_stop": 1
+  },
+  "dd": 6.923481503803696,
+  "win": 55.55555555555556
+ },
+ {
+  "arm": "P",
+  "tag": "W1",
+  "fills": null,
+  "closed": 13,
+  "roi": 7.230441524001585,
+  "exp": 20.320978662889477,
+  "pnl": 264.1727226175632,
+  "exits": {
+   "profit_target": 7,
+   "stop_loss": 6
+  },
+  "dd": 4.990722102565261,
+  "win": 53.84615384615385
+ },
+ {
+  "arm": "P2",
+  "tag": "W1",
+  "fills": null,
+  "closed": 21,
+  "roi": 6.549214813527637,
+  "exp": 11.319253477731255,
+  "pnl": 237.70432303235634,
+  "exits": {
+   "profit_target": 11,
+   "stop_loss": 10
+  },
+  "dd": 6.718664744580659,
+  "win": 52.38095238095239
+ },
+ {
+  "arm": "P3",
+  "tag": "W1",
+  "fills": null,
+  "closed": 13,
+  "roi": 7.230441524001585,
+  "exp": 20.320978662889477,
+  "pnl": 264.1727226175632,
+  "exits": {
+   "profit_target": 7,
+   "stop_loss": 6
+  },
+  "dd": 4.990722102565261,
+  "win": 53.84615384615385
+ },
+ {
+  "arm": "Y",
+  "tag": "W1",
+  "fills": null,
+  "closed": 32,
+  "roi": -6.486303278918082,
+  "exp": -8.107879098647688,
+  "pnl": -259.452131156726,
+  "exits": {
+   "profit_target": 12,
+   "stop_loss": 18,
+   "thesis_rs_deterioration": 1,
+   "time_stop": 1
+  },
+  "dd": 14.024594784498678,
+  "win": 43.75
+ },
+ {
+  "arm": "Z",
+  "tag": "W1",
+  "fills": null,
+  "closed": 0,
+  "roi": 0.0,
+  "exp": 0.0,
+  "pnl": -0.0,
+  "exits": {},
+  "dd": 0.0,
+  "win": 0.0
+ },
+ {
+  "arm": "C",
+  "tag": "W2",
+  "fills": null,
+  "closed": 24,
+  "roi": -1.2903201604864467,
+  "exp": -4.035591401810703,
+  "pnl": -96.85419364345688,
+  "exits": {
+   "profit_target": 8,
+   "stop_loss": 13,
+   "thesis_profit_giveback": 1,
+   "thesis_rs_deterioration": 2
+  },
+  "dd": 11.107366802022526,
+  "win": 50.0
+ },
+ {
+  "arm": "P",
+  "tag": "W2",
+  "fills": null,
+  "closed": 15,
+  "roi": -2.174513803017908,
+  "exp": -8.814795956314265,
+  "pnl": -132.22193934471397,
+  "exits": {
+   "profit_target": 6,
+   "stop_loss": 9
+  },
+  "dd": 11.492104648124526,
+  "win": 53.333333333333336
+ },
+ {
+  "arm": "P2",
+  "tag": "W2",
+  "fills": null,
+  "closed": 25,
+  "roi": -1.697034477639292,
+  "exp": -4.524910653182856,
+  "pnl": -113.12276632957139,
+  "exits": {
+   "profit_target": 10,
+   "stop_loss": 13,
+   "thesis_rs_deterioration": 1,
+   "time_stop": 1
+  },
+  "dd": 10.243952528918651,
+  "win": 52.0
+ },
+ {
+  "arm": "P3",
+  "tag": "W2",
+  "fills": null,
+  "closed": 15,
+  "roi": -2.174513803017908,
+  "exp": -8.814795956314265,
+  "pnl": -132.22193934471397,
+  "exits": {
+   "profit_target": 6,
+   "stop_loss": 9
+  },
+  "dd": 11.492104648124526,
+  "win": 53.333333333333336
+ },
+ {
+  "arm": "Y",
+  "tag": "W2",
+  "fills": null,
+  "closed": 29,
+  "roi": -3.9004103725829076,
+  "exp": -5.379876375976424,
+  "pnl": -156.01641490331627,
+  "exits": {
+   "profit_target": 10,
+   "stop_loss": 15,
+   "thesis_rs_deterioration": 3,
+   "time_stop": 1
+  },
+  "dd": 13.2283227366544,
+  "win": 55.172413793103445
+ },
+ {
+  "arm": "Z",
+  "tag": "W2",
+  "fills": null,
+  "closed": 0,
+  "roi": 0.0,
+  "exp": 0.0,
+  "pnl": -0.0,
+  "exits": {},
+  "dd": 0.0,
+  "win": 0.0
+ }
+]
