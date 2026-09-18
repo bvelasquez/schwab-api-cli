@@ -76,3 +76,11 @@ rules/agent.pid
 
 # Cursor local IDE config
 .cursor/
+
+# large per-run backtest artifacts (summaries are kept in gate-probes*.json)
+rules/analysis-*/.backtest-cache-*.json
+rules/analysis-*/trades-arm*.jsonl
+rules/analysis-*/trader-backtest-journal-arm*.jsonl
+rules/analysis-*/trader-backtest-state-arm*.json
+rules/analysis-*/trader-journal-arm*.jsonl
+rules/analysis-*/arm-*-W*.json
