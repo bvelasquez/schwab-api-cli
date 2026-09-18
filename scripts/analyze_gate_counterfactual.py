@@ -51,6 +51,11 @@ PORTFOLIO_PATTERNS = [
     ("portfolio:entries_per_day", r"max_new_entries|entries_per_day|trades_per_day"),
     ("portfolio:capital", r"capital|budget|heat|insufficient|free cash"),
 ]
+RISK_PATTERNS = [
+    ("risk:stop_geometry", r"is only .*atr"),
+    ("risk:reward_risk", r"reward/risk|reward.?risk"),
+    ("gate:price_floor", r"below min"),
+]
 SPECIAL_PATTERNS = [
     ("blocked_symbol", r"blocked_symbol"),
     ("llm_veto", r"llm"),
@@ -59,7 +64,7 @@ SPECIAL_PATTERNS = [
 
 def classify(reason):
     r = reason.lower()
-    for name, pat in SPECIAL_PATTERNS + GATE_PATTERNS + PORTFOLIO_PATTERNS:
+    for name, pat in SPECIAL_PATTERNS + RISK_PATTERNS + GATE_PATTERNS + PORTFOLIO_PATTERNS:
         if re.search(pat, r):
             return name
     return f"other:{reason[:40]}"
