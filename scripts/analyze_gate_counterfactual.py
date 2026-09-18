@@ -137,19 +137,29 @@ def load_daily(cache_path):
     return out, d
 
 
-def fwd_return(bars, day_str, p0, horizon):
-    """Close-to-close return from p0 to the close `horizon` trading days after day_str."""
-    if not bars or not p0 or p0 <= 0:
+def fwd_from_idx(bars, idx, horizon):
+    if idx is None or horizon is None or idx + horizon >= len(bars):
         return None
+    return bars[idx + horizon][1]
+
+
+def idx_on_or_after(bars, day_str):
     day = datetime.date.fromisoformat(day_str)
-    idx = None
     for i, (dt, _) in enumerate(bars):
         if dt >= day:
-            idx = i
-            break
-    if idx is None or idx + horizon >= len(bars):
+            return i
+    return None
+
+
+def fwd_return(bars, day_str, p0, horizon):
+    """Return p0 -> close `horizon` trading days after day_str (None if unavailable)."""
+    if not bars or not p0 or p0 <= 0:
         return None
-    return bars[idx + horizon][1] / p0 - 1.0
+    idx = idx_on_or_after(bars, day_str)
+    c = fwd_from_idx(bars, idx, horizon)
+    if c is None:
+        return None
+    return c / p0 - 1.0
 
 
 def t_ci(xs):
@@ -210,48 +220,89 @@ def main():
         for k, v in unmatched.most_common(15):
             print(f"  {v:6d}  {k}")
 
+    spy = daily.get("SPY")
     results = {}
+
+    def stats(vals, per_sym):
+        if not vals:
+            return None
+        lo, hi = t_ci(vals)
+        clo, chi = clustered_ci(per_sym, 0)
+        return {
+            "n": len(vals), "mean_pct": 100 * statistics.mean(vals),
+            "median_pct": 100 * statistics.median(vals),
+            "win_rate_pct": 100 * sum(1 for v in vals if v > 0) / len(vals),
+            "ci95_t_pct": None if lo is None else [100 * lo, 100 * hi],
+            "ci95_symbol_clustered_pct": None if clo is None else [100 * clo, 100 * chi],
+            "symbols": len(per_sym),
+        }
+
     print()
-    print("=== forward return from the decision-minute price, by class ===")
+    print("=== forward returns by class ===")
+    print("    min  = from the decision-minute price the bot actually saw (tradeable)")
+    print("    close= from the decision day's close (horizon-comparable)")
+    print("    excess = close-based return minus SPY over the identical window")
+    print(f"    SPY bars: {'present' if spy else 'MISSING - excess not computed'}")
     for cls in sorted(by_cls, key=lambda c: -by_cls[c]):
         rows = [o for o in obs.values() if o["cls"] == cls]
-        entry = {}
+        no_bars = sorted({o["symbol"] for o in rows if not daily.get(o["symbol"].upper())})
+        entry = {"n_observations": len(rows), "symbols_missing_from_cache": no_bars}
         for h in horizons:
-            vals, per_sym = [], collections.defaultdict(list)
+            vmin, vclose, vex, per_sym = [], [], [], collections.defaultdict(list)
+            truncated = 0
             for o in rows:
-                bars = daily.get(o["symbol"].upper())
-                r = fwd_return(bars, o["day"], o["price"], h)
-                if r is None:
+                sym = o["symbol"].upper()
+                bars = daily.get(sym)
+                if not bars:
                     continue
-                vals.append(r)
-                per_sym[o["symbol"]].append(r)
-            if not vals:
-                entry[h] = {"n": 0}
-                continue
-            lo, hi = t_ci(vals)
-            clo, chi = clustered_ci(per_sym, h)
-            entry[h] = {
-                "n": len(vals), "mean_pct": 100 * statistics.mean(vals),
-                "median_pct": 100 * statistics.median(vals),
-                "win_rate_pct": 100 * sum(1 for v in vals if v > 0) / len(vals),
-                "ci95_t_pct": [100 * lo, 100 * hi] if lo is not None else None,
-                "ci95_symbol_clustered_pct": [100 * clo, 100 * chi] if clo is not None else None,
-                "symbols": len(per_sym),
+                idx = idx_on_or_after(bars, o["day"])
+                if idx is None:
+                    continue
+                r = fwd_return(bars, o["day"], o["price"], h)
+                if r is not None:
+                    vmin.append(r)
+                c = fwd_from_idx(bars, idx, h)
+                if c is None:
+                    truncated += 1
+                    continue
+                rclose = c / bars[idx][1] - 1.0
+                vclose.append(rclose)
+                per_sym[o["symbol"]].append(rclose)
+                if spy:
+                    j = idx_on_or_after(spy, o["day"])
+                    b = fwd_from_idx(spy, j, h)
+                    if b is not None and j is not None and spy[j][1] > 0:
+                        vex.append(rclose - (b / spy[j][1] - 1.0))
+            e = {
+                "minute": stats(vmin, collections.defaultdict(list)),
+                "close": stats(vclose, per_sym),
+                "excess_vs_spy": stats(vex, collections.defaultdict(list)),
+                "truncated_by_cache_end": truncated,
             }
+            if e["close"]:
+                e["close"]["symbols"] = len(per_sym)
+            entry[h] = e
         results[cls] = entry
-        print(f"\n  {cls}  (n={len(rows)} observations, {len(set(o['symbol'] for o in rows))} symbols)")
-        hdr = "    horizon   n    mean%   median%  win%   95% CI (t)            95% CI (symbol-clustered)"
-        print(hdr)
+        miss = entry.get("symbols_missing_from_cache") or []
+        print(f"\n  {cls}  (n={len(rows)} observations, {len(set(o['symbol'] for o in rows))} symbols)"
+              + (f"   [NOT in daily cache: {','.join(miss)}]" if miss else ""))
+        print("    horizon     n   mean%   med%   win%  excess%  95% CI (t)      95% CI (symbol-clustered)")
         for h in horizons:
             e = entry[h]
-            if not e.get("n"):
-                print(f"    +{h:<3d}d    -    (no observations with full horizon)")
+            c_close, c_min, c_ex = e["close"], e["minute"], e["excess_vs_spy"]
+            if not c_close and not c_min:
+                print(f"    +{h:<3d}d      -   (no usable obs; "
+                      f"{e['truncated_by_cache_end']} cut off by cache end)")
                 continue
-            ci = e["ci95_t_pct"]
-            cc = e["ci95_symbol_clustered_pct"]
-            print(f"    +{h:<3d}d {e['n']:5d}  {e['mean_pct']:+7.2f}  {e['median_pct']:+7.2f}  "
-                  f"{e['win_rate_pct']:5.1f}  [{ci[0]:+6.2f}, {ci[1]:+6.2f}]"
-                  + (f"   [{cc[0]:+6.2f}, {cc[1]:+6.2f}]" if cc else ""))
+            base = c_close or c_min
+            ci = base.get("ci95_t_pct")
+            cc = base.get("ci95_symbol_clustered_pct")
+            ex = f"{c_ex['mean_pct']:+7.2f}" if c_ex else "      -"
+            ci_s = f"[{ci[0]:+6.2f},{ci[1]:+6.2f}]" if ci else "       n/a    "
+            cc_s = f"[{cc[0]:+6.2f},{cc[1]:+6.2f}]" if cc else "      n/a      "
+            print(f"    +{h:<3d}d {base['n']:5d}  {base['mean_pct']:+7.2f}  {base['median_pct']:+7.2f}  "
+                  f"{base['win_rate_pct']:5.1f}  {ex}  {ci_s}  {cc_s}"
+                  + (f"  (trunc {e['truncated_by_cache_end']})" if e["truncated_by_cache_end"] else ""))
 
     summary = {
         "journal": args.journal, "cache": args.cache,
