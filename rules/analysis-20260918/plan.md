@@ -85,10 +85,20 @@ precondition for re-running the selection study, not just for A/B arms.
 
 ## Plan (rev 2)
 
-**Step 0 — aligned cache.** Prefetch one continuous window for the whole universe so every symbol
-covers every test date; keep the current cache as the byte-identical control set. Record
-`fetched_at` + sha256 + rules-file sha256 alongside every result (skill: no rules hash is stamped
-today).
+**Step 0 — DONE.** `aligned.yaml` (same rules/universe as `arm-C`) prefetched `--from 2024-06-30
+--to 2026-07-28 --force`: **58/58 symbols, 520 bars each, all starting 2024-07-01, zero gaps >5
+calendar days**, `fetched_at 2026-09-18T23:44:33Z`, cache sha256 `5b722a08c9ae8049…`. This proves
+the raggedness was a **fetch artifact, not an API limit** — an explicit `--from/--to` + `--force`
+gets uniform 2-year coverage.
+
+Replication on that cache (`gate-probes-aligned.json`): **every arm reproduces the ragged-cache
+result to the last decimal** (C W1 27 closed / +428.9911870125044 both times). Cause, verified:
+the 11 universe names missing pre-2025-07-28 in the old cache (DUK GLD KO NEE NEM PEP PG SO USMV
+XLP XLU — all defensives) gain 250 W1 bars in the aligned cache but were never admitted, and the
+symbols that *did* trade are value-identical across the two caches (0 differences on 520 common
+bars × 11 names). So the gate finding is robust to the cache defect; **the ragged panel only
+matters for studies that pooled the other ~130 names** (the selection study), which still needs
+re-derivation on an aligned panel.
 
 **Step 1 — DONE (accepted).** Instrument rebuilt and validated: `arm-Z` = 0 trades. Also note the
 live paper agents kept the Sep-16 image in memory; the new binary takes effect on their next
