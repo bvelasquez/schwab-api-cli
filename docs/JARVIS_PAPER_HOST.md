@@ -14,6 +14,10 @@ happen there; this MacBook is source code only. Two consequences nothing enforce
 - A non-interactive SSH shell does not inherit the unit's environment, so remote CLI calls need
   `set -a; . $HOME/.config/environment.d/schwab-paper.conf; set +a; export SCHWAB_REPO=$HOME/projects/schwabinvestbot`
   prefixed or they die with `SCHWAB_APP_KEY ... is required`.
+- **Jarvis owns OAuth.** One Schwab OAuth session per account, so no Mac-side login and no Mac-side refresh: the Mac
+  consumes a mirrored access token (`scripts/jarvis-token-sync.sh`, refresh token blanked). Any second refrester —
+  another host, or a second long-running Mac process — silently revokes Jarvis's refresh token and both paper agents
+  go `auth_fatal` (happened 2026-09-18).
 
 This document is the operator plan. Phase 0 is **code and scripts only** — do not stop Mac agents or SSH to Jarvis from CI/cloud agents.
 
@@ -110,6 +114,7 @@ times in 35 minutes. `systemctl is-active` is not health — check `last_tick`.
 | [`scripts/jarvis-deploy.sh`](../scripts/jarvis-deploy.sh) | SSH → `git fetch` + `pull --ff-only origin main` → `cargo install` both crates `--force` → copy units → `daemon-reload` → enable + restart both services → print versions, `systemctl --user status`, `pgrep` smoke |
 | [`scripts/jarvis-rules-reload.sh`](../scripts/jarvis-rules-reload.sh) | SSH → `schwab agent reload rules/options-pilot-8709.yaml` and `schwab-trader agent reload rules/trader-swing-9947.yaml` |
 | [`scripts/jarvis-auth-login.sh`](../scripts/jarvis-auth-login.sh) | Mac browser OAuth → write `tokens.json` on Jarvis (`schwab auth login --code`). The keeper republishes the agents' mirror within 5 min. |
+| [`scripts/jarvis-token-sync.sh`](../scripts/jarvis-token-sync.sh) | Mac-side read-only mirror: asks Jarvis to refresh if the access token is nearly stale (Jarvis is the owner), then writes the Mac's `tokens.json` with `refresh_token` blanked. Re-run when the Mac token goes stale. |
 | [`scripts/jarvis-token-keeper.sh`](../scripts/jarvis-token-keeper.sh) | Runs **on jarvis** via `schwab-token-keeper.timer`: the single OAuth refresher, republishes the access-token mirror |
 | [`scripts/jarvis-bot-watchdog.sh`](../scripts/jarvis-bot-watchdog.sh) | Runs **on jarvis** via `schwab-bot-watchdog.timer`: restarts an agent whose `last_tick` is stale for the current session; escalates on repeat |
 
@@ -121,13 +126,16 @@ All fail fast (`set -euo pipefail`), refuse `--trust`/`--yes`, and never add tho
 ./scripts/jarvis-rules-reload.sh
 ./scripts/jarvis-auth-login.sh          # browser on Mac, tokens on Jarvis
 ./scripts/jarvis-auth-login.sh --paste   # paste the redirect URL instead
+./scripts/jarvis-token-sync.sh           # mirror Jarvis's access token onto this Mac (read-only consumer)
 ```
 
 Re-auth notes:
 
 - Jarvis has no GUI. The script listens on **this Mac** at `https://127.0.0.1:8182`, then exchanges the code on Jarvis using `~/.config/environment.d/schwab-paper.conf`.
-- Do **not** copy Mac `tokens.json` onto Jarvis. A token refresh on either host rotates the refresh token and invalidates the other copy.
+- **Jarvis is the single OAuth owner** (Schwab permits one active OAuth session per account: a second refrester revokes the other holder's refresh token). Only Jarvis logs in and only Jarvis refreshes.
+- Do **not** copy Mac `tokens.json` onto Jarvis, and do not log in on the Mac: Mac CLI work reads a mirrored **access** token from `scripts/jarvis-token-sync.sh`, which writes the Mac's token file with `refresh_token` blanked so a Mac-side refresh fails closed.
 - Running paper units do not need a restart; they reload tokens from disk each tick.
+- `schwab auth status --json` reports refresh life from the local file's `obtained_at`, so a revoked token still looks valid for days. Confirm with `schwab auth refresh --yes --json` — `invalid_grant` means it is dead.
 
 ## Ad-hoc background (not systemd)
 
