@@ -2,6 +2,19 @@
 
 Move **paper** (`--simulate`) options and swing agents from Barry’s Mac onto **Jarvis** (Linux, SSH host `jarvis`, user `jarvis`). Live trading stays on the Mac until a later, explicit cutover.
 
+## Venue rule (Barry, 2026-09-17)
+
+**The live/paper test runs ONLY on Jarvis.** Config checks, backtests, deploys, log/journal reads and results all
+happen there; this MacBook is source code only. Two consequences nothing enforces for you:
+
+- `rules/*-9947.yaml` are gitignored, so `git pull` never carries them. Jarvis's copy is authoritative and the Mac's
+  copies go stale silently (on 2026-09-17 the Mac's had PT 8.5 / trail 4.0 / RSI 50 while Jarvis had 7.5 / 3.0 / 48 —
+  deploying it would have reverted three approved changes). `scp` Jarvis's file down and diff before editing; never
+  push the Mac's up.
+- A non-interactive SSH shell does not inherit the unit's environment, so remote CLI calls need
+  `set -a; . $HOME/.config/environment.d/schwab-paper.conf; set +a; export SCHWAB_REPO=$HOME/projects/schwabinvestbot`
+  prefixed or they die with `SCHWAB_APP_KEY ... is required`.
+
 This document is the operator plan. Phase 0 is **code and scripts only** — do not stop Mac agents or SSH to Jarvis from CI/cloud agents.
 
 ## Hosts and binaries
@@ -96,16 +109,25 @@ times in 35 minutes. `systemctl is-active` is not health — check `last_tick`.
 |-------|----------------|
 | [`scripts/jarvis-deploy.sh`](../scripts/jarvis-deploy.sh) | SSH → `git fetch` + `pull --ff-only origin main` → `cargo install` both crates `--force` → copy units → `daemon-reload` → enable + restart both services → print versions, `systemctl --user status`, `pgrep` smoke |
 | [`scripts/jarvis-rules-reload.sh`](../scripts/jarvis-rules-reload.sh) | SSH → `schwab agent reload rules/options-pilot-8709.yaml` and `schwab-trader agent reload rules/trader-swing-9947.yaml` |
+| [`scripts/jarvis-auth-login.sh`](../scripts/jarvis-auth-login.sh) | Mac browser OAuth → write `tokens.json` on Jarvis (`schwab auth login --code`). The keeper republishes the agents' mirror within 5 min. |
 | [`scripts/jarvis-token-keeper.sh`](../scripts/jarvis-token-keeper.sh) | Runs **on jarvis** via `schwab-token-keeper.timer`: the single OAuth refresher, republishes the access-token mirror |
 | [`scripts/jarvis-bot-watchdog.sh`](../scripts/jarvis-bot-watchdog.sh) | Runs **on jarvis** via `schwab-bot-watchdog.timer`: restarts an agent whose `last_tick` is stale for the current session; escalates on repeat |
 
-Both fail fast (`set -euo pipefail`), refuse `--trust`/`--yes`, and never add those flags to remote commands.
+All fail fast (`set -euo pipefail`), refuse `--trust`/`--yes`, and never add those flags to remote commands.
 
 ```bash
 # from a Mac with SSH to jarvis
 ./scripts/jarvis-deploy.sh
 ./scripts/jarvis-rules-reload.sh
+./scripts/jarvis-auth-login.sh          # browser on Mac, tokens on Jarvis
+./scripts/jarvis-auth-login.sh --paste   # paste the redirect URL instead
 ```
+
+Re-auth notes:
+
+- Jarvis has no GUI. The script listens on **this Mac** at `https://127.0.0.1:8182`, then exchanges the code on Jarvis using `~/.config/environment.d/schwab-paper.conf`.
+- Do **not** copy Mac `tokens.json` onto Jarvis. A token refresh on either host rotates the refresh token and invalidates the other copy.
+- Running paper units do not need a restart; they reload tokens from disk each tick.
 
 ## Ad-hoc background (not systemd)
 
@@ -134,7 +156,7 @@ schwab agent stop rules/options-pilot-8709.yaml
 - [x] `schwab-trader agent stop` / `agent reload` (SIGHUP) match options behavior
 - [x] `--simulate` is forwarded; `--trust`/`--yes` are not implied
 - [x] systemd user unit templates under `deploy/systemd/user/`
-- [x] `scripts/jarvis-deploy.sh` and `scripts/jarvis-rules-reload.sh` (executable, fail fast, no live flags)
+- [x] `scripts/jarvis-deploy.sh`, `scripts/jarvis-rules-reload.sh`, and `scripts/jarvis-auth-login.sh` (executable, fail fast, no live flags)
 - [x] This document + README link
 - [x] Tests for detach helpers and trader background CLI wiring
 - [ ] **Not in Phase 0:** SSH to Jarvis, stop Mac agents, enable linger, or start paper units in production
@@ -146,6 +168,7 @@ schwab agent stop rules/options-pilot-8709.yaml
 - [ ] Run `./scripts/jarvis-deploy.sh` from Mac
 - [ ] Confirm both units `active (running)` and `--simulate` in `pgrep -af`
 - [ ] Reload YAML with `./scripts/jarvis-rules-reload.sh` without restart
+- [ ] Re-auth from Mac with `./scripts/jarvis-auth-login.sh` when the refresh token is close to expiry
 - [ ] Mac paper watches stay up until soak looks healthy
 
 ### Phase 2 — stop Mac paper (operator)
