@@ -35,19 +35,40 @@ Then `arm-Z.yaml` — the live rules plus a **self-contradictory** gate
 produced **27 trades / +10.89%** in W1 and 24 / −1.29% in W2, i.e. exactly the control.
 
 Conclusion: in the equity backtest path (`schwab-trader backtest run`) the SMA entry gates —
-`require_above_sma` *and* `require_below_sma` — are not binding. Consequence: **every prior
-"pullback arm" result in this repo (`analysis-20260917/bt/pullback_*.txt`,
+`require_above_sma` *and* `require_below_sma` — are not binding. The gate code itself is
+unambiguous (technical.rs:247/252/257 reject on `above_sma_N == Some(false)`;
+267/272/277 reject on `== Some(true)`; both no-op on `None`), so the only way a contradictory
+pair admits 27 trades is `above_sma_20 == None` in the replay snapshot. Mechanism localized,
+not yet pinpointed: the replay's snapshot construction is the prime suspect (indicator periods
+never satisfied / fields left `None`), and that is exactly what Step 1 must nail down.
+Consequence: **every prior "pullback arm" result in this repo (`analysis-20260917/bt/pullback_*.txt`,
 `trader-backtest-journal-*-p2-pullback-*.jsonl`) measured nothing about the pullback
 condition.** The p2-pullback-vs-p2-base fill difference (3 vs 6) is explained by different
 rules-file names resolving to different caches, not by the gate.
 
-By contrast the **live** path does bind: the live loop journals gate rejections that include the
-SMA reasons (405 below-SMA rejections classified in the counterfactual), and `entry_attempts`
-separately records post-gate blockers — currently **245 `llm_veto_or_missing_review`** entries
-(the veto now frozen) plus re-entry cooldowns. So live ≠ backtest on the entry gate; this is the
-mechanical explanation for the audit's finding that live and backtest entry sets overlapped 0/36.
+The **live** path does bind, hard: the live loop journals `scan.rejected[].reason` =
+"below SMA 20" **32,650 times** and "below SMA 50" **6,208 times** (`payload.scan.rejected`,
+judged from the raw journal, not inferred). `entry_attempts` separately records post-gate
+blockers — **245 `llm_veto_or_missing_review`** (the veto now frozen) plus re-entry cooldowns.
+So live gates on SMA and the backtest does not; that is the mechanical explanation for the
+audit's 0/36 live-vs-backtest entry-set overlap.
+
+## Second, independent defect: the "2-year" cache is not 2 years for most names
+
+`rules/.backtest-cache-trader-swing-9947.json` holds 188 symbols but only **47** have bars from
+2024-07-01 (those run 2024-07 → 2026-07/09); the other **141** start between 2025-03-03 and
+2026-07-22. Any prior screen described as "2-year, N-symbol" therefore pooled 47 full-history
+names with 141 short-history ones — including the 2026-09-17 selection study's counts. Its
+direction may well survive, but its "2-year / 12-of-14-months / OOS" framing was computed on a
+ragged panel and must be re-derived on an aligned cache before it is treated as a stable
+property rather than a window artifact.
 
 ## Plan
+
+**Step 0 — build an aligned cache.** Prefetch one continuous window for the whole universe so
+every symbol covers every test date (today's cache cannot support a per-symbol 2-year claim).
+Record its `fetched_at` and sha256. Without this, any A/B is partly a comparison of *which
+symbols happened to have data*, not of the rule.
 
 **Step 1 — repair the instrument (code, Mac→jarvis, no live effect).**
 Find why the replay/scan path does not bind the SMA gates (same `run_scan_inner` is called, so
