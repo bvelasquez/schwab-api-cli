@@ -1,0 +1,16 @@
+# Keep the owner access token fresh and the agent mirror current.
+# Access tokens live ~30 min; the keeper refreshes below a 15-min margin, so a
+# 5-minute cadence leaves 3x headroom against the mirror going stale.
+
+[Unit]
+Description=Run the Schwab token keeper every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=false
+Unit=schwab-token-keeper.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,22 @@
+# Schwab paper-agent watchdog — restarts an agent that silently stopped ticking.
+#
+# The agents degrade internally (auth_fatal) without exiting, so systemd's
+# Restart=on-failure never fires and nothing alerts. This unit reads each
+# agent's state last_tick and acts on staleness.
+#
+# Read-only with respect to trading: it can only `systemctl --user restart` a
+# --simulate unit and send a Telegram alert. No --trust, no --yes.
+
+[Unit]
+Description=Schwab paper-agent watchdog (stale-tick restart + alert)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/schwabinvestbot
+EnvironmentFile=-%h/.config/environment.d/schwab-paper.conf
+ExecStart=%h/projects/schwabinvestbot/scripts/jarvis-bot-watchdog.sh
+
+[Install]
+WantedBy=default.target

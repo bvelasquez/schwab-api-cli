@@ -17,7 +17,9 @@ SSH: `Host jarvis` with `User jarvis` in `~/.ssh/config`. Override with `JARVIS_
 
 ## Safety
 
-- Paper units and deploy scripts **must not** pass `--trust` or `--yes`.
+- Paper units and deploy scripts **must not** pass `--trust` or `--yes` **as trade flags**.
+  The only `--yes` in the tree is on `schwab auth refresh` inside the token keeper — that is
+  the non-interactive OAuth path, it cannot place an order.
 - `--simulate` remains the paper-host default. Live defaults are unchanged.
 - systemd is the supervisor: units use `Type=simple` (foreground). Do **not** add `--background` to unit `ExecStart`.
 - `schwab-trader agent run --background` is for ad-hoc detach (pid/log next to rules), same shape as `schwab agent run --background`.
@@ -50,12 +52,52 @@ sudo loginctl enable-linger jarvis
 loginctl show-user jarvis | grep Linger
 ```
 
+### Token ownership — exactly one refresher
+
+Schwab keeps **one active OAuth session per account**: two processes that refresh
+invalidate each other's refresh token, and the losers spin on `invalid_grant` forever.
+Both paper agents died this way on 2026-09-18 (swing 4 h 15 m, options ≈ 20 h) while
+systemd reported them `active` — `Restart=on-failure` never fires, because the process
+stays alive and simply stops trading. So exactly one process refreshes:
+
+| Unit | Job |
+|------|-----|
+| `schwab-token-keeper.service` | refreshes the owner bundle only when `expires_in < 900s` (under `flock`), then rewrites the agents' mirror |
+| `schwab-token-keeper.timer` | drives it every 5 min — the **only** OAuth refresher on the host |
+
+The agents read an access-token-only **mirror** through a drop-in
+([`schwab-agents-token-mirror.conf`](../deploy/systemd/user/schwab-agents-token-mirror.conf),
+`SCHWAB_TOKEN_DIR=%h/.config/schwabinvestbot/agents`), so an agent physically cannot start
+its own refresh. A missing `refresh_token` in the mirror is the design, not corruption —
+that file holds the access token only. Deploy order matters: `jarvis-deploy.sh` seeds the
+mirror *before* restarting the agents.
+
+### Watchdog — stale ticks
+
+`schwab-bot-watchdog.timer` (5 min) reads each agent's `last_tick` from its state JSON. If
+it is stale for the current session it re-runs the keeper and restarts the unit, with a
+Telegram alert; if it is stale again on the next cycle it escalates **without** restarting
+(a dead refresh token needs `scripts/jarvis-auth-login.sh`, not a restart loop).
+
+Thresholds are session-aware and mirror `crates/*/src/agent/schedule.rs`:
+
+| agent | regular | premarket | idle / closed |
+|-------|---------|-----------|----------------|
+| swing (`schwab-trader`) | 900 s (sleeps 90 s) | 900 s (sleeps 300 s) | 3600 s (**sleeps 1800 s by design**) |
+| options (`schwab-cli`) | 900 s (sleeps 120 s) | — | 900 s (sleeps 120 s) |
+
+A flat threshold is a bug, not a simplification: after hours the swing agent is *supposed*
+to be quiet for 30 minutes, and a 900 s constant restarted a perfectly healthy agent three
+times in 35 minutes. `systemctl is-active` is not health — check `last_tick`.
+
 ## Scripts (run from Mac)
 
 | Script | What it does |
 |-------|----------------|
 | [`scripts/jarvis-deploy.sh`](../scripts/jarvis-deploy.sh) | SSH → `git fetch` + `pull --ff-only origin main` → `cargo install` both crates `--force` → copy units → `daemon-reload` → enable + restart both services → print versions, `systemctl --user status`, `pgrep` smoke |
 | [`scripts/jarvis-rules-reload.sh`](../scripts/jarvis-rules-reload.sh) | SSH → `schwab agent reload rules/options-pilot-8709.yaml` and `schwab-trader agent reload rules/trader-swing-9947.yaml` |
+| [`scripts/jarvis-token-keeper.sh`](../scripts/jarvis-token-keeper.sh) | Runs **on jarvis** via `schwab-token-keeper.timer`: the single OAuth refresher, republishes the access-token mirror |
+| [`scripts/jarvis-bot-watchdog.sh`](../scripts/jarvis-bot-watchdog.sh) | Runs **on jarvis** via `schwab-bot-watchdog.timer`: restarts an agent whose `last_tick` is stale for the current session; escalates on repeat |
 
 Both fail fast (`set -euo pipefail`), refuse `--trust`/`--yes`, and never add those flags to remote commands.
 

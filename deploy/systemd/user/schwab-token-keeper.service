@@ -1,0 +1,24 @@
+# Schwab token keeper — the ONE OAuth refresher on Jarvis.
+#
+# Schwab keeps a single active OAuth session per app+account; two agents that
+# both refresh invalidate each other (2026-09-18: both paper agents stuck in
+# auth_fatal invalid_grant for hours). This unit keeps the owner token fresh and
+# rewrites the access-token-only mirror the agents read.
+#
+# Not a trading unit: no --trust, no --yes on any order path. `auth refresh
+# --yes` is the non-interactive auth path and is what the Mac-side token sync
+# already uses against this host.
+
+[Unit]
+Description=Schwab token keeper (single OAuth refresher, paper agents)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/schwabinvestbot
+EnvironmentFile=-%h/.config/environment.d/schwab-paper.conf
+ExecStart=%h/projects/schwabinvestbot/scripts/jarvis-token-keeper.sh
+
+[Install]
+WantedBy=default.target

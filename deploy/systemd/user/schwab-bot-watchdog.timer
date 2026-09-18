@@ -1,0 +1,14 @@
+# Check both paper agents for a silently stalled tick loop.
+
+[Unit]
+Description=Run the Schwab paper-agent watchdog every 5 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=false
+Unit=schwab-bot-watchdog.service
+
+[Install]
+WantedBy=timers.target
