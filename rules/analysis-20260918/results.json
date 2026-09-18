@@ -1,0 +1,327 @@
+{
+ "provenance": {
+  "rules_sha256": "81236a093a3ca315",
+  "cache_sha256": "48bfa9c784b693ae02e2",
+  "cache_fetched_at": "2026-09-18T19:38:14Z",
+  "cache_bars_end": "2026-07-28",
+  "universe_sha256": "f0f43d92ed4a023218be",
+  "flag": "--no-learn --fresh fill_at=close",
+  "rev": "321aaa8"
+ },
+ "W1-C": {
+  "final_stats": {
+   "avg_loss_usd": -60.28436789973427,
+   "avg_win_usd": 76.82690678728771,
+   "cash_usd": 2451.0634123600066,
+   "closed_trades": 27,
+   "current_equity_usd": 4435.586399360007,
+   "exit_reason_counts": {
+    "profit_target": 13,
+    "stop_loss": 12,
+    "thesis_rs_deterioration": 1,
+    "time_stop": 1
+   },
+   "expectancy_usd": 15.888562481944607,
+   "max_drawdown_pct": 6.923481503803698,
+   "open_positions": 2,
+   "roi_pct": 10.889659984000177,
+   "starting_cash_usd": 4000.0,
+   "total_pnl_usd": 428.9911870125044,
+   "win_rate_pct": 55.55555555555556
+  },
+  "benchmark": {
+   "buy_hold_roi_pct": 13.3,
+   "end_close": 617.85,
+   "from": "2024-07-01",
+   "max_drawdown_pct": 19.0,
+   "start_close": 545.34,
+   "symbol": "SPY",
+   "to": "2025-06-30",
+   "trading_days": 250
+  },
+  "symbols_cached": 58,
+  "trading_days": 250,
+  "per_trade_pnl_usd": [
+   2.95,
+   -16.88,
+   121.62,
+   105.77,
+   -82.74,
+   6.71,
+   -72.23,
+   7.62,
+   101.33,
+   103.65,
+   -17.91,
+   -43.6,
+   54.98,
+   -73.62,
+   -35.03,
+   -111.47,
+   104.08,
+   98.39,
+   -29.76,
+   -116.39,
+   -18.23,
+   48.93,
+   104.98,
+   -105.56,
+   115.46,
+   98.95,
+   76.99
+  ]
+ },
+ "W1-P": {
+  "final_stats": {
+   "avg_loss_usd": -60.28436789973427,
+   "avg_win_usd": 76.82690678728771,
+   "cash_usd": 2451.0634123600066,
+   "closed_trades": 27,
+   "current_equity_usd": 4435.586399360007,
+   "exit_reason_counts": {
+    "profit_target": 13,
+    "stop_loss": 12,
+    "thesis_rs_deterioration": 1,
+    "time_stop": 1
+   },
+   "expectancy_usd": 15.888562481944607,
+   "max_drawdown_pct": 6.923481503803698,
+   "open_positions": 2,
+   "roi_pct": 10.889659984000177,
+   "starting_cash_usd": 4000.0,
+   "total_pnl_usd": 428.9911870125044,
+   "win_rate_pct": 55.55555555555556
+  },
+  "benchmark": {
+   "buy_hold_roi_pct": 13.3,
+   "end_close": 617.85,
+   "from": "2024-07-01",
+   "max_drawdown_pct": 19.0,
+   "start_close": 545.34,
+   "symbol": "SPY",
+   "to": "2025-06-30",
+   "trading_days": 250
+  },
+  "symbols_cached": 58,
+  "trading_days": 250,
+  "per_trade_pnl_usd": [
+   2.95,
+   -16.88,
+   121.62,
+   105.77,
+   -82.74,
+   6.71,
+   -72.23,
+   7.62,
+   101.33,
+   103.65,
+   -17.91,
+   -43.6,
+   54.98,
+   -73.62,
+   -35.03,
+   -111.47,
+   104.08,
+   98.39,
+   -29.76,
+   -116.39,
+   -18.23,
+   48.93,
+   104.98,
+   -105.56,
+   115.46,
+   98.95,
+   76.99
+  ]
+ },
+ "W2-C": {
+  "final_stats": {
+   "avg_loss_usd": -66.10164345408573,
+   "avg_win_usd": 58.03046065046431,
+   "cash_usd": 2547.0345375805423,
+   "closed_trades": 24,
+   "current_equity_usd": 3948.3871935805423,
+   "exit_reason_counts": {
+    "profit_target": 8,
+    "stop_loss": 13,
+    "thesis_profit_giveback": 1,
+    "thesis_rs_deterioration": 2
+   },
+   "expectancy_usd": -4.035591401810703,
+   "max_drawdown_pct": 11.107366802022526,
+   "open_positions": 1,
+   "roi_pct": -1.2903201604864467,
+   "starting_cash_usd": 4000.0,
+   "total_pnl_usd": -96.85419364345688,
+   "win_rate_pct": 50.0
+  },
+  "benchmark": {
+   "buy_hold_roi_pct": 18.03,
+   "end_close": 728.99,
+   "from": "2025-07-01",
+   "max_drawdown_pct": 9.13,
+   "start_close": 617.65,
+   "symbol": "SPY",
+   "to": "2026-06-26",
+   "trading_days": 249
+  },
+  "symbols_cached": 58,
+  "trading_days": 249,
+  "per_trade_pnl_usd": [
+   -48.89,
+   3.37,
+   128.9,
+   -100.42,
+   61.24,
+   8.18,
+   142.69,
+   20.21,
+   -35.86,
+   -46.91,
+   -53.47,
+   43.01,
+   66.59,
+   -4.66,
+   27.74,
+   -340.38,
+   59.68,
+   -52.14,
+   -30.45,
+   -2.26,
+   83.61,
+   -54.34,
+   51.15,
+   -23.43
+  ]
+ },
+ "W2-P": {
+  "final_stats": {
+   "avg_loss_usd": -66.10164345408573,
+   "avg_win_usd": 58.03046065046431,
+   "cash_usd": 2547.0345375805423,
+   "closed_trades": 24,
+   "current_equity_usd": 3948.3871935805423,
+   "exit_reason_counts": {
+    "profit_target": 8,
+    "stop_loss": 13,
+    "thesis_profit_giveback": 1,
+    "thesis_rs_deterioration": 2
+   },
+   "expectancy_usd": -4.035591401810703,
+   "max_drawdown_pct": 11.107366802022526,
+   "open_positions": 1,
+   "roi_pct": -1.2903201604864467,
+   "starting_cash_usd": 4000.0,
+   "total_pnl_usd": -96.85419364345688,
+   "win_rate_pct": 50.0
+  },
+  "benchmark": {
+   "buy_hold_roi_pct": 18.03,
+   "end_close": 728.99,
+   "from": "2025-07-01",
+   "max_drawdown_pct": 9.13,
+   "start_close": 617.65,
+   "symbol": "SPY",
+   "to": "2026-06-26",
+   "trading_days": 249
+  },
+  "symbols_cached": 58,
+  "trading_days": 249,
+  "per_trade_pnl_usd": [
+   -48.89,
+   3.37,
+   128.9,
+   -100.42,
+   61.24,
+   8.18,
+   20.21,
+   142.69,
+   -35.86,
+   -46.91,
+   -53.47,
+   43.01,
+   -4.66,
+   66.59,
+   27.74,
+   -340.38,
+   59.68,
+   -52.14,
+   -30.45,
+   -2.26,
+   83.61,
+   -54.34,
+   51.15,
+   -23.43
+  ]
+ },
+ "W3-C": {
+  "final_stats": {
+   "avg_loss_usd": 0.0,
+   "avg_win_usd": 144.3890401729999,
+   "cash_usd": 4288.778080346,
+   "closed_trades": 2,
+   "current_equity_usd": 4288.778080346,
+   "exit_reason_counts": {
+    "profit_target": 2
+   },
+   "expectancy_usd": 144.3890401729999,
+   "max_drawdown_pct": 0.5925676957578667,
+   "open_positions": 0,
+   "roi_pct": 7.219452008649996,
+   "starting_cash_usd": 4000.0,
+   "total_pnl_usd": 288.7780803459998,
+   "win_rate_pct": 100.0
+  },
+  "benchmark": {
+   "buy_hold_roi_pct": -0.02,
+   "end_close": 740.86,
+   "from": "2026-06-29",
+   "max_drawdown_pct": 2.22,
+   "start_close": 741.0,
+   "symbol": "SPY",
+   "to": "2026-07-28",
+   "trading_days": 21
+  },
+  "symbols_cached": 58,
+  "trading_days": 21,
+  "per_trade_pnl_usd": [
+   126.77,
+   162.01
+  ]
+ },
+ "W3-P": {
+  "final_stats": {
+   "avg_loss_usd": 0.0,
+   "avg_win_usd": 144.3890401729999,
+   "cash_usd": 4288.778080346,
+   "closed_trades": 2,
+   "current_equity_usd": 4288.778080346,
+   "exit_reason_counts": {
+    "profit_target": 2
+   },
+   "expectancy_usd": 144.3890401729999,
+   "max_drawdown_pct": 0.5925676957578667,
+   "open_positions": 0,
+   "roi_pct": 7.219452008649996,
+   "starting_cash_usd": 4000.0,
+   "total_pnl_usd": 288.7780803459998,
+   "win_rate_pct": 100.0
+  },
+  "benchmark": {
+   "buy_hold_roi_pct": -0.02,
+   "end_close": 740.86,
+   "from": "2026-06-29",
+   "max_drawdown_pct": 2.22,
+   "start_close": 741.0,
+   "symbol": "SPY",
+   "to": "2026-07-28",
+   "trading_days": 21
+  },
+  "symbols_cached": 58,
+  "trading_days": 21,
+  "per_trade_pnl_usd": [
+   126.77,
+   162.01
+  ]
+ }
+}
