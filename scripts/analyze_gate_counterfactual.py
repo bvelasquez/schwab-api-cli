@@ -205,6 +205,8 @@ def main():
     ap.add_argument("--cache", default="rules/.backtest-cache-trader-swing-9947.json")
     ap.add_argument("--outdir", default="rules/analysis-20260918")
     ap.add_argument("--horizons", default="1,3,5,10,20")
+    ap.add_argument("--pair", default="ADMITTED,gate:trend_below_sma",
+                   help="two classes for the day-level paired test (A,B); empty string disables")
     args = ap.parse_args()
 
     horizons = [int(h) for h in args.horizons.split(",")]
@@ -309,12 +311,66 @@ def main():
                   f"{base['win_rate_pct']:5.1f}  {ex}  {ci_s}  {cc_s}"
                   + (f"  (trunc {e['truncated_by_cache_end']})" if e["truncated_by_cache_end"] else ""))
 
+    # --- paired day-level test (skill rule 6): mean(A) - mean(B) per date cancels market drift ---
+    paired = {}
+    if args.pair:
+        a_cls, b_cls = args.pair.split(",")
+        print()
+        print(f"=== paired day-level test: {a_cls}  minus  {b_cls} ===")
+        print("    per date: mean(close-based fwd return of A names) - mean(... of B names);")
+        print("    the statistic is the mean of those date-level differences (market drift cancels).")
+        print("    horizon  n_dates   mean_diff%      95% CI (t)        dates_favouring_A")
+
+        def close_ret(o, h):
+            bars = daily.get(o["symbol"].upper())
+            if not bars:
+                return None
+            idx = idx_on_or_after(bars, o["day"])
+            if idx is None:
+                return None
+            c = fwd_from_idx(bars, idx, h)
+            if c is None or bars[idx][1] <= 0:
+                return None
+            return c / bars[idx][1] - 1.0
+
+        paired = {}
+        for h in horizons:
+            per_date = collections.defaultdict(lambda: ([], []))
+            for o in obs.values():
+                if o["cls"] == a_cls:
+                    r = close_ret(o, h)
+                    if r is not None:
+                        per_date[o["day"]][0].append(r)
+                elif o["cls"] == b_cls:
+                    r = close_ret(o, h)
+                    if r is not None:
+                        per_date[o["day"]][1].append(r)
+            diffs = [statistics.mean(a) - statistics.mean(b)
+                     for a, b in per_date.values() if a and b]
+            if not diffs:
+                print(f"    +{h:<3d}d       0   (no date has both cohorts)")
+                paired[h] = None
+                continue
+            lo, hi = t_ci(diffs)
+            fav = sum(1 for d in diffs if d > 0)
+            ci_s = f"[{100 * lo:+6.2f},{100 * hi:+6.2f}]" if lo is not None else "       n/a     "
+            paired[h] = {
+                "n_dates": len(diffs),
+                "mean_diff_pct": 100 * statistics.mean(diffs),
+                "median_diff_pct": 100 * statistics.median(diffs),
+                "ci95_t_pct": None if lo is None else [100 * lo, 100 * hi],
+                "dates_favouring_a": fav,
+            }
+            print(f"    +{h:<3d}d {len(diffs):7d}   {100 * statistics.mean(diffs):+8.2f}   {ci_s}   "
+                  f"{fav}/{len(diffs)}")
+
     summary = {
         "journal": args.journal, "cache": args.cache,
         "cache_fetched_at": cache_meta.get("fetched_at"),
         "cache_from": cache_meta.get("from"), "cache_to": cache_meta.get("to"),
         "observations": len(obs), "class_counts": dict(by_cls),
         "horizons": horizons, "results": results,
+        "paired_day_level": paired,
         "taxonomy_raw_rows": dict(taxonomy),
     }
     return summary, obs
