@@ -11,15 +11,35 @@ deployed change must be measured on the deployed geometry, not the local one.
 """
 import re
 import shutil
+import sys
+from pathlib import Path
+
 import yaml
 
-SRC = "/tmp/jarvis-swing-9947.yaml"          # pulled from jarvis
-CACHE_SRC = "rules/.backtest-cache-trader-swing-p3-ctl-9947.json"
+# The config to measure. Pass the authoritative file explicitly (on jarvis:
+#   gen_jr_arms.py rules/trader-swing-9947.yaml
+# ). The default is only safe when run on the host that owns the file -- never point this
+# at a hand-pulled /tmp copy, which is exactly how the earlier stale-geometry arms arose.
+SRC = sys.argv[1] if len(sys.argv) > 1 else "rules/trader-swing-9947.yaml"
+if not Path(SRC).is_file():
+    sys.exit(f"rules file not found: {SRC}")
 
-# the deployed jarvis file is the control (verbatim)
-shutil.copy(SRC, "rules/trader-swing-j-ctl-9947.yaml")
+CACHE_SRC = sys.argv[2] if len(sys.argv) > 2 else "rules/.backtest-cache-trader-swing-9947.json"
+if not Path(CACHE_SRC).is_file():
+    cands = sorted(Path("rules").glob(".backtest-cache-trader-swing-*.json"))
+    if not cands:
+        sys.exit(f"no backtest cache: {CACHE_SRC} missing and no rules/.backtest-cache-trader-swing-*.json")
+    CACHE_SRC = str(cands[0])
+
+print(f"source rules: {SRC} | cache: {CACHE_SRC}")
 
 base = open(SRC).read()
+if "risk_per_trade_pct: 3.0" in base and "max_position_pct: 50.0" in base:
+    sys.exit(
+        f"{SRC} already carries the scaled risk budget (3.0 / 50.0).\n"
+        "This script transforms the PRE-change file into the changed one -- point it at the\n"
+        "pre-change copy (e.g. rules/trader-swing-9947.yaml.bak-<stamp>-riskbudget)."
+    )
 s = base
 reps = [
     # 1. base risk budget (approved change)
@@ -55,6 +75,11 @@ print("j-r3 -> base risk/trade =", ps["risk_per_trade_pct"], "| max_position_pct
       "| heat ceiling =", d["risk"]["max_portfolio_heat_pct"])
 print("      profiles:", {k: profile_risk(v) for k, v in d["adaptation"]["profiles"].items()})
 print("      llm clamp:", d["llm"]["adaptation_bounds"]["risk_per_trade_pct"])
+
+# Write the control verbatim only now, after the transforms above have validated: a failed
+# transform must never leave a mislabelled control behind (it did once -- a grid run against it
+# would have silently compared change vs change).
+shutil.copy(SRC, "rules/trader-swing-j-ctl-9947.yaml")
 
 for arm in ("j-ctl", "j-r3"):
     shutil.copy(CACHE_SRC, f"rules/.backtest-cache-trader-swing-{arm}-9947.json")
