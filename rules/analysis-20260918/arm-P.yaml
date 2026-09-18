@@ -46,7 +46,6 @@ playbook:
     require_above_sma:
     - 20
     - 50
-    # EXPERIMENT ARM P (2026-09-18): require a shallow pullback (not extended).
     require_below_sma:
     - 9
     # Momentum band: skip weak RSI pullbacks that stall before the target.

@@ -44,10 +44,9 @@ playbook:
     min_avg_volume_20d: 500000.0
     max_spread_pct: 0.6
     require_above_sma:
-    - 20
     - 50
     require_below_sma:
-    - 20
+    - 9
     # Momentum band: skip weak RSI pullbacks that stall before the target.
     # 2026-09-17 Barry OK: floor reverted 50->48 (2y ablation: +$83 vs post-Sep9 cfg)
     rsi_14_range:
