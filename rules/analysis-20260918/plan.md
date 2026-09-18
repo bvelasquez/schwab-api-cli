@@ -1,109 +1,122 @@
 # Plan: can the "not extended" (pullback) entry condition be validated, and does it pay?
 
-**Date:** 2026-09-18 · **Rules under test:** `rules/trader-swing-9947.yaml` sha256 `81236a093a3c…` (frozen: 4 LLM toggles off)
-**Cache:** `rules/.backtest-cache-trader-swing-9947.json` sha256 `48bfa9c7…`, fetched 2026-09-18T19:38:14Z, from 2024-06-30, to 2026-07-28 (bars end 2026-07-28), 188 symbols, universe `rules/universe/sp100-liquid.yaml` sha `f0f43d92…` (51 names)
+**Date:** 2026-09-18 (rev 2) · **Rules under test:** `rules/trader-swing-9947.yaml` sha256 `81236a093a3c…` (frozen: 4 LLM toggles off)
+**Cache:** `rules/analysis-20260918/.backtest-cache-arm-*.json` sha256 `48bfa9c784b693ae02e2711b…` — **byte-identical for every arm** (copied, not re-fetched), fetched 2026-09-18T19:38:14Z, from 2024-06-30, to 2026-07-28, 188 symbols; universe `rules/universe/sp100-liquid.yaml` sha `f0f43d92…` (51 names)
+**Binaries:** `schwab-trader`/`schwab` 0.1.6, rebuilt from `e1003ef` on Mac **and** jarvis 2026-09-18 (see rev-2 root cause)
 
 ## The hypothesis and why it is live
 
 The 2-year row-level screen (2026-09-17, `selection-study.md`) found the discriminating
 condition is **not being extended**: admitted setups with close < SMA9 → f10 +2.04% (t=6.26)
-vs close ≥ SMA9 → +0.35% (t=1.51); day-paired +1.50pp (t=2.96, CI [+0.51,+2.50]), OOS +2.02pp
-(t=2.87), live window +3.06pp (t=2.94), positive in 12/14 months.
-Independently, this session's live-journal counterfactual (n=900 deduped decisions, day-level
-paired, drift cancelled — `gate-counterfactual.md`) found the *opposite* sign for what the
-current gate admits: admitted vs rejected-below-SMA was −0.87pp @+1d (CI [−1.58,−0.15], 10/33
-dates) and −5.96pp @+20d (CI [−10.88,−1.03], 3/20 dates). Two different datasets, same story:
-extension loses.
+vs close ≥ SMA9 → +0.35% (t=1.51); day-paired +1.50pp (t=2.96), OOS +2.02pp (t=2.87), live window
++3.06pp (t=2.94), positive in 12/14 months. Independently, this session's live-journal
+counterfactual (n=900 deduped decisions, day-level paired, market drift cancelled —
+`gate-counterfactual.md`) found the *opposite* sign for what the current gate admits: admitted vs
+rejected-below-SMA was −0.87pp @+1d (CI [−1.58,−0.15], 10/33 dates) and −5.96pp @+20d
+(CI [−10.88,−1.03], 3/20 dates). Two datasets, same story: extension loses.
 
-The production lever for this exists in the engine already: `entry.require_below_sma: Vec<u32>`
-(rules.rs:263, evaluated at technical.rs:264-276), snapshot field `above_sma_9`
-(technical.rs:23,151,176), default `vec![]` = inert, with unit test
-`accepts_shallow_pullback_below_sma9` (technical.rs:716).
+The production lever exists in the engine: `entry.require_below_sma: Vec<u32>` (rules.rs:263,
+evaluated at technical.rs:264-276), snapshot field `above_sma_9` (technical.rs:23,151,176),
+default `vec![]` = inert, unit test `accepts_shallow_pullback_below_sma9` (technical.rs:716).
 
-## BLOCKER found before any tuning can be trusted: the backtest does not evaluate the SMA gates
+## Rev-2 root cause: the deployed binary predated the feature (the gates were NEVER inert)
 
-A controlled A/B was run: `rules/analysis-20260918/arm-C.yaml` (byte-identical to the live
-frozen rules, sha `81236a093a3c`) vs `arm-P.yaml` (same + `require_below_sma: [9]`), identical
-cache bytes, identical universe bytes, `--no-learn`, `--fresh`, `fill_at close`.
+Rev 1 of this document claimed the backtest's SMA gates were structurally inert. **That was
+wrong.** The controlled arms were inert because the *installed binaries* on jarvis were dated
+2026-09-16 07:33/07:34, one day **before** `require_below_sma` was added in `bef2b4c`
+(2026-09-17). `EntryConfig` carries `#[serde(default)]` and no `deny_unknown_fields`, so the
+installed binary **silently dropped** the unknown YAML key and the field kept its default `[]`.
 
-Result: **the two arms are identical in every window** — 27 trades / +10.89% ROI (W1 in-sample),
-24 / −1.29% (W2 out-of-sample), 2 / +7.22% (W3 live tail); same expectancy, same exit mix, same
-max DD, same traded symbols.
+Evidence chain (each step reproducible):
+1. `schwab-trader rules show rules/analysis-20260918/arm-Z.yaml --json` on jarvis listed
+   `playbook.entry` keys as `[max_new_entries_per_day, max_positions, max_spread_pct,
+   min_avg_volume_20d, min_price_usd, position_size, require_above_sma, rsi_14_range]` —
+   `require_below_sma` **absent from the parsed output** while present at YAML line 49.
+   `rules show` echoes parsed rules, so it is ground truth for what the engine will enforce.
+2. `git log -S require_below_sma` → `bef2b4c` (2026-09-17). `ls -la ~/.cargo/bin/` → 2026-09-16.
+3. After `make install` on both hosts, `rules show` reports `C: below=[]`, `Z: below=[20]`.
+4. Re-run of the probe matrix: **`arm-Z` → 0 fills, 0 exits in both windows.** Acceptance test
+   passes; the gate is evaluated and binds exactly as the source says.
 
-Then `arm-Z.yaml` — the live rules plus a **self-contradictory** gate
-(`require_above_sma: [20,50]` AND `require_below_sma: [20]`, which must admit nothing) — also
-produced **27 trades / +10.89%** in W1 and 24 / −1.29% in W2, i.e. exactly the control.
+So the rev-1 lesson stands in a different form: **a null A/B is a binary-staleness candidate, not
+a finding.** A stale deploy also silently weakens the *live* paper agent, which runs the same-day binary.
 
-Conclusion: in the equity backtest path (`schwab-trader backtest run`) the SMA entry gates —
-`require_above_sma` *and* `require_below_sma` — are not binding. The gate code itself is
-unambiguous (technical.rs:247/252/257 reject on `above_sma_N == Some(false)`;
-267/272/277 reject on `== Some(true)`; both no-op on `None`), so the only way a contradictory
-pair admits 27 trades is `above_sma_20 == None` in the replay snapshot. Mechanism localized,
-not yet pinpointed: the replay's snapshot construction is the prime suspect (indicator periods
-never satisfied / fields left `None`), and that is exactly what Step 1 must nail down.
-Consequence: **every prior "pullback arm" result in this repo (`analysis-20260917/bt/pullback_*.txt`,
-`trader-backtest-journal-*-p2-pullback-*.jsonl`) measured nothing about the pullback
-condition.** The p2-pullback-vs-p2-base fill difference (3 vs 6) is explained by different
-rules-file names resolving to different caches, not by the gate.
+## Corrected gate-probe results (byte-identical cache, one variable, `--fresh --no-learn`)
 
-The **live** path does bind, hard: the live loop journals `scan.rejected[].reason` =
-"below SMA 20" **32,650 times** and "below SMA 50" **6,208 times** (`payload.scan.rejected`,
-judged from the raw journal, not inferred). `entry_attempts` separately records post-gate
-blockers — **245 `llm_veto_or_missing_review`** (the veto now frozen) plus re-entry cooldowns.
-So live gates on SMA and the backtest does not; that is the mechanical explanation for the
-audit's 0/36 live-vs-backtest entry-set overlap.
+| arm | entry gates | W1 fills / net$ / exp$ | W2 fills / net$ / exp$ |
+|---|---|---|---|
+| **C** | above `[20,50]` (live) | 29 / +428.99 / 15.89 | 25 / −96.85 / −4.04 |
+| **P** | above `[20,50]` + below `[9]` | 14 / +264.17 / 20.32 | 16 / −132.22 / −8.81 |
+| **P3** | below `[9]` only | 14 / +264.17 / 20.32 | 16 / −132.22 / −8.81 |
+| **P2** | above `[50]` + below `[9]` | 22 / +237.70 / 11.32 | 27 / −113.12 / −4.52 |
+| **Y** | above `[200]` | 32 / −259.45 / −8.11 | 29 / −156.02 / −5.38 |
+| **Z** | above `[20,50]` + below `[20]` (contradictory) | **0 / 0 / 0** | **0 / 0 / 0** |
 
-## Second, independent defect: the "2-year" cache is not 2 years for most names
+Two structural findings:
+- **Deleting a key does not unset it.** `arm-P3` (no `require_above_sma` in the file) behaves
+  exactly like `arm-P`, because a missing key falls back to `EntryConfig::default()` =
+  `require_above_sma: [20,50]`. Only *changing* a value is observable; a "remove the gate" arm
+  proves nothing.
+- **`require_below_sma [9]` dominates `require_above_sma [20,50]`** (P ≡ P3 to the trade), i.e.
+  everything below SMA9 is already below SMA20 in this sample.
+
+**Statistical read (`gate-probe-stats.json`): every per-trade expectancy CI spans zero and no
+Welch test is significant.** W1: C 15.89 [−15.71,+47.49] vs P 20.32 [−20.44,+61.08], diff +4.43,
+t=0.18 (crit 2.05). W2: C −4.04 [−43.70,+35.63] vs P −8.81 [−69.20,+51.57], diff −4.78, t=−0.14.
+The backtest changes the *trade set* by half and cannot distinguish the expectancy at n=13-32.
+It is a fidelity instrument, not an arbiter.
+
+## Consequence for prior work — studies that must be re-run
+
+The `bef2b4c` gate was unborn in the binary during **every** backtest run before 2026-09-18, so:
+- `analysis-20260917/selection-study.md`'s row-level screen, its `bta-cohort.yaml` pullback arm,
+  and `bt/pullback_*.txt` are **not** measurements of the pullback condition;
+- the p2-pullback-vs-p2-base fill difference (3 vs 6) was a cache/name artifact, not the gate.
+Their *row-level* numbers (computed from the cached bars, not the engine) may survive — that is a
+separate question from whether the engine applied the key — but any claim about an **arm** must
+be re-run on a binary built from ≥ `bef2b4c`.
+
+## Second, independent data defect: the "2-year" cache is not 2 years for most names
 
 `rules/.backtest-cache-trader-swing-9947.json` holds 188 symbols but only **47** have bars from
-2024-07-01 (those run 2024-07 → 2026-07/09); the other **141** start between 2025-03-03 and
-2026-07-22. Any prior screen described as "2-year, N-symbol" therefore pooled 47 full-history
-names with 141 short-history ones — including the 2026-09-17 selection study's counts. Its
-direction may well survive, but its "2-year / 12-of-14-months / OOS" framing was computed on a
-ragged panel and must be re-derived on an aligned cache before it is treated as a stable
-property rather than a window artifact.
+2024-07-01; the other **141** start between 2025-03-03 and 2026-07-22. Any "2-year, N-symbol"
+screen therefore pooled 47 full-history names with 141 short-history ones. An aligned cache is a
+precondition for re-running the selection study, not just for A/B arms.
 
-## Plan
+## Plan (rev 2)
 
-**Step 0 — build an aligned cache.** Prefetch one continuous window for the whole universe so
-every symbol covers every test date (today's cache cannot support a per-symbol 2-year claim).
-Record its `fetched_at` and sha256. Without this, any A/B is partly a comparison of *which
-symbols happened to have data*, not of the rule.
+**Step 0 — aligned cache.** Prefetch one continuous window for the whole universe so every symbol
+covers every test date; keep the current cache as the byte-identical control set. Record
+`fetched_at` + sha256 + rules-file sha256 alongside every result (skill: no rules hash is stamped
+today).
 
-**Step 1 — repair the instrument (code, Mac→jarvis, no live effect).**
-Find why the replay/scan path does not bind the SMA gates (same `run_scan_inner` is called, so
-the divergence is in the snapshot the replay feeds it, e.g. SMA fields unpopulated in
-`MarketCtx::Replay`). Acceptance test, and it is unambiguous: **after the fix, `arm-Z` must
-produce 0 trades**; then `arm-C` vs `arm-P` must differ. Until arm-Z reads 0, the backtest is not
-a valid instrument for any gate work.
+**Step 1 — DONE (accepted).** Instrument rebuilt and validated: `arm-Z` = 0 trades. Also note the
+live paper agents kept the Sep-16 image in memory; the new binary takes effect on their next
+restart (the watchdog does this on a stale tick). Deliberate restart is Barry's call — it changes
+what the running paper test is executing, though the live rules file itself uses no key that
+`bef2b4c` touched.
 
-**Step 2 — walk-forward A/B with the repaired instrument** (same cache bytes, same window,
-`--no-learn`, `--fresh`, `fill_at close`, one variable per run):
-- `arm-C` — live: `require_above_sma [20,50]`
-- `arm-P1` — `+ require_below_sma [9]` (note: with `above [20,50]` held, this is nearly
-  self-contradictory — a pullback below SMA9 while above SMA20/50 is rare, so this arm is
-  expected to be near-inert by construction and is the honest test of "just add the overlay")
-- `arm-P2` — `require_above_sma [50]` + `require_below_sma [9]` (allow a dip that holds the
-  50-day — the tradable version of the idea)
-- `arm-P3` — `require_below_sma [9]` only (pure mean-reversion arm)
-- Windows: W1 2024-07-01→2025-06-30 (in-sample), W2 2025-07-01→2026-06-26 (out-of-sample),
-  W3 live tail (cache ends 2026-07-28; a full-length W3 needs a re-prefetch).
+**Step 2 — DONE for the gate question** (table above). No arm shows a significant per-trade
+effect.
 
-**Step 3 — read it honestly.** At ~27 trades per window, every CI spans zero (measured:
-W1 CI [−14,+45]$/trade). The trade-level backtest is a *sign/fidelity* check, not proof. The
-statistical weight stays with the row-level and live-journal instruments, which have 10-30× the
-observations. Accept the change only if the sign agrees in W1 **and** W2 and the live-journal
-evidence does not contradict.
+**Step 3 — the arbiter is the live journal, not the backtest.** Weight stays with the n≈900
+day-paired counterfactual (`gate-counterfactual.md`): it is the only instrument with power, and
+its sign (extension loses, admitted < rejected by 5.96pp @+20d) agrees with the row-level screen.
+Per skill rule: under ~100 trades the backtest differences are noise unless the mechanism is
+independently plausible — here the mechanism *is* plausible (a pullback filter halves churn), so
+the honest statement is "mechanism real, effect size unmeasured".
 
-**Step 4 — go-live gate (needs Barry's OK, hard rule 3).** Only then propose the one-line diff to
-`rules/trader-swing-9947.yaml` on jarvis, and judge it over ≥20 closed trades.
+**Step 4 — go-live gate (needs Barry's OK, hard rule 3).** The one-line diff to
+`rules/trader-swing-9947.yaml` on jarvis (`+ require_below_sma: [9]`), judged over ≥20 closed
+live trades. Not before Step 0/3 are finished, because the row-level screen behind it was computed
+on the ragged panel.
 
-**Parallel: verify the freeze took effect.** Post-freeze the live loop's `entry_attempts` should
-carry no `llm_veto_or_missing_review` entries (245 pre-freeze) and `active_profile_source` should
-read `regime`, not `llm`.
+**Parallel — freeze verification.** Post-freeze `entry_attempts` should carry no
+`llm_veto_or_missing_review` (245 pre-freeze) and `active_profile_source` should read `regime`.
 
-## What would falsify all of this
+## What would falsify this plan
 
-If `arm-Z` cannot be made to read 0 trades, the backtest's entry gate is structurally different
-from the live one and the only usable instrument remains the live journal — in which case the
-plan becomes "change nothing until ≥100 live trades with the frozen config" rather than tuning.
+If, on a rebuilt binary and an aligned cache, the live-journal counterfactual's sign flips or its
+CI straddles zero, the pullback hypothesis is dead and the plan becomes "change nothing until
+≥100 live trades under the frozen config". The backtest cannot kill it (no power) — only the live
+journal or a much longer aligned walk-forward can.
