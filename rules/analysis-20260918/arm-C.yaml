@@ -1,0 +1,550 @@
+version: 1
+trader_id: swing-beneficiary-9947
+accounts:
+- hash: 1BA372D01BE13B486750C8433AFDCFB96C2A694770C4688417F0BEA6B676B25B
+  label: Beneficiary account ending 9947 — equity swing sleeve
+  type: margin
+  enabled: true
+capital:
+  fixed_sleeve_cap_usd: 4000.0
+  max_pct_of_free_cash: 80.0
+  min_cash_floor_usd: 500.0
+  options_risk:
+    # Sum reserved risk across every options agent sharing this account.
+    rules_files:
+      - rules/options-pilot-9947.yaml
+      - rules/options-monthly-income.yaml
+    fallback_reserve_usd: 500.0
+    buffer_pct: 10.0
+  core_holdings:
+  - SGOV
+  - JPST
+  - JAAA
+  - SCHD
+  - VYM
+schedule:
+  tick_interval_seconds: 90
+  market_hours_only: true
+  timezone: America/New_York
+  # Needed so FMP can refresh just before the open.
+  premarket_scan: true
+  premarket_start_et: "08:00"
+  premarket_tick_interval_seconds: 300
+  overnight:
+    enabled: false
+playbook:
+  style: swing
+  direction: long
+  holding_period:
+    min_days: 2
+    max_days: 30
+    target_days: 10
+  entry:
+    min_price_usd: 5.0
+    min_avg_volume_20d: 500000.0
+    max_spread_pct: 0.6
+    require_above_sma:
+    - 20
+    - 50
+    # Momentum band: skip weak RSI pullbacks that stall before the target.
+    # 2026-09-17 Barry OK: floor reverted 50->48 (2y ablation: +$83 vs post-Sep9 cfg)
+    rsi_14_range:
+    - 48.0
+    - 65.0
+    max_positions: 4
+    max_new_entries_per_day: 3
+    position_size:
+      method: atr_normalized
+      risk_per_trade_pct: 3.0
+      max_position_pct: 50.0
+      atr_baseline_pct: 2.0
+      atr_vol_scalar_min: 0.5
+      atr_vol_scalar_max: 1.5
+  exit:
+    # 2026-09-09 Barry OK: paper PT 8->8.5; stop 5->5.5; RSI floor 48->50
+    # 2026-09-10 Barry OK: base PT 8.5->7.5; trail activate 4.0->3.5 (stop-heavy exit mix)
+    # 2026-09-11 Barry OK: trail activate 3.5->3.0
+    profit_target_pct: 7.5
+    profit_target_atr_cap:
+      enabled: true
+      atr_multiple: 2.5
+    # Cap target at hold-horizon expected move: ATR% × √target_days.
+    # With target_days=10 this is ~3.16×ATR%; usually looser than the 2.5×ATR
+    # daily cap, but binds on very short target_days or when atr_cap is off.
+    profit_target_horizon_cap:
+      enabled: true
+      sqrt_days_multiple: 1.0
+    # Cap target using lookback high/low range: min(room to recent high +1%,
+    # realized high−low width). Blocks fantasy targets ATR still allows.
+    # Open positions are re-tightened each tick when this binds.
+    profit_target_recent_range_cap:
+      enabled: true
+      lookback_days: 60
+      max_extension_above_high_pct: 1.0
+    stop_loss_pct: 5.5
+    # Noise-scale the stop for low-vol names: effective stop =
+    # min(5%, 2.0×ATR%). Without this, utilities/staples (ATR ~1.5%) get a
+    # tech-sized 5% stop vs an ATR-capped ~3.7% target → R:R < 1.25 and the
+    # gate structurally excludes the defensive rotation candidates.
+    stop_loss_atr_cap:
+      enabled: true
+      atr_multiple: 2.0
+    use_oco_at_entry: true
+    trailing:
+      enabled: true
+      activate_after_profit_pct: 3.0
+      trail_atr_multiple: 2.0
+    time_stop_days: 30
+    time_stop_minutes: 0
+    tighten_on_earnings_within_days: 3
+    thesis:
+      enabled: true
+      profit_giveback:
+        peak_profit_min_pct: 6.0
+        exit_if_below_pct: 2.0
+      exit_if_below_sma:
+      - 20
+      exit_if_below_sma_min_peak_profit_pct: 5.0
+      exit_on_rs_deterioration_below: -4.0
+      regime_exit_profiles:
+      - high_vol_chop
+      regime_exit_min_profit_pct: 3.0
+  closure:
+    no_overnight_holds: false
+    flatten_by_et: 15:55
+    block_entries_after_et: 15:30
+  intraday:
+    min_relative_volume: 1.2
+    momentum_rsi_min: 52.0
+    require_above_sma:
+    - 9
+    - 20
+  filters:
+    blocked_symbols:
+    - TQQQ
+    - JPM
+    - XLK
+    - MU
+    - ASML
+    - CAT
+    no_trade_before_earnings_days: 2
+    # Require outperformance vs SPY (was -4 — allowed lagging names).
+    min_rs_vs_benchmark_30d: 0.0
+    # Anti-chase hard block near highs. Backtest 2y (2024-06→2026-07):
+    # loosening to 1.0 diluted expectancy $6.69→$4.52 (chased entries);
+    # 3.0 + stop_loss_atr_cap was the best variant (+$432, 60% WR, 3.3% DD).
+    # The 6% soft zone below halves size approaching highs.
+    min_distance_from_52w_high_pct: 3.0
+    near_52w_high_soft_zone_pct: 6.0
+    near_52w_high_size_scalar: 0.5
+    # Skip ATR-capped targets that invert R:R vs the fixed stop.
+    min_reward_risk: 1.25
+    # Stop must clear ~1.5 daily ATRs of noise (cuts same-day stop-outs).
+    min_stop_atr_multiple: 1.5
+    symbol_groups:
+    - name: semicap
+      symbols:
+      - AMD
+      - ASML
+      - SMH
+      - MU
+      - NVDA
+      max_open: 1
+    - name: industrial
+      symbols:
+      - CAT
+      - RTX
+      - XLI
+      max_open: 1
+    - name: healthcare
+      symbols:
+      - UNH
+      - LLY
+      max_open: 1
+    - name: utilities
+      symbols:
+      - XLU
+      - NEE
+      - SO
+      - DUK
+      max_open: 1
+    - name: staples
+      symbols:
+      - XLP
+      - PG
+      - KO
+      - PEP
+      - COST
+      - WMT
+      max_open: 1
+    - name: gold
+      symbols:
+      - GLD
+      - NEM
+      max_open: 1
+    shuffle:
+      enabled: true
+      re_entry_cooldown_days: 5
+      stop_loss_penalty: 0.5
+      repeat_stop_penalty: 0.2
+      same_group_open_penalty: 0.2
+      underrepresented_group_bonus: 0.08
+      lookback_days: 7
+      overwhelming_margin: 0.12
+      overwhelming_min_rs_vs_benchmark_30d: 5.0
+      # Hard cooldown — July sim: AMD was stopped 5x because 'overwhelming'
+      # scan scores bypassed the 5d cooldown and re-entered the same chop.
+      bypass_cooldown_on_overwhelming: false
+  short:
+    enabled: false
+    min_avg_volume_20d: 2000000.0
+    max_spread_pct: 0.4
+watchlists:
+  core:
+  - AAPL
+  - MSFT
+  - AMD
+  - GOOGL
+  - QQQ
+  - IWM
+  thematic:
+  - symbol: SMH
+    tags:
+    - screened
+  - symbol: ASML
+    tags:
+    - screened
+  - symbol: UNH
+    tags:
+    - screened
+  - symbol: RTX
+    tags:
+    - screened
+  - symbol: DIA
+    tags:
+    - screened
+  - symbol: XLI
+    tags:
+    - screened
+  - symbol: LLY
+    tags:
+    - screened
+  - symbol: CAT
+    tags:
+    - screened
+  candidate_pool_file: universe/sp100-liquid.yaml
+  candidate_pool: []
+  screened:
+    enabled: true
+    top_n: 12
+    min_score: 0.45
+    refresh_days: 7
+    # Agent auto-screens candidate_pool_file and promotes qualifiers into dynamic_watchlist
+    # (premarket, at open, then every refresh_every_minutes during regular hours).
+    run_premarket: true
+    run_at_open: true
+    refresh_every_minutes: 120
+  dynamic: true
+  max_dynamic_symbols: 5
+sources:
+  web:
+    enabled: true
+    pick_budget_per_day: 5
+    require_corroboration: 1
+    providers:
+    - id: perplexity_sonar
+      type: llm_web
+      weight: 1.0
+  # Intraday FMP discovery (not every tick): premarket, at open, then every 90m.
+  # Requires FMP_API_KEY and schedule.premarket_scan for the premarket pass.
+  fmp:
+    enabled: true
+    discover_every_minutes: 90
+    run_premarket: true
+    run_at_open: true
+    max_add_per_refresh: 5
+    movers_only: false
+    write_pool: true
+  feeds:
+  - id: marketwatch_headlines
+    label: MarketWatch Top Stories
+    enabled: true
+    kind: rss
+    url: https://feeds.marketwatch.com/marketwatch/topstories/
+    phases: []
+    auth: null
+    headers: {}
+    max_bytes: 12000
+    timeout_seconds: 15
+  - id: cnbc_top
+    label: CNBC Top News
+    enabled: true
+    kind: rss
+    url: https://www.cnbc.com/id/100003114/device/rss/rss.html
+    phases:
+    - premarket_digest
+    - overnight_digest
+    auth: null
+    headers: {}
+    max_bytes: 12000
+    timeout_seconds: 15
+  - id: polygon_market_status
+    label: Polygon market status
+    enabled: false
+    kind: api
+    url: https://api.polygon.io/v1/marketstatus/now
+    phases:
+    - all
+    auth:
+      kind: bearer
+      token_env: POLYGON_API_KEY
+      header_name: null
+    headers: {}
+    max_bytes: 12000
+    timeout_seconds: 15
+technical:
+  history:
+    period_type: month
+    period: 3
+    frequency_type: daily
+  intraday_history:
+    period_type: day
+    period: 5
+    frequency_type: minute
+  indicators:
+  - sma_20
+  - sma_50
+  - rsi_14
+  - atr_14
+  - volume_sma_20
+  market_cache:
+    enabled: true
+    refresh_if_older_than_days: 1
+    refresh_cooldown_seconds: 3600
+risk:
+  max_portfolio_heat_pct: 12.0
+  max_drawdown_halt_pct: 12.0
+  max_trades_per_day: 3
+execution:
+  entry_order_type: limit
+  entry_limit_basis: ask
+  bracket_mode: post_fill_oco
+  place_bracket_within_seconds: 60
+  oco_duration: GTC
+  require_preview: true
+  wait_for_fill: true
+  fill_timeout_seconds: 600
+  require_bracket_before_entry_resume: true
+llm:
+  enabled: true
+  selection_model: google/gemini-2.5-flash
+  monitor_model: google/gemini-2.5-flash
+  web_model: perplexity/sonar
+  learn_model: google/gemini-2.5-flash
+  # 90s ticks × 40 ≈ 1 hour between selection/monitor LLM reviews
+  review_every_ticks: 40
+  web_research_every_reviews: 5
+  learn_every_ticks: 6
+  learn_min_closed_trades: 3
+  learn_cooldown_ticks: 20
+  backtest_learn_min_closed_trades: 5
+  backtest_learn_cooldown_ticks: 30
+  max_tokens: 2500
+  veto_entries: false
+  allow_llm_exits: false
+  allow_rule_adaptation: false
+  adaptation_bounds:
+    activate_after_profit_pct:
+      max: 8.0
+      max_delta_per_change: 0.5
+      min: 3.0
+    max_new_entries_per_day:
+      max: 2
+      max_delta_per_change: 1
+      min: 0
+    profit_target_pct:
+      max: 12.0
+      max_delta_per_change: 1.0
+      min: 5.0
+    risk_per_trade_pct:
+      max: 4.8
+      max_delta_per_change: 0.6
+      min: 0.3
+    rsi_14_range:
+      max_high: 72
+      max_low: 52
+      min_high: 60
+      min_low: 40
+    stop_loss_pct:
+      max: 6.0
+      max_delta_per_change: 0.5
+      min: 2.5
+    time_stop_days:
+      max: 45
+      max_delta_per_change: 5
+      min: 5
+    trail_atr_multiple:
+      max: 3.0
+      max_delta_per_change: 0.25
+      min: 1.5
+  immutable_fields:
+  - capital.fixed_sleeve_cap_usd
+  - capital.max_pct_of_free_cash
+  - capital.min_cash_floor_usd
+  - capital.options_risk.fallback_reserve_usd
+  - playbook.direction
+  - playbook.short.enabled
+  - accounts
+  prompts:
+    selection: |
+      You are a conservative swing equity advisor for beneficiary account 9947.
+      Each candidate includes technical_context (SMA, RSI, ATR, history_features) and capital_check hints.
+      history_features.rs_vs_benchmark_30d_pct is symbol 30d return minus SPY; prefer clearly positive RS.
+      Prefer RSI in the mid-50s with price above SMA20/50 — avoid weak RSI pullbacks and overbought >65.
+      Reject setups where ATR-capped target would leave reward/risk < ~1.25 vs the stop, or where the
+      stop is inside ~1.5 daily ATRs of noise.
+      regime and profile_catalog describe market conditions — set profile_selection accordingly.
+      Approve new long entries when capital_check passes and entry_shuffle policy allows diversification.
+      Prefer candidates from symbol_groups not already in open_groups.
+      Defer repeat symbols after recent stop_loss unless shuffle_overwhelming is true in scan.
+      Defer on earnings within 2 days, extreme RSI, weak volume, or rs_vs_benchmark_30d_pct below filters.min_rs_vs_benchmark_30d.
+      Never recommend shorts unless playbook.short.enabled.
+    selection_web: |
+      Research US equities suitable for 2-30 day swing trades: momentum with volume,
+      sector leaders, and macro headwinds. Return actionable symbols with brief thesis.
+      Avoid penny stocks and symbols with earnings in the next 2 sessions.
+    monitor: |
+      Monitor open swing positions. Mechanical OCO brackets and thesis exits run every tick:
+        • Profit giveback: peak ≥ 6% then current < 2%
+        • Below SMA(20) after peak ≥ 5%
+        • RS vs SPY 30d below -4%
+        • Regime high_vol_chop with profit ≥ 3%
+      Recommend tighten_exits or widen_exits only when news changes the thesis;
+      the agent adjusts OCO stops within bounded limits.
+      Do not recommend discretionary sells — thesis and OCO handle exits.
+    learn: |
+      Analyze recent_closed_trades and sim_stats alongside regime and active_profile.
+      Prefer profile_selection to pick baseline|low_vol_trend|high_vol_chop|elevated_vol when regime shifted.
+      Propose bounded playbook adjustments via rule_patches only (allowed_patch_paths: exits + rsi_14_range).
+      Cite trade symbols, exit_reason, pnl_pct, hold time, and rs_vs_benchmark where relevant.
+      Never change immutable_fields or sizing/method/entry caps.
+      Prefer small deltas within adaptation_bounds.max_delta_per_change.
+notify:
+  telegram:
+    enabled: true
+    notify_every_tick: false
+    notify_on_actions: true
+    notify_on_rule_adaptation: true
+simulation:
+  starting_cash_usd: 4000.0
+  allow_rule_adaptation: false
+  allow_fractional_shares: true
+adaptation:
+  enabled: true
+  live_auto_apply: false
+  regime_auto_select: true
+  llm_profile_select: false
+  regime:
+    enabled: true
+    benchmark_symbol: SPY
+    vix_symbol: $VIX
+    vix_low: 17.0
+    vix_high: 28.0
+    realized_vol_lookback: 20
+    realized_vol_history: 60
+    realized_vol_high_percentile: 75.0
+  monitor_adjustments:
+    enabled: true
+    max_tighten_pct: 2.0
+    max_widen_pct: 1.5
+    min_stop_distance_from_price_pct: 1.5
+    max_stop_distance_from_price_pct: 8.0
+  profiles:
+    elevated_vol:
+      description: Elevated vol — reduced size, ATR-capped targets, stricter momentum
+      overrides:
+        exit:
+          profit_target_pct: 6.0
+          profit_target_atr_cap:
+            enabled: true
+            atr_multiple: 2.75
+          stop_loss_pct: 4.5
+          time_stop_days: null
+          time_stop_minutes: null
+          trailing:
+            activate_after_profit_pct: 3.0
+            trail_atr_multiple: 2.25
+        entry:
+          rsi_14_range: [50.0, 65.0]
+          max_new_entries_per_day: 2
+          position_size:
+            method: atr_normalized
+            risk_per_trade_pct: 2.2
+            max_position_pct: null
+            atr_baseline_pct: null
+            atr_vol_scalar_min: null
+            atr_vol_scalar_max: null
+        intraday: null
+    baseline:
+      description: Default playbook from rules YAML
+      overrides:
+        exit: null
+        entry: null
+        intraday: null
+    low_vol_trend:
+      description: Calm uptrend — let winners run, wider ATR cap
+      # 2026-09-09 Barry OK: was stop-heavy at 3.5/9.0; align toward 5.5/8.5
+      overrides:
+        exit:
+          profit_target_pct: 7.5
+          profit_target_atr_cap:
+            enabled: true
+            atr_multiple: 3.0
+          stop_loss_pct: 5.5
+          time_stop_days: null
+          time_stop_minutes: null
+          trailing:
+            activate_after_profit_pct: 3.0
+            trail_atr_multiple: 1.75
+        entry:
+          rsi_14_range: null
+          max_new_entries_per_day: null
+          position_size:
+            method: null
+            risk_per_trade_pct: 3.6
+            max_position_pct: null
+            atr_baseline_pct: null
+            atr_vol_scalar_min: null
+            atr_vol_scalar_max: null
+        intraday: null
+    high_vol_chop:
+      description: High vol chop — defensive sizing, tight ATR-capped targets
+      overrides:
+        exit:
+          profit_target_pct: 5.0
+          profit_target_atr_cap:
+            enabled: true
+            atr_multiple: 2.0
+          stop_loss_pct: 5.0
+          time_stop_days: null
+          time_stop_minutes: null
+          trailing:
+            activate_after_profit_pct: null
+            trail_atr_multiple: 2.5
+        entry:
+          rsi_14_range: null
+          max_new_entries_per_day: 0
+          position_size:
+            method: atr_normalized
+            risk_per_trade_pct: 1.6
+            max_position_pct: null
+            atr_baseline_pct: null
+            atr_vol_scalar_min: null
+            atr_vol_scalar_max: null
+        intraday: null
+  profile_map:
+    low_vol_trend: low_vol_trend
+    elevated_vol: elevated_vol
+    high_vol_chop: high_vol_chop
+    neutral: baseline
+  default_profile: baseline
