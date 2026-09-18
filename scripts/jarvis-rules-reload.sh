@@ -29,6 +29,12 @@ set -euo pipefail
 repo="${REPO:-$HOME/projects/schwabinvestbot}"
 cd "$repo"
 
+# A non-interactive SSH shell does not get the interactive PATH, so the
+# installed CLIs are not on it by default -- without this the script dies
+# with "schwab: command not found" and silently fails to reload anything.
+export PATH="$HOME/.cargo/bin:$PATH"
+command -v schwab-trader >/dev/null || { echo "schwab-trader not on PATH (checked ~/.cargo/bin)" >&2; exit 1; }
+
 echo "==> schwab agent reload"
 schwab agent reload rules/options-pilot-8709.yaml
 
