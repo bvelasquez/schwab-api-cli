@@ -20,11 +20,26 @@ and must never be pushed up (they are gitignored, so `git pull` does not carry t
 | `llm.adaptation_bounds.max_delta_per_change` | 0.15 | 0.6 |
 
 Profiles scale ×4 to keep the regime risk ratios intact; the clamp minimum stays 0.3 so the LLM can still
-de-risk. `max_drawdown_halt_pct 10`, `max_positions 4`, RSI `[48,65]`, PT 7.5, trail 3.0 are unchanged.
+de-risk. `max_positions 4`, RSI `[48,65]`, PT 7.5, trail 3.0 are unchanged.
+(`max_drawdown_halt_pct` was changed as a same-day follow-up — see below.)
 
 **Why all eight and not the base:** `adaptation.enabled` + `regime_auto_select` means the regime profile's
 `overrides` replace the base size, and `llm.adaptation_bounds` clamps it. A base-only edit is cosmetic in
 3 of 4 regimes.
+
+## Follow-up: the kill-switch (same day, approved)
+
+| field | before | after |
+|---|---|---|
+| `risk.max_drawdown_halt_pct` | 10.0 | **12.0** |
+
+One line, backup `rules/trader-swing-9947.yaml.bak-20260917-181449-halt12`, applied and reloaded
+2026-09-17 18:14 PDT. Rationale: the worst drawdown this configuration produced in the validated
+pre-window was 9.82% — **$7 below a halt that is permanent and does not self-resume**, so the
+best-validated settings sat on their own kill-switch. 12.0% = $480 on the $4,000 sleeve.
+Verified as a one-line diff and as the *only* difference from the validated `j-r3` arm.
+
+Live file md5 after both changes: `522ecf7f3395`.
 
 ## Evidence (jarvis geometry, both windows)
 
@@ -40,17 +55,29 @@ jarvis** with `--fresh --no-learn --simulate --yes`. Raw output in `rules/analys
 
 3.2× / 3.3× P&L, **win rate identical** in both windows → pure sizing effect, no signal change.
 
+## Confirming it actually applied
+
+The agent echoes its effective rules **only during the trading session**, so a reload at a closed market
+leaves no evidence in the journal until the next open — the last pre-change echo proves nothing.
+A cron in the `schwab-invest` Hermes profile (`daf2d4a82ca4`, weekdays 1pm → Telegram, 5 runs) greps the
+next session's ticks for `risk_per_trade_pct 3.0` / `max_position_pct 50.0` / `max_drawdown_halt_pct 12.0`,
+re-reloads if the old values persist, and reports either way.
+
 ## Files / rollback
 
 - Applier (dry-run capable, asserts each pattern matches once): `scripts/apply_risk_budget.py --check`
-- Arms generator: `scripts/gen_jr_arms.py`
-- Backup on jarvis: `rules/trader-swing-9947.yaml.bak-20260917-180457-riskbudget`
-- Rollback: restore that backup and `schwab-trader agent reload rules/trader-swing-9947.yaml` (SIGHUP)
+- Arms generator: `scripts/gen_jr_arms.py` (takes the rules file as an argument; refuses a file that
+  already carries the scaled budget, so the control arm cannot be built from the changed file)
+- Backups on jarvis: `...bak-20260917-180457-riskbudget` (pre-sizing), `...bak-20260917-181449-halt12`
+- Reload helper: `scripts/jarvis-rules-reload.sh` (needs `~/.cargo/bin` on PATH for a non-interactive SSH)
+- Rollback: restore a backup and `schwab-trader agent reload rules/trader-swing-9947.yaml` (SIGHUP).
+  Restoring `-riskbudget` also reverts the halt to 10.0; use `-halt12` to revert only the halt.
 
 ## Open risks
 
-1. Pre-window drawdown 9.82% vs the 10% `max_drawdown_halt_pct` — a bad sequence trips the kill-switch,
-   which halts permanently. Raising the halt to 12% needs Barry's approval.
+1. ~~Pre-window drawdown 9.82% vs the 10% `max_drawdown_halt_pct`.~~ **Resolved 2026-09-17** — raised to
+   12.0% with Barry's approval (2.2 points of headroom). The halt is still permanent and non-self-resuming,
+   so it remains the binding constraint on a worse-than-historical sequence.
 2. The underlying edge is thin (~$417/2yr on the $4k sleeve); sizing amplifies losses equally.
 3. **The daily backtest does not model the live intraday loop** — the live sim's 36 closed trades were
    −$20.89. Real-world 4× sizing scales the true tick-level edge, which these tables do not measure.
