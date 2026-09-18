@@ -1,0 +1,6122 @@
+schwab backtest run complete
+status: success
+
+data:
+{
+  "benchmark_comparison": {
+    "buy_hold_roi_pct": 2.91,
+    "end_close": 762.6,
+    "from": "2026-06-29",
+    "max_drawdown_pct": 3.38,
+    "start_close": 741.0,
+    "symbol": "SPY",
+    "to": "2026-09-17",
+    "trading_days": 57
+  },
+  "cache_path": "rules/.backtest-cache-trader-swing-p2-pullback-9947.json",
+  "day_summaries": [
+    {
+      "active_profile": null,
+      "as_of": "2026-06-29T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-06-29",
+      "drawdown": {
+        "current_equity_usd": 4000.0,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4000.0
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 0.0,
+        "cash_usd": 4000.0,
+        "closed_trades": 0,
+        "current_equity_usd": 4000.0,
+        "exit_reason_counts": {},
+        "expectancy_usd": 0.0,
+        "max_drawdown_pct": 0.0,
+        "open_positions": 0,
+        "roi_pct": 0.0,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": -0.0,
+        "win_rate_pct": 0.0
+      },
+      "tick": 1
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-06-30T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-06-30",
+      "drawdown": {
+        "current_equity_usd": 4000.0,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4000.0
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 0.0,
+        "cash_usd": 4000.0,
+        "closed_trades": 0,
+        "current_equity_usd": 4000.0,
+        "exit_reason_counts": {},
+        "expectancy_usd": 0.0,
+        "max_drawdown_pct": 0.0,
+        "open_positions": 0,
+        "roi_pct": 0.0,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": -0.0,
+        "win_rate_pct": 0.0
+      },
+      "tick": 2
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-01T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-01",
+      "drawdown": {
+        "current_equity_usd": 4000.0,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4000.0
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 0.0,
+        "cash_usd": 4000.0,
+        "closed_trades": 0,
+        "current_equity_usd": 4000.0,
+        "exit_reason_counts": {},
+        "expectancy_usd": 0.0,
+        "max_drawdown_pct": 0.0,
+        "open_positions": 0,
+        "roi_pct": 0.0,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": -0.0,
+        "win_rate_pct": 0.0
+      },
+      "tick": 3
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-02T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-02",
+      "drawdown": {
+        "current_equity_usd": 4000.0,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4000.0
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 0.0,
+        "cash_usd": 4000.0,
+        "closed_trades": 0,
+        "current_equity_usd": 4000.0,
+        "exit_reason_counts": {},
+        "expectancy_usd": 0.0,
+        "max_drawdown_pct": 0.0,
+        "open_positions": 0,
+        "roi_pct": 0.0,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": -0.0,
+        "win_rate_pct": 0.0
+      },
+      "tick": 4
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-06T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-06",
+      "drawdown": {
+        "current_equity_usd": 4000.0,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4000.0
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 0.0,
+        "cash_usd": 4000.0,
+        "closed_trades": 0,
+        "current_equity_usd": 4000.0,
+        "exit_reason_counts": {},
+        "expectancy_usd": 0.0,
+        "max_drawdown_pct": 0.0,
+        "open_positions": 0,
+        "roi_pct": 0.0,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": -0.0,
+        "win_rate_pct": 0.0
+      },
+      "tick": 5
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-07T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-07",
+      "drawdown": {
+        "current_equity_usd": 4000.0,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4000.0
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 0.0,
+        "cash_usd": 4000.0,
+        "closed_trades": 0,
+        "current_equity_usd": 4000.0,
+        "exit_reason_counts": {},
+        "expectancy_usd": 0.0,
+        "max_drawdown_pct": 0.0,
+        "open_positions": 0,
+        "roi_pct": 0.0,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": -0.0,
+        "win_rate_pct": 0.0
+      },
+      "tick": 6
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-08T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-08",
+      "drawdown": {
+        "current_equity_usd": 4000.0,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4000.0
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 0.0,
+        "cash_usd": 4000.0,
+        "closed_trades": 0,
+        "current_equity_usd": 4000.0,
+        "exit_reason_counts": {},
+        "expectancy_usd": 0.0,
+        "max_drawdown_pct": 0.0,
+        "open_positions": 0,
+        "roi_pct": 0.0,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": -0.0,
+        "win_rate_pct": 0.0
+      },
+      "tick": 7
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-09T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-09",
+      "drawdown": {
+        "current_equity_usd": 4000.0,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4000.0
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 0.0,
+        "cash_usd": 4000.0,
+        "closed_trades": 0,
+        "current_equity_usd": 4000.0,
+        "exit_reason_counts": {},
+        "expectancy_usd": 0.0,
+        "max_drawdown_pct": 0.0,
+        "open_positions": 0,
+        "roi_pct": 0.0,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": -0.0,
+        "win_rate_pct": 0.0
+      },
+      "tick": 8
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-10T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-10",
+      "drawdown": {
+        "current_equity_usd": 4000.0,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4000.0
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 0.0,
+        "cash_usd": 4000.0,
+        "closed_trades": 0,
+        "current_equity_usd": 4000.0,
+        "exit_reason_counts": {},
+        "expectancy_usd": 0.0,
+        "max_drawdown_pct": 0.0,
+        "open_positions": 0,
+        "roi_pct": 0.0,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": -0.0,
+        "win_rate_pct": 0.0
+      },
+      "tick": 9
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-13T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-13",
+      "drawdown": {
+        "current_equity_usd": 4000.0,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4000.0
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 0.0,
+        "cash_usd": 4000.0,
+        "closed_trades": 0,
+        "current_equity_usd": 4000.0,
+        "exit_reason_counts": {},
+        "expectancy_usd": 0.0,
+        "max_drawdown_pct": 0.0,
+        "open_positions": 0,
+        "roi_pct": 0.0,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": -0.0,
+        "win_rate_pct": 0.0
+      },
+      "tick": 10
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-14T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-14",
+      "drawdown": {
+        "current_equity_usd": 4000.0,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4000.0
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [
+        {
+          "attempt": {
+            "bracket": {
+              "enabled": true,
+              "oco_duration": "GTC",
+              "profit_limit": 203.8990342857143,
+              "stop_limit": 184.23103945357144,
+              "stop_price": 185.1568235714286
+            },
+            "capital_check": {
+              "cap_remaining_usd": 2223.362458,
+              "cash_available": 4000.0,
+              "equity_deployed_usd": -0.0,
+              "estimated_cost_usd": 647.445178809,
+              "fixed_cap_usd": 4000.0,
+              "free_cash_usd": 3500.0,
+              "heat_ceiling_pct": 8.0,
+              "heat_headroom_pct": 7.303164605642859,
+              "max_pct_of_free_cash": 80.0,
+              "min_cash_floor_usd": 500.0,
+              "open_equity_risk_usd": -0.0,
+              "options_buffer_usd": 0.0,
+              "options_reserve_source": "simulation",
+              "options_reserved_usd": 0.0,
+              "passed": true,
+              "pct_budget_usd": 2800.0,
+              "pending_buy_usd": -0.0,
+              "portfolio_heat_pct": 0.6968353943571413,
+              "positions_open": 0,
+              "reject_reason": null,
+              "sibling_deployed_usd": 1776.637542,
+              "stop_risk_usd": 27.873415774285647,
+              "tradable_budget_usd": 3200.0
+            },
+            "fill": {
+              "fill_price": 193.486695,
+              "quantity": 3.3462,
+              "simulated": true
+            },
+            "limit_price": 193.486695,
+            "order": {
+              "complexOrderStrategyType": "NONE",
+              "duration": "DAY",
+              "orderLegCollection": [
+                {
+                  "instruction": "BUY",
+                  "instrument": {
+                    "assetType": "EQUITY",
+                    "symbol": "RTX"
+                  },
+                  "quantity": 3.3462
+                }
+              ],
+              "orderStrategyType": "SINGLE",
+              "orderType": "LIMIT",
+              "price": "193.49",
+              "session": "NORMAL"
+            },
+            "order_id": "sim-RTX|2026-07-14",
+            "quantity": 3.3462,
+            "status": "simulated",
+            "symbol": "RTX"
+          },
+          "fill_at": "close",
+          "status": "simulated",
+          "symbol": "RTX"
+        }
+      ],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 1,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 0.0,
+        "cash_usd": 3352.554821191,
+        "closed_trades": 0,
+        "current_equity_usd": 4000.0,
+        "exit_reason_counts": {},
+        "expectancy_usd": 0.0,
+        "max_drawdown_pct": 0.0,
+        "open_positions": 1,
+        "roi_pct": 0.0,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": -0.0,
+        "win_rate_pct": 0.0
+      },
+      "tick": 11
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-15T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-15",
+      "drawdown": {
+        "current_equity_usd": 4000.0,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4000.0
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 0.0,
+        "cash_usd": 3352.554821191,
+        "closed_trades": 0,
+        "current_equity_usd": 4008.041939191,
+        "exit_reason_counts": {},
+        "expectancy_usd": 0.0,
+        "max_drawdown_pct": 0.0,
+        "open_positions": 1,
+        "roi_pct": 0.20104847977500118,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": -0.0,
+        "win_rate_pct": 0.0
+      },
+      "tick": 12
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-16T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-16",
+      "drawdown": {
+        "current_equity_usd": 4008.041939191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4008.041939191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 0.0,
+        "cash_usd": 3352.554821191,
+        "closed_trades": 0,
+        "current_equity_usd": 4002.922253191,
+        "exit_reason_counts": {},
+        "expectancy_usd": 0.0,
+        "max_drawdown_pct": 0.12773534004071274,
+        "open_positions": 1,
+        "roi_pct": 0.07305632977498977,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": -0.0,
+        "win_rate_pct": 0.0
+      },
+      "tick": 13
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-17T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-17",
+      "drawdown": {
+        "current_equity_usd": 4002.922253191,
+        "drawdown_pct": 0.12773534004071274,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4008.041939191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 0.0,
+        "cash_usd": 3352.554821191,
+        "closed_trades": 0,
+        "current_equity_usd": 4000.077983191,
+        "exit_reason_counts": {},
+        "expectancy_usd": 0.0,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 1,
+        "roi_pct": 0.0019495797749957688,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": -0.0,
+        "win_rate_pct": 0.0
+      },
+      "tick": 14
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-20T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-20",
+      "drawdown": {
+        "current_equity_usd": 4000.077983191,
+        "drawdown_pct": 0.19869941784110998,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4008.041939191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 0.0,
+        "cash_usd": 3352.554821191,
+        "closed_trades": 0,
+        "current_equity_usd": 4003.189949191,
+        "exit_reason_counts": {},
+        "expectancy_usd": 0.0,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 1,
+        "roi_pct": 0.0797487297749866,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": -0.0,
+        "win_rate_pct": 0.0
+      },
+      "tick": 15
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-21T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-21",
+      "drawdown": {
+        "current_equity_usd": 4003.189949191,
+        "drawdown_pct": 0.121056368012443,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4008.041939191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 0.0,
+        "cash_usd": 3352.554821191,
+        "closed_trades": 0,
+        "current_equity_usd": 4000.613375191,
+        "exit_reason_counts": {},
+        "expectancy_usd": 0.0,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 1,
+        "roi_pct": 0.01533437977501162,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": -0.0,
+        "win_rate_pct": 0.0
+      },
+      "tick": 16
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-22T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-22",
+      "drawdown": {
+        "current_equity_usd": 4000.613375191,
+        "drawdown_pct": 0.18534147378455915,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4008.041939191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 0.0,
+        "cash_usd": 3352.554821191,
+        "closed_trades": 0,
+        "current_equity_usd": 4004.6622771909997,
+        "exit_reason_counts": {},
+        "expectancy_usd": 0.0,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 1,
+        "roi_pct": 0.11655692977499132,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": -0.0,
+        "win_rate_pct": 0.0
+      },
+      "tick": 17
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-23T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [
+        {
+          "bar_close": 209.16,
+          "bar_high": 213.49,
+          "bar_low": 202.51,
+          "exit_price": 209.16,
+          "exit_reason": "profit_target",
+          "pnl_pct": 8.100456209663399,
+          "pnl_usd": 52.44601319100002,
+          "symbol": "RTX",
+          "trade_id": "RTX|2026-07-14"
+        }
+      ],
+      "day": "2026-07-23",
+      "drawdown": {
+        "current_equity_usd": 4004.6622771909997,
+        "drawdown_pct": 0.08432202185694808,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4008.041939191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 4052.446013191,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 18
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-24T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-24",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 4052.446013191,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 19
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-27T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-27",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 4052.446013191,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 20
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-28T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-28",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 4052.446013191,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 21
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-29T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-29",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 4052.446013191,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 22
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-30T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-30",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 4052.446013191,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 23
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-07-31T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-07-31",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 4052.446013191,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 24
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-03T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-08-03",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 4052.446013191,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 25
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-04T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-08-04",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 4052.446013191,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 26
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-05T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-08-05",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 4052.446013191,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 27
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-06T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-08-06",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 4052.446013191,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 28
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-07T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-08-07",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 4052.446013191,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 29
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-10T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-08-10",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 4052.446013191,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 30
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-11T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-08-11",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 4052.446013191,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 31
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-12T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-08-12",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 4052.446013191,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 32
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-13T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-08-13",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 4052.446013191,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 33
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-14T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-08-14",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 4052.446013191,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 34
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-17T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-08-17",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 4052.446013191,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 35
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-18T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-08-18",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 4052.446013191,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 36
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-19T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-08-19",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 4052.446013191,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 37
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-20T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-08-20",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [
+        {
+          "attempt": {
+            "bracket": {
+              "enabled": true,
+              "oco_duration": "GTC",
+              "profit_limit": 511.1592178571428,
+              "stop_limit": 455.28778241071427,
+              "stop_price": 457.5756607142857
+            },
+            "capital_check": {
+              "cap_remaining_usd": 2223.3624579999996,
+              "cash_available": 4052.446013191,
+              "equity_deployed_usd": -0.0,
+              "estimated_cost_usd": 490.29630063749994,
+              "fixed_cap_usd": 4000.0,
+              "free_cash_usd": 3552.446013191,
+              "heat_ceiling_pct": 8.0,
+              "heat_headroom_pct": 7.393612745,
+              "max_pct_of_free_cash": 80.0,
+              "min_cash_floor_usd": 500.0,
+              "open_equity_risk_usd": -0.0,
+              "options_buffer_usd": 0.0,
+              "options_reserve_source": "simulation",
+              "options_reserved_usd": 0.0,
+              "passed": true,
+              "pct_budget_usd": 2841.9568105528,
+              "pending_buy_usd": -0.0,
+              "portfolio_heat_pct": 0.6063872549999998,
+              "positions_open": 0,
+              "reject_reason": null,
+              "sibling_deployed_usd": 1776.6375420000002,
+              "stop_risk_usd": 24.255490199999993,
+              "tradable_budget_usd": 3241.9568105528
+            },
+            "fill": {
+              "fill_price": 481.39057499999996,
+              "quantity": 1.0185,
+              "simulated": true
+            },
+            "limit_price": 481.39057499999996,
+            "order": {
+              "complexOrderStrategyType": "NONE",
+              "duration": "DAY",
+              "orderLegCollection": [
+                {
+                  "instruction": "BUY",
+                  "instrument": {
+                    "assetType": "EQUITY",
+                    "symbol": "MSFT"
+                  },
+                  "quantity": 1.0185
+                }
+              ],
+              "orderStrategyType": "SINGLE",
+              "orderType": "LIMIT",
+              "price": "481.39",
+              "session": "NORMAL"
+            },
+            "order_id": "sim-MSFT|2026-08-20",
+            "quantity": 1.0185,
+            "status": "simulated",
+            "symbol": "MSFT"
+          },
+          "fill_at": "close",
+          "status": "simulated",
+          "symbol": "MSFT"
+        }
+      ],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 1,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 3562.1497125535,
+        "closed_trades": 1,
+        "current_equity_usd": 4052.446013191,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 1,
+        "roi_pct": 1.3111503297750016,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 38
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-21T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-08-21",
+      "drawdown": {
+        "current_equity_usd": 4052.446013191,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4052.446013191
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 3562.1497125535,
+        "closed_trades": 1,
+        "current_equity_usd": 4054.3296525535,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 1,
+        "roi_pct": 1.358241313837505,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 39
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-24T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-08-24",
+      "drawdown": {
+        "current_equity_usd": 4054.3296525535,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4054.3296525535
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 3562.1497125535,
+        "closed_trades": 1,
+        "current_equity_usd": 4058.4749475535,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 1,
+        "roi_pct": 1.4618736888375006,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 40
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-25T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-08-25",
+      "drawdown": {
+        "current_equity_usd": 4058.4749475535,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4058.4749475535
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 3562.1497125535,
+        "closed_trades": 1,
+        "current_equity_usd": 4062.9563475535,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 1,
+        "roi_pct": 1.573908688837511,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 41
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-26T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-08-26",
+      "drawdown": {
+        "current_equity_usd": 4062.9563475535,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4062.9563475535
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 3562.1497125535,
+        "closed_trades": 1,
+        "current_equity_usd": 4067.7025575535004,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 1,
+        "roi_pct": 1.6925639388374991,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 42
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-27T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-08-27",
+      "drawdown": {
+        "current_equity_usd": 4067.7025575535004,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4067.7025575535004
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 52.44601319100002,
+        "cash_usd": 3562.1497125535,
+        "closed_trades": 1,
+        "current_equity_usd": 4076.5533225535,
+        "exit_reason_counts": {
+          "profit_target": 1
+        },
+        "expectancy_usd": 52.44601319100002,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 1,
+        "roi_pct": 1.9138330638375,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 52.44601319100002,
+        "win_rate_pct": 100.0
+      },
+      "tick": 43
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-28T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [
+        {
+          "bar_close": 513.53,
+          "bar_high": 517.78,
+          "bar_low": 504.8675,
+          "exit_price": 513.53,
+          "exit_reason": "profit_target",
+          "pnl_pct": 6.676371883683019,
+          "pnl_usd": 32.73400436250006,
+          "symbol": "MSFT",
+          "trade_id": "MSFT|2026-08-20"
+        }
+      ],
+      "day": "2026-08-28",
+      "drawdown": {
+        "current_equity_usd": 4076.5533225535,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4076.5533225535
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 42.59000877675004,
+        "cash_usd": 4085.1800175535,
+        "closed_trades": 2,
+        "current_equity_usd": 4085.1800175535,
+        "exit_reason_counts": {
+          "profit_target": 2
+        },
+        "expectancy_usd": 42.59000877675004,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 2.129500438837506,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 85.18001755350008,
+        "win_rate_pct": 100.0
+      },
+      "tick": 44
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-08-31T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-08-31",
+      "drawdown": {
+        "current_equity_usd": 4085.1800175535,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4085.1800175535
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 42.59000877675004,
+        "cash_usd": 4085.1800175535,
+        "closed_trades": 2,
+        "current_equity_usd": 4085.1800175535,
+        "exit_reason_counts": {
+          "profit_target": 2
+        },
+        "expectancy_usd": 42.59000877675004,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 2.129500438837506,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 85.18001755350008,
+        "win_rate_pct": 100.0
+      },
+      "tick": 45
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-09-01T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-09-01",
+      "drawdown": {
+        "current_equity_usd": 4085.1800175535,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4085.1800175535
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 0,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 42.59000877675004,
+        "cash_usd": 4085.1800175535,
+        "closed_trades": 2,
+        "current_equity_usd": 4085.1800175535,
+        "exit_reason_counts": {
+          "profit_target": 2
+        },
+        "expectancy_usd": 42.59000877675004,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 0,
+        "roi_pct": 2.129500438837506,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 85.18001755350008,
+        "win_rate_pct": 100.0
+      },
+      "tick": 46
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-09-02T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-09-02",
+      "drawdown": {
+        "current_equity_usd": 4085.1800175535,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4085.1800175535
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [
+        {
+          "attempt": {
+            "bracket": {
+              "enabled": true,
+              "oco_duration": "GTC",
+              "profit_limit": 520.9830528571429,
+              "stop_limit": 475.54701223571425,
+              "stop_price": 477.9366957142857
+            },
+            "capital_check": {
+              "cap_remaining_usd": 2223.362458,
+              "cash_available": 4085.1800175535,
+              "equity_deployed_usd": -0.0,
+              "estimated_cost_usd": 719.9538850439999,
+              "fixed_cap_usd": 4000.0,
+              "free_cash_usd": 3585.1800175535,
+              "heat_ceiling_pct": 8.0,
+              "heat_headroom_pct": 7.307240625714286,
+              "max_pct_of_free_cash": 80.0,
+              "min_cash_floor_usd": 500.0,
+              "open_equity_risk_usd": -0.0,
+              "options_buffer_usd": 0.0,
+              "options_reserve_source": "simulation",
+              "options_reserved_usd": 0.0,
+              "passed": true,
+              "pct_budget_usd": 2868.1440140428003,
+              "pending_buy_usd": -0.0,
+              "portfolio_heat_pct": 0.6927593742857141,
+              "positions_open": 0,
+              "reject_reason": null,
+              "sibling_deployed_usd": 1776.637542,
+              "stop_risk_usd": 27.710374971428564,
+              "tradable_budget_usd": 3268.1440140428003
+            },
+            "fill": {
+              "fill_price": 497.06841,
+              "quantity": 1.4484,
+              "simulated": true
+            },
+            "limit_price": 497.06841,
+            "order": {
+              "complexOrderStrategyType": "NONE",
+              "duration": "DAY",
+              "orderLegCollection": [
+                {
+                  "instruction": "BUY",
+                  "instrument": {
+                    "assetType": "EQUITY",
+                    "symbol": "MSFT"
+                  },
+                  "quantity": 1.4484
+                }
+              ],
+              "orderStrategyType": "SINGLE",
+              "orderType": "LIMIT",
+              "price": "497.07",
+              "session": "NORMAL"
+            },
+            "order_id": "sim-MSFT|2026-09-02",
+            "quantity": 1.4484,
+            "status": "simulated",
+            "symbol": "MSFT"
+          },
+          "fill_at": "close",
+          "status": "simulated",
+          "symbol": "MSFT"
+        }
+      ],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 1,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 42.59000877675004,
+        "cash_usd": 3365.2261325095,
+        "closed_trades": 2,
+        "current_equity_usd": 4085.1800175535,
+        "exit_reason_counts": {
+          "profit_target": 2
+        },
+        "expectancy_usd": 42.59000877675004,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 1,
+        "roi_pct": 2.129500438837506,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 85.18001755350008,
+        "win_rate_pct": 100.0
+      },
+      "tick": 47
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-09-03T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-09-03",
+      "drawdown": {
+        "current_equity_usd": 4085.1800175535,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4085.1800175535
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 42.59000877675004,
+        "cash_usd": 3365.2261325095,
+        "closed_trades": 2,
+        "current_equity_usd": 4104.0839405095,
+        "exit_reason_counts": {
+          "profit_target": 2
+        },
+        "expectancy_usd": 42.59000877675004,
+        "max_drawdown_pct": 0.19869941784110998,
+        "open_positions": 1,
+        "roi_pct": 2.6020985127375162,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 85.18001755350008,
+        "win_rate_pct": 100.0
+      },
+      "tick": 48
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-09-04T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-09-04",
+      "drawdown": {
+        "current_equity_usd": 4104.0839405095,
+        "drawdown_pct": 0.0,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4104.0839405095
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 42.59000877675004,
+        "cash_usd": 3365.2261325095,
+        "closed_trades": 2,
+        "current_equity_usd": 4088.9916125095,
+        "exit_reason_counts": {
+          "profit_target": 2
+        },
+        "expectancy_usd": 42.59000877675004,
+        "max_drawdown_pct": 0.3677392621293839,
+        "open_positions": 1,
+        "roi_pct": 2.2247903127375013,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 85.18001755350008,
+        "win_rate_pct": 100.0
+      },
+      "tick": 49
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-09-08T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-09-08",
+      "drawdown": {
+        "current_equity_usd": 4088.9916125095,
+        "drawdown_pct": 0.3677392621293839,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4104.0839405095
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 42.59000877675004,
+        "cash_usd": 3365.2261325095,
+        "closed_trades": 2,
+        "current_equity_usd": 4080.6633125095,
+        "exit_reason_counts": {
+          "profit_target": 2
+        },
+        "expectancy_usd": 42.59000877675004,
+        "max_drawdown_pct": 0.5706663981412807,
+        "open_positions": 1,
+        "roi_pct": 2.0165828127374885,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 85.18001755350008,
+        "win_rate_pct": 100.0
+      },
+      "tick": 50
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-09-09T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-09-09",
+      "drawdown": {
+        "current_equity_usd": 4080.6633125095,
+        "drawdown_pct": 0.5706663981412807,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4104.0839405095
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 42.59000877675004,
+        "cash_usd": 3365.2261325095,
+        "closed_trades": 2,
+        "current_equity_usd": 4077.3319925095,
+        "exit_reason_counts": {
+          "profit_target": 2
+        },
+        "expectancy_usd": 42.59000877675004,
+        "max_drawdown_pct": 0.6518372525460328,
+        "open_positions": 1,
+        "roi_pct": 1.93329981273751,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 85.18001755350008,
+        "win_rate_pct": 100.0
+      },
+      "tick": 51
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-09-10T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-09-10",
+      "drawdown": {
+        "current_equity_usd": 4077.3319925095,
+        "drawdown_pct": 0.6518372525460328,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4104.0839405095
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 42.59000877675004,
+        "cash_usd": 3365.2261325095,
+        "closed_trades": 2,
+        "current_equity_usd": 4078.4762285095003,
+        "exit_reason_counts": {
+          "profit_target": 2
+        },
+        "expectancy_usd": 42.59000877675004,
+        "max_drawdown_pct": 0.6518372525460328,
+        "open_positions": 1,
+        "roi_pct": 1.9619057127375106,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 85.18001755350008,
+        "win_rate_pct": 100.0
+      },
+      "tick": 52
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-09-11T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-09-11",
+      "drawdown": {
+        "current_equity_usd": 4078.4762285095003,
+        "drawdown_pct": 0.6239568286417877,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4104.0839405095
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 42.59000877675004,
+        "cash_usd": 3365.2261325095,
+        "closed_trades": 2,
+        "current_equity_usd": 4083.0966245095,
+        "exit_reason_counts": {
+          "profit_target": 2
+        },
+        "expectancy_usd": 42.59000877675004,
+        "max_drawdown_pct": 0.6518372525460328,
+        "open_positions": 1,
+        "roi_pct": 2.07741561273751,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 85.18001755350008,
+        "win_rate_pct": 100.0
+      },
+      "tick": 53
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-09-14T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-09-14",
+      "drawdown": {
+        "current_equity_usd": 4083.0966245095,
+        "drawdown_pct": 0.5113763827499768,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4104.0839405095
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 42.59000877675004,
+        "cash_usd": 3365.2261325095,
+        "closed_trades": 2,
+        "current_equity_usd": 4097.2619765095005,
+        "exit_reason_counts": {
+          "profit_target": 2
+        },
+        "expectancy_usd": 42.59000877675004,
+        "max_drawdown_pct": 0.6518372525460328,
+        "open_positions": 1,
+        "roi_pct": 2.4315494127375104,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 85.18001755350008,
+        "win_rate_pct": 100.0
+      },
+      "tick": 54
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-09-15T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-09-15",
+      "drawdown": {
+        "current_equity_usd": 4097.2619765095005,
+        "drawdown_pct": 0.16622379315060604,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4104.0839405095
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 42.59000877675004,
+        "cash_usd": 3365.2261325095,
+        "closed_trades": 2,
+        "current_equity_usd": 4085.2547405095,
+        "exit_reason_counts": {
+          "profit_target": 2
+        },
+        "expectancy_usd": 42.59000877675004,
+        "max_drawdown_pct": 0.6518372525460328,
+        "open_positions": 1,
+        "roi_pct": 2.131368512737497,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 85.18001755350008,
+        "win_rate_pct": 100.0
+      },
+      "tick": 55
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-09-16T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-09-16",
+      "drawdown": {
+        "current_equity_usd": 4085.2547405095,
+        "drawdown_pct": 0.45879178576602364,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4104.0839405095
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 42.59000877675004,
+        "cash_usd": 3365.2261325095,
+        "closed_trades": 2,
+        "current_equity_usd": 4075.3766525095,
+        "exit_reason_counts": {
+          "profit_target": 2
+        },
+        "expectancy_usd": 42.59000877675004,
+        "max_drawdown_pct": 0.699481014914042,
+        "open_positions": 1,
+        "roi_pct": 1.8844163127375024,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 85.18001755350008,
+        "win_rate_pct": 100.0
+      },
+      "tick": 56
+    },
+    {
+      "active_profile": null,
+      "as_of": "2026-09-17T19:59:00+00:00",
+      "capital_passed": true,
+      "closure_exits": [],
+      "day": "2026-09-17",
+      "drawdown": {
+        "current_equity_usd": 4075.3766525095,
+        "drawdown_pct": 0.699481014914042,
+        "halt_threshold_pct": 10.0,
+        "halted": false,
+        "peak_equity_usd": 4104.0839405095
+      },
+      "effective_playbook": {
+        "entry": {
+          "max_new_entries_per_day": 3,
+          "position_size": {
+            "atr_baseline_pct": 2.0,
+            "atr_vol_scalar_max": 1.5,
+            "atr_vol_scalar_min": 0.5,
+            "max_position_pct": 18.0,
+            "method": "atr_normalized",
+            "risk_per_trade_pct": 0.75
+          },
+          "rsi_14_range": [
+            48.0,
+            65.0
+          ]
+        },
+        "exit": {
+          "profit_target_atr_cap": {
+            "atr_multiple": 2.5,
+            "enabled": true
+          },
+          "profit_target_horizon_cap": {
+            "enabled": true,
+            "sqrt_days_multiple": 1.0
+          },
+          "profit_target_pct": 8.5,
+          "stop_loss_atr_cap": {
+            "atr_multiple": 2.0,
+            "enabled": true
+          },
+          "stop_loss_pct": 5.5,
+          "time_stop_days": 30,
+          "time_stop_minutes": 0,
+          "trailing": {
+            "activate_after_profit_pct": 4.0,
+            "trail_atr_multiple": 2.0
+          }
+        },
+        "holding_period": {
+          "max_days": 30,
+          "min_days": 2,
+          "target_days": 10
+        },
+        "intraday": {
+          "min_relative_volume": 1.2,
+          "momentum_rsi_min": 52.0,
+          "require_above_sma": [
+            9,
+            20
+          ]
+        }
+      },
+      "entry_attempts": [],
+      "fill_at": "close",
+      "learn": null,
+      "open_positions": 1,
+      "profile_changed": false,
+      "regime": {
+        "above_sma_200": false,
+        "above_sma_50": false,
+        "benchmark_last": 0.0,
+        "benchmark_symbol": "SPY",
+        "class": "neutral",
+        "realized_vol_annualized_pct": 0.0,
+        "realized_vol_percentile": 50.0,
+        "recommended_profile": "baseline",
+        "signals": {},
+        "vix": null,
+        "vix_symbol": "$VIX"
+      },
+      "scan_candidates": 0,
+      "sim_stats": {
+        "avg_loss_usd": 0.0,
+        "avg_win_usd": 42.59000877675004,
+        "cash_usd": 3365.2261325095,
+        "closed_trades": 2,
+        "current_equity_usd": 4086.0368765095,
+        "exit_reason_counts": {
+          "profit_target": 2
+        },
+        "expectancy_usd": 42.59000877675004,
+        "max_drawdown_pct": 0.699481014914042,
+        "open_positions": 1,
+        "roi_pct": 2.1509219127374912,
+        "starting_cash_usd": 4000.0,
+        "total_pnl_usd": 85.18001755350008,
+        "win_rate_pct": 100.0
+      },
+      "tick": 57
+    }
+  ],
+  "fill_at": "close",
+  "final_stats": {
+    "avg_loss_usd": 0.0,
+    "avg_win_usd": 42.59000877675004,
+    "cash_usd": 3365.2261325095,
+    "closed_trades": 2,
+    "current_equity_usd": 4086.0368765095,
+    "exit_reason_counts": {
+      "profit_target": 2
+    },
+    "expectancy_usd": 42.59000877675004,
+    "max_drawdown_pct": 0.699481014914042,
+    "open_positions": 1,
+    "roi_pct": 2.1509219127374912,
+    "starting_cash_usd": 4000.0,
+    "total_pnl_usd": 85.18001755350008,
+    "win_rate_pct": 100.0
+  },
+  "final_summary": {
+    "equity_deployed_usd": 720.810744,
+    "open_positions": 1,
+    "pending_buys": 0,
+    "reconcile_mismatch_count": 0,
+    "tick_count": 57,
+    "trader_id": "swing-beneficiary-9947",
+    "trades_today": 0,
+    "trading_halted_reason": null,
+    "unbracketed_positions": 0
+  },
+  "fractional_shares": true,
+  "from": "2026-06-29",
+  "learn_enabled": false,
+  "learn_runs": 0,
+  "mode": "backtest",
+  "state_path": "rules/trader-backtest-state-trader-swing-p2-pullback-9947.json",
+  "symbols_cached": 58,
+  "to": "2026-09-17",
+  "trading_days": 57
+}

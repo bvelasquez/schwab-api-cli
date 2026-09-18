@@ -1,0 +1,975 @@
+{
+  "trader_id": "swing-beneficiary-9947",
+  "last_tick": "2026-09-17T19:59:00Z",
+  "trades_today": 0,
+  "trades_day": "2026-09-17",
+  "open_positions": {
+    "MSFT|2026-09-14": {
+      "position_id": "MSFT|2026-09-14",
+      "symbol": "MSFT",
+      "account_hash": "1BA372D01BE13B486750C8433AFDCFB96C2A694770C4688417F0BEA6B676B25B",
+      "quantity": 1.4485,
+      "entry_price": 497.06,
+      "opened_at": "2026-09-14T13:30:00Z",
+      "stop_price": 476.9453571428572,
+      "profit_limit": 522.9578,
+      "stop_risk_usd": 29.13606017857138,
+      "market_value_usd": 720.86051,
+      "oco_order_id": null,
+      "exit_plan_version": 1,
+      "peak_profit_pct": 1.7784573290950734
+    }
+  },
+  "pending_buys": [],
+  "dynamic_watchlist": [],
+  "fmp_dynamic_symbols": [],
+  "screened_dynamic_symbols": [],
+  "last_fmp_discover_at": null,
+  "last_fmp_discover": null,
+  "last_fmp_premarket_day": null,
+  "last_fmp_open_day": null,
+  "last_screened_refresh_at": null,
+  "last_screened_refresh": null,
+  "last_screened_premarket_day": null,
+  "last_screened_open_day": null,
+  "tick_count": 57,
+  "last_llm_review_tick": null,
+  "last_llm_summary": null,
+  "last_web_picks": null,
+  "last_actions": [],
+  "last_tick_result": null,
+  "last_regular_scan": null,
+  "sim": {
+    "starting_cash_usd": 4000.0,
+    "cash_usd": 3341.803251169643,
+    "closed_trades": [
+      {
+        "trade_id": "RTX|2026-06-30",
+        "symbol": "RTX",
+        "quantity": 2.2915,
+        "entry_price": 189.0,
+        "exit_price": 201.43551785714288,
+        "opened_at": "2026-06-30T13:30:00Z",
+        "closed_at": "2026-07-06T19:59:00Z",
+        "pnl_usd": 28.49598916964294,
+        "pnl_pct": 6.579639077853372,
+        "exit_reason": "profit_target",
+        "hold_days": 6,
+        "hold_minutes": 9029,
+        "stop_price_at_exit": 191.65944285714286,
+        "profit_limit_at_exit": 201.43551785714288,
+        "active_profile": null,
+        "regime_class": "low_vol_trend"
+      },
+      {
+        "trade_id": "RTX|2026-07-15",
+        "symbol": "RTX",
+        "quantity": 3.3726,
+        "entry_price": 195.015,
+        "exit_price": 209.16,
+        "opened_at": "2026-07-15T13:30:00Z",
+        "closed_at": "2026-07-23T19:59:00Z",
+        "pnl_usd": 47.7054270000001,
+        "pnl_pct": 7.25328820859934,
+        "exit_reason": "profit_target",
+        "hold_days": 8,
+        "hold_minutes": 11909,
+        "stop_price_at_exit": 198.3779857142857,
+        "profit_limit_at_exit": 205.42733928571425,
+        "active_profile": null,
+        "regime_class": "elevated_vol"
+      },
+      {
+        "trade_id": "GOOGL|2026-08-04",
+        "symbol": "GOOGL",
+        "quantity": 0.798,
+        "entry_price": 368.22,
+        "exit_price": 343.8,
+        "opened_at": "2026-08-04T13:30:00Z",
+        "closed_at": "2026-08-11T19:59:00Z",
+        "pnl_usd": -19.487160000000017,
+        "pnl_pct": -6.631904839498127,
+        "exit_reason": "stop_loss",
+        "hold_days": 7,
+        "hold_minutes": 10469,
+        "stop_price_at_exit": 347.9679,
+        "profit_limit_at_exit": 399.5187,
+        "active_profile": null,
+        "regime_class": "low_vol_trend"
+      },
+      {
+        "trade_id": "MSFT|2026-08-21",
+        "symbol": "MSFT",
+        "quantity": 1.0153,
+        "entry_price": 479.88,
+        "exit_price": 513.53,
+        "opened_at": "2026-08-21T13:30:00Z",
+        "closed_at": "2026-08-28T19:59:00Z",
+        "pnl_usd": 34.164845000000014,
+        "pnl_pct": 7.0121697090939294,
+        "exit_reason": "profit_target",
+        "hold_days": 7,
+        "hold_minutes": 10469,
+        "stop_price_at_exit": 496.4335,
+        "profit_limit_at_exit": 509.6486428571428,
+        "active_profile": "low_vol_trend",
+        "regime_class": "low_vol_trend"
+      },
+      {
+        "trade_id": "SMH|2026-09-09",
+        "symbol": "SMH",
+        "quantity": 1.0241,
+        "entry_price": 569.9,
+        "exit_price": 541.5,
+        "opened_at": "2026-09-09T13:30:00Z",
+        "closed_at": "2026-09-14T19:59:00Z",
+        "pnl_usd": -29.084439999999972,
+        "pnl_pct": -4.983330408843656,
+        "exit_reason": "stop_loss",
+        "hold_days": 5,
+        "hold_minutes": 7589,
+        "stop_price_at_exit": 541.5928571428572,
+        "profit_limit_at_exit": 612.3607142857143,
+        "active_profile": "low_vol_trend",
+        "regime_class": "elevated_vol"
+      }
+    ],
+    "equity_snapshots": [
+      {
+        "at": "2026-06-29T19:59:00Z",
+        "equity_usd": 4000.0,
+        "cash_usd": 4000.0,
+        "positions_value_usd": -0.0,
+        "tick": 1
+      },
+      {
+        "at": "2026-09-17T21:40:13.659093Z",
+        "equity_usd": 4000.0,
+        "cash_usd": 3566.9065,
+        "positions_value_usd": 433.0935,
+        "tick": 1
+      },
+      {
+        "at": "2026-06-30T19:59:00Z",
+        "equity_usd": 4000.0,
+        "cash_usd": 3566.9065,
+        "positions_value_usd": 433.0935,
+        "tick": 2
+      },
+      {
+        "at": "2026-09-17T21:40:13.664041Z",
+        "equity_usd": 4000.0,
+        "cash_usd": 3566.9065,
+        "positions_value_usd": 433.0935,
+        "tick": 2
+      },
+      {
+        "at": "2026-07-01T19:59:00Z",
+        "equity_usd": 4006.37037,
+        "cash_usd": 3566.9065,
+        "positions_value_usd": 439.46387000000004,
+        "tick": 3
+      },
+      {
+        "at": "2026-09-17T21:40:13.668366Z",
+        "equity_usd": 4006.37037,
+        "cash_usd": 3566.9065,
+        "positions_value_usd": 439.46387000000004,
+        "tick": 3
+      },
+      {
+        "at": "2026-07-02T19:59:00Z",
+        "equity_usd": 4023.4878750000003,
+        "cash_usd": 3566.9065,
+        "positions_value_usd": 456.58137500000004,
+        "tick": 4
+      },
+      {
+        "at": "2026-09-17T21:40:13.672718Z",
+        "equity_usd": 4023.4878750000003,
+        "cash_usd": 3566.9065,
+        "positions_value_usd": 456.58137500000004,
+        "tick": 4
+      },
+      {
+        "at": "2026-07-06T19:59:00Z",
+        "equity_usd": 4028.495989169643,
+        "cash_usd": 4028.495989169643,
+        "positions_value_usd": -0.0,
+        "tick": 5
+      },
+      {
+        "at": "2026-09-17T21:40:13.677735Z",
+        "equity_usd": 4028.495989169643,
+        "cash_usd": 4028.495989169643,
+        "positions_value_usd": -0.0,
+        "tick": 5
+      },
+      {
+        "at": "2026-07-07T19:59:00Z",
+        "equity_usd": 4028.495989169643,
+        "cash_usd": 4028.495989169643,
+        "positions_value_usd": -0.0,
+        "tick": 6
+      },
+      {
+        "at": "2026-09-17T21:40:13.682120Z",
+        "equity_usd": 4028.495989169643,
+        "cash_usd": 4028.495989169643,
+        "positions_value_usd": -0.0,
+        "tick": 6
+      },
+      {
+        "at": "2026-07-08T19:59:00Z",
+        "equity_usd": 4028.495989169643,
+        "cash_usd": 4028.495989169643,
+        "positions_value_usd": -0.0,
+        "tick": 7
+      },
+      {
+        "at": "2026-09-17T21:40:13.686452Z",
+        "equity_usd": 4028.495989169643,
+        "cash_usd": 4028.495989169643,
+        "positions_value_usd": -0.0,
+        "tick": 7
+      },
+      {
+        "at": "2026-07-09T19:59:00Z",
+        "equity_usd": 4028.495989169643,
+        "cash_usd": 4028.495989169643,
+        "positions_value_usd": -0.0,
+        "tick": 8
+      },
+      {
+        "at": "2026-09-17T21:40:13.690548Z",
+        "equity_usd": 4028.495989169643,
+        "cash_usd": 4028.495989169643,
+        "positions_value_usd": -0.0,
+        "tick": 8
+      },
+      {
+        "at": "2026-07-10T19:59:00Z",
+        "equity_usd": 4028.495989169643,
+        "cash_usd": 4028.495989169643,
+        "positions_value_usd": -0.0,
+        "tick": 9
+      },
+      {
+        "at": "2026-09-17T21:40:13.694399Z",
+        "equity_usd": 4028.495989169643,
+        "cash_usd": 4028.495989169643,
+        "positions_value_usd": -0.0,
+        "tick": 9
+      },
+      {
+        "at": "2026-07-13T19:59:00Z",
+        "equity_usd": 4028.495989169643,
+        "cash_usd": 4028.495989169643,
+        "positions_value_usd": -0.0,
+        "tick": 10
+      },
+      {
+        "at": "2026-09-17T21:40:13.698753Z",
+        "equity_usd": 4028.495989169643,
+        "cash_usd": 4028.495989169643,
+        "positions_value_usd": -0.0,
+        "tick": 10
+      },
+      {
+        "at": "2026-07-14T19:59:00Z",
+        "equity_usd": 4028.495989169643,
+        "cash_usd": 4028.495989169643,
+        "positions_value_usd": -0.0,
+        "tick": 11
+      },
+      {
+        "at": "2026-09-17T21:40:13.708617Z",
+        "equity_usd": 4028.4959891696426,
+        "cash_usd": 3370.788400169643,
+        "positions_value_usd": 657.7075889999999,
+        "tick": 11
+      },
+      {
+        "at": "2026-07-15T19:59:00Z",
+        "equity_usd": 4028.4959891696426,
+        "cash_usd": 3370.788400169643,
+        "positions_value_usd": 657.7075889999999,
+        "tick": 12
+      },
+      {
+        "at": "2026-09-17T21:40:13.713681Z",
+        "equity_usd": 4028.4959891696426,
+        "cash_usd": 3370.788400169643,
+        "positions_value_usd": 657.7075889999999,
+        "tick": 12
+      },
+      {
+        "at": "2026-07-16T19:59:00Z",
+        "equity_usd": 4026.286936169643,
+        "cash_usd": 3370.788400169643,
+        "positions_value_usd": 655.4985360000001,
+        "tick": 13
+      },
+      {
+        "at": "2026-09-17T21:40:13.718334Z",
+        "equity_usd": 4026.286936169643,
+        "cash_usd": 3370.788400169643,
+        "positions_value_usd": 655.4985360000001,
+        "tick": 13
+      },
+      {
+        "at": "2026-07-17T19:59:00Z",
+        "equity_usd": 4023.420226169643,
+        "cash_usd": 3370.788400169643,
+        "positions_value_usd": 652.6318259999999,
+        "tick": 14
+      },
+      {
+        "at": "2026-09-17T21:40:13.726562Z",
+        "equity_usd": 4023.420226169643,
+        "cash_usd": 3370.788400169643,
+        "positions_value_usd": 652.6318259999999,
+        "tick": 14
+      },
+      {
+        "at": "2026-07-20T19:59:00Z",
+        "equity_usd": 4026.556744169643,
+        "cash_usd": 3370.788400169643,
+        "positions_value_usd": 655.768344,
+        "tick": 15
+      },
+      {
+        "at": "2026-09-17T21:40:13.730404Z",
+        "equity_usd": 4026.556744169643,
+        "cash_usd": 3370.788400169643,
+        "positions_value_usd": 655.768344,
+        "tick": 15
+      },
+      {
+        "at": "2026-07-21T19:59:00Z",
+        "equity_usd": 4023.959842169643,
+        "cash_usd": 3370.788400169643,
+        "positions_value_usd": 653.171442,
+        "tick": 16
+      },
+      {
+        "at": "2026-09-17T21:40:13.734233Z",
+        "equity_usd": 4023.959842169643,
+        "cash_usd": 3370.788400169643,
+        "positions_value_usd": 653.171442,
+        "tick": 16
+      },
+      {
+        "at": "2026-07-22T19:59:00Z",
+        "equity_usd": 4028.0406881696426,
+        "cash_usd": 3370.788400169643,
+        "positions_value_usd": 657.2522879999999,
+        "tick": 17
+      },
+      {
+        "at": "2026-09-17T21:40:13.737975Z",
+        "equity_usd": 4028.0406881696426,
+        "cash_usd": 3370.788400169643,
+        "positions_value_usd": 657.2522879999999,
+        "tick": 17
+      },
+      {
+        "at": "2026-07-23T19:59:00Z",
+        "equity_usd": 4076.201416169643,
+        "cash_usd": 4076.201416169643,
+        "positions_value_usd": -0.0,
+        "tick": 18
+      },
+      {
+        "at": "2026-09-17T21:40:13.743511Z",
+        "equity_usd": 4076.201416169643,
+        "cash_usd": 4076.201416169643,
+        "positions_value_usd": -0.0,
+        "tick": 18
+      },
+      {
+        "at": "2026-07-24T19:59:00Z",
+        "equity_usd": 4076.201416169643,
+        "cash_usd": 4076.201416169643,
+        "positions_value_usd": -0.0,
+        "tick": 19
+      },
+      {
+        "at": "2026-09-17T21:40:13.747472Z",
+        "equity_usd": 4076.201416169643,
+        "cash_usd": 4076.201416169643,
+        "positions_value_usd": -0.0,
+        "tick": 19
+      },
+      {
+        "at": "2026-07-27T19:59:00Z",
+        "equity_usd": 4076.201416169643,
+        "cash_usd": 4076.201416169643,
+        "positions_value_usd": -0.0,
+        "tick": 20
+      },
+      {
+        "at": "2026-09-17T21:40:13.751893Z",
+        "equity_usd": 4076.201416169643,
+        "cash_usd": 4076.201416169643,
+        "positions_value_usd": -0.0,
+        "tick": 20
+      },
+      {
+        "at": "2026-07-28T19:59:00Z",
+        "equity_usd": 4076.201416169643,
+        "cash_usd": 4076.201416169643,
+        "positions_value_usd": -0.0,
+        "tick": 21
+      },
+      {
+        "at": "2026-09-17T21:40:13.756396Z",
+        "equity_usd": 4076.201416169643,
+        "cash_usd": 4076.201416169643,
+        "positions_value_usd": -0.0,
+        "tick": 21
+      },
+      {
+        "at": "2026-07-29T19:59:00Z",
+        "equity_usd": 4076.201416169643,
+        "cash_usd": 4076.201416169643,
+        "positions_value_usd": -0.0,
+        "tick": 22
+      },
+      {
+        "at": "2026-09-17T21:40:13.760760Z",
+        "equity_usd": 4076.201416169643,
+        "cash_usd": 4076.201416169643,
+        "positions_value_usd": -0.0,
+        "tick": 22
+      },
+      {
+        "at": "2026-07-30T19:59:00Z",
+        "equity_usd": 4076.201416169643,
+        "cash_usd": 4076.201416169643,
+        "positions_value_usd": -0.0,
+        "tick": 23
+      },
+      {
+        "at": "2026-09-17T21:40:13.764504Z",
+        "equity_usd": 4076.201416169643,
+        "cash_usd": 4076.201416169643,
+        "positions_value_usd": -0.0,
+        "tick": 23
+      },
+      {
+        "at": "2026-07-31T19:59:00Z",
+        "equity_usd": 4076.201416169643,
+        "cash_usd": 4076.201416169643,
+        "positions_value_usd": -0.0,
+        "tick": 24
+      },
+      {
+        "at": "2026-09-17T21:40:13.769131Z",
+        "equity_usd": 4076.201416169643,
+        "cash_usd": 4076.201416169643,
+        "positions_value_usd": -0.0,
+        "tick": 24
+      },
+      {
+        "at": "2026-08-03T19:59:00Z",
+        "equity_usd": 4076.201416169643,
+        "cash_usd": 4076.201416169643,
+        "positions_value_usd": -0.0,
+        "tick": 25
+      },
+      {
+        "at": "2026-09-17T21:40:13.779226Z",
+        "equity_usd": 4076.201416169643,
+        "cash_usd": 3782.361856169643,
+        "positions_value_usd": 293.83956000000006,
+        "tick": 25
+      },
+      {
+        "at": "2026-08-04T19:59:00Z",
+        "equity_usd": 4076.201416169643,
+        "cash_usd": 3782.361856169643,
+        "positions_value_usd": 293.83956000000006,
+        "tick": 26
+      },
+      {
+        "at": "2026-09-17T21:40:13.784514Z",
+        "equity_usd": 4076.201416169643,
+        "cash_usd": 3782.361856169643,
+        "positions_value_usd": 293.83956000000006,
+        "tick": 26
+      },
+      {
+        "at": "2026-08-05T19:59:00Z",
+        "equity_usd": 4071.580996169643,
+        "cash_usd": 3782.361856169643,
+        "positions_value_usd": 289.21914000000004,
+        "tick": 27
+      },
+      {
+        "at": "2026-09-17T21:40:13.788418Z",
+        "equity_usd": 4071.580996169643,
+        "cash_usd": 3782.361856169643,
+        "positions_value_usd": 289.21914000000004,
+        "tick": 27
+      },
+      {
+        "at": "2026-08-06T19:59:00Z",
+        "equity_usd": 4067.846356169643,
+        "cash_usd": 3782.361856169643,
+        "positions_value_usd": 285.4845,
+        "tick": 28
+      },
+      {
+        "at": "2026-09-17T21:40:13.792754Z",
+        "equity_usd": 4067.846356169643,
+        "cash_usd": 3782.361856169643,
+        "positions_value_usd": 285.4845,
+        "tick": 28
+      },
+      {
+        "at": "2026-08-07T19:59:00Z",
+        "equity_usd": 4065.093256169643,
+        "cash_usd": 3782.361856169643,
+        "positions_value_usd": 282.7314,
+        "tick": 29
+      },
+      {
+        "at": "2026-09-17T21:40:13.797645Z",
+        "equity_usd": 4065.093256169643,
+        "cash_usd": 3782.361856169643,
+        "positions_value_usd": 282.7314,
+        "tick": 29
+      },
+      {
+        "at": "2026-08-10T19:59:00Z",
+        "equity_usd": 4067.662816169643,
+        "cash_usd": 3782.361856169643,
+        "positions_value_usd": 285.30096,
+        "tick": 30
+      },
+      {
+        "at": "2026-09-17T21:40:13.801966Z",
+        "equity_usd": 4067.662816169643,
+        "cash_usd": 3782.361856169643,
+        "positions_value_usd": 285.30096,
+        "tick": 30
+      },
+      {
+        "at": "2026-08-11T19:59:00Z",
+        "equity_usd": 4056.7142561696432,
+        "cash_usd": 4056.7142561696432,
+        "positions_value_usd": -0.0,
+        "tick": 31
+      },
+      {
+        "at": "2026-09-17T21:40:13.807144Z",
+        "equity_usd": 4056.7142561696432,
+        "cash_usd": 4056.7142561696432,
+        "positions_value_usd": -0.0,
+        "tick": 31
+      },
+      {
+        "at": "2026-08-12T19:59:00Z",
+        "equity_usd": 4056.7142561696432,
+        "cash_usd": 4056.7142561696432,
+        "positions_value_usd": -0.0,
+        "tick": 32
+      },
+      {
+        "at": "2026-09-17T21:40:13.811811Z",
+        "equity_usd": 4056.7142561696432,
+        "cash_usd": 4056.7142561696432,
+        "positions_value_usd": -0.0,
+        "tick": 32
+      },
+      {
+        "at": "2026-08-13T19:59:00Z",
+        "equity_usd": 4056.7142561696432,
+        "cash_usd": 4056.7142561696432,
+        "positions_value_usd": -0.0,
+        "tick": 33
+      },
+      {
+        "at": "2026-09-17T21:40:13.817661Z",
+        "equity_usd": 4056.7142561696432,
+        "cash_usd": 4056.7142561696432,
+        "positions_value_usd": -0.0,
+        "tick": 33
+      },
+      {
+        "at": "2026-08-14T19:59:00Z",
+        "equity_usd": 4056.7142561696432,
+        "cash_usd": 4056.7142561696432,
+        "positions_value_usd": -0.0,
+        "tick": 34
+      },
+      {
+        "at": "2026-09-17T21:40:13.821546Z",
+        "equity_usd": 4056.7142561696432,
+        "cash_usd": 4056.7142561696432,
+        "positions_value_usd": -0.0,
+        "tick": 34
+      },
+      {
+        "at": "2026-08-17T19:59:00Z",
+        "equity_usd": 4056.7142561696432,
+        "cash_usd": 4056.7142561696432,
+        "positions_value_usd": -0.0,
+        "tick": 35
+      },
+      {
+        "at": "2026-09-17T21:40:13.827523Z",
+        "equity_usd": 4056.7142561696432,
+        "cash_usd": 4056.7142561696432,
+        "positions_value_usd": -0.0,
+        "tick": 35
+      },
+      {
+        "at": "2026-08-18T19:59:00Z",
+        "equity_usd": 4056.7142561696432,
+        "cash_usd": 4056.7142561696432,
+        "positions_value_usd": -0.0,
+        "tick": 36
+      },
+      {
+        "at": "2026-09-17T21:40:13.832961Z",
+        "equity_usd": 4056.7142561696432,
+        "cash_usd": 4056.7142561696432,
+        "positions_value_usd": -0.0,
+        "tick": 36
+      },
+      {
+        "at": "2026-08-19T19:59:00Z",
+        "equity_usd": 4056.7142561696432,
+        "cash_usd": 4056.7142561696432,
+        "positions_value_usd": -0.0,
+        "tick": 37
+      },
+      {
+        "at": "2026-09-17T21:40:13.839540Z",
+        "equity_usd": 4056.7142561696432,
+        "cash_usd": 4056.7142561696432,
+        "positions_value_usd": -0.0,
+        "tick": 37
+      },
+      {
+        "at": "2026-08-20T19:59:00Z",
+        "equity_usd": 4056.7142561696432,
+        "cash_usd": 4056.7142561696432,
+        "positions_value_usd": -0.0,
+        "tick": 38
+      },
+      {
+        "at": "2026-09-17T21:40:13.857143Z",
+        "equity_usd": 4056.714256169643,
+        "cash_usd": 3569.492092169643,
+        "positions_value_usd": 487.222164,
+        "tick": 38
+      },
+      {
+        "at": "2026-08-21T19:59:00Z",
+        "equity_usd": 4056.714256169643,
+        "cash_usd": 3569.492092169643,
+        "positions_value_usd": 487.222164,
+        "tick": 39
+      },
+      {
+        "at": "2026-09-17T21:40:13.862298Z",
+        "equity_usd": 4056.714256169643,
+        "cash_usd": 3569.492092169643,
+        "positions_value_usd": 487.222164,
+        "tick": 39
+      },
+      {
+        "at": "2026-08-24T19:59:00Z",
+        "equity_usd": 4064.257935169643,
+        "cash_usd": 3569.492092169643,
+        "positions_value_usd": 494.7658430000001,
+        "tick": 40
+      },
+      {
+        "at": "2026-09-17T21:40:13.876825Z",
+        "equity_usd": 4064.257935169643,
+        "cash_usd": 3569.492092169643,
+        "positions_value_usd": 494.7658430000001,
+        "tick": 40
+      },
+      {
+        "at": "2026-08-25T19:59:00Z",
+        "equity_usd": 4068.725255169643,
+        "cash_usd": 3569.492092169643,
+        "positions_value_usd": 499.23316300000005,
+        "tick": 41
+      },
+      {
+        "at": "2026-09-17T21:40:13.881451Z",
+        "equity_usd": 4068.725255169643,
+        "cash_usd": 3569.492092169643,
+        "positions_value_usd": 499.23316300000005,
+        "tick": 41
+      },
+      {
+        "at": "2026-08-26T19:59:00Z",
+        "equity_usd": 4073.456553169643,
+        "cash_usd": 3569.492092169643,
+        "positions_value_usd": 503.96446100000003,
+        "tick": 42
+      },
+      {
+        "at": "2026-09-17T21:40:13.886275Z",
+        "equity_usd": 4073.456553169643,
+        "cash_usd": 3569.492092169643,
+        "positions_value_usd": 503.96446100000003,
+        "tick": 42
+      },
+      {
+        "at": "2026-08-27T19:59:00Z",
+        "equity_usd": 4082.279510169643,
+        "cash_usd": 3569.492092169643,
+        "positions_value_usd": 512.787418,
+        "tick": 43
+      },
+      {
+        "at": "2026-09-17T21:40:13.890712Z",
+        "equity_usd": 4082.279510169643,
+        "cash_usd": 3569.492092169643,
+        "positions_value_usd": 512.787418,
+        "tick": 43
+      },
+      {
+        "at": "2026-08-28T19:59:00Z",
+        "equity_usd": 4090.879101169643,
+        "cash_usd": 4090.879101169643,
+        "positions_value_usd": -0.0,
+        "tick": 44
+      },
+      {
+        "at": "2026-09-17T21:40:13.896058Z",
+        "equity_usd": 4090.879101169643,
+        "cash_usd": 4090.879101169643,
+        "positions_value_usd": -0.0,
+        "tick": 44
+      },
+      {
+        "at": "2026-08-31T19:59:00Z",
+        "equity_usd": 4090.879101169643,
+        "cash_usd": 4090.879101169643,
+        "positions_value_usd": -0.0,
+        "tick": 45
+      },
+      {
+        "at": "2026-09-17T21:40:13.903218Z",
+        "equity_usd": 4090.879101169643,
+        "cash_usd": 4090.879101169643,
+        "positions_value_usd": -0.0,
+        "tick": 45
+      },
+      {
+        "at": "2026-09-01T19:59:00Z",
+        "equity_usd": 4090.879101169643,
+        "cash_usd": 4090.879101169643,
+        "positions_value_usd": -0.0,
+        "tick": 46
+      },
+      {
+        "at": "2026-09-17T21:40:13.915284Z",
+        "equity_usd": 4090.879101169643,
+        "cash_usd": 4090.879101169643,
+        "positions_value_usd": -0.0,
+        "tick": 46
+      },
+      {
+        "at": "2026-09-02T19:59:00Z",
+        "equity_usd": 4090.879101169643,
+        "cash_usd": 4090.879101169643,
+        "positions_value_usd": -0.0,
+        "tick": 47
+      },
+      {
+        "at": "2026-09-17T21:40:13.919542Z",
+        "equity_usd": 4090.879101169643,
+        "cash_usd": 4090.879101169643,
+        "positions_value_usd": -0.0,
+        "tick": 47
+      },
+      {
+        "at": "2026-09-03T19:59:00Z",
+        "equity_usd": 4090.879101169643,
+        "cash_usd": 4090.879101169643,
+        "positions_value_usd": -0.0,
+        "tick": 48
+      },
+      {
+        "at": "2026-09-17T21:40:13.926907Z",
+        "equity_usd": 4090.879101169643,
+        "cash_usd": 4090.879101169643,
+        "positions_value_usd": -0.0,
+        "tick": 48
+      },
+      {
+        "at": "2026-09-04T19:59:00Z",
+        "equity_usd": 4090.879101169643,
+        "cash_usd": 4090.879101169643,
+        "positions_value_usd": -0.0,
+        "tick": 49
+      },
+      {
+        "at": "2026-09-17T21:40:13.930618Z",
+        "equity_usd": 4090.879101169643,
+        "cash_usd": 4090.879101169643,
+        "positions_value_usd": -0.0,
+        "tick": 49
+      },
+      {
+        "at": "2026-09-08T19:59:00Z",
+        "equity_usd": 4090.879101169643,
+        "cash_usd": 4090.879101169643,
+        "positions_value_usd": -0.0,
+        "tick": 50
+      },
+      {
+        "at": "2026-09-17T21:40:13.940639Z",
+        "equity_usd": 4090.879101169643,
+        "cash_usd": 3507.244511169643,
+        "positions_value_usd": 583.63459,
+        "tick": 50
+      },
+      {
+        "at": "2026-09-09T19:59:00Z",
+        "equity_usd": 4090.879101169643,
+        "cash_usd": 3507.244511169643,
+        "positions_value_usd": 583.63459,
+        "tick": 51
+      },
+      {
+        "at": "2026-09-17T21:40:13.945391Z",
+        "equity_usd": 4090.879101169643,
+        "cash_usd": 3507.244511169643,
+        "positions_value_usd": 583.63459,
+        "tick": 51
+      },
+      {
+        "at": "2026-09-10T19:59:00Z",
+        "equity_usd": 4081.027259169643,
+        "cash_usd": 3507.244511169643,
+        "positions_value_usd": 573.782748,
+        "tick": 52
+      },
+      {
+        "at": "2026-09-17T21:40:13.949164Z",
+        "equity_usd": 4081.027259169643,
+        "cash_usd": 3507.244511169643,
+        "positions_value_usd": 573.782748,
+        "tick": 52
+      },
+      {
+        "at": "2026-09-11T19:59:00Z",
+        "equity_usd": 4089.476084169643,
+        "cash_usd": 3507.244511169643,
+        "positions_value_usd": 582.231573,
+        "tick": 53
+      },
+      {
+        "at": "2026-09-17T21:40:13.960710Z",
+        "equity_usd": 4089.476084169643,
+        "cash_usd": 2787.253101169643,
+        "positions_value_usd": 1302.222983,
+        "tick": 53
+      },
+      {
+        "at": "2026-09-14T19:59:00Z",
+        "equity_usd": 4061.794661169643,
+        "cash_usd": 3341.803251169643,
+        "positions_value_usd": 719.99141,
+        "tick": 54
+      },
+      {
+        "at": "2026-09-17T21:40:13.966302Z",
+        "equity_usd": 4061.794661169643,
+        "cash_usd": 3341.803251169643,
+        "positions_value_usd": 719.99141,
+        "tick": 54
+      },
+      {
+        "at": "2026-09-15T19:59:00Z",
+        "equity_usd": 4061.881571169643,
+        "cash_usd": 3341.803251169643,
+        "positions_value_usd": 720.07832,
+        "tick": 55
+      },
+      {
+        "at": "2026-09-17T21:40:13.970265Z",
+        "equity_usd": 4061.881571169643,
+        "cash_usd": 3341.803251169643,
+        "positions_value_usd": 720.07832,
+        "tick": 55
+      },
+      {
+        "at": "2026-09-16T19:59:00Z",
+        "equity_usd": 4052.0028011696427,
+        "cash_usd": 3341.803251169643,
+        "positions_value_usd": 710.1995499999999,
+        "tick": 56
+      },
+      {
+        "at": "2026-09-17T21:40:13.975441Z",
+        "equity_usd": 4052.0028011696427,
+        "cash_usd": 3341.803251169643,
+        "positions_value_usd": 710.1995499999999,
+        "tick": 56
+      },
+      {
+        "at": "2026-09-17T19:59:00Z",
+        "equity_usd": 4062.663761169643,
+        "cash_usd": 3341.803251169643,
+        "positions_value_usd": 720.86051,
+        "tick": 57
+      },
+      {
+        "at": "2026-09-17T21:40:13.981375Z",
+        "equity_usd": 4062.663761169643,
+        "cash_usd": 3341.803251169643,
+        "positions_value_usd": 720.86051,
+        "tick": 57
+      }
+    ]
+  },
+  "last_learn_tick": null,
+  "closed_trades_since_learn": 5,
+  "unbracketed_positions": {},
+  "trading_halted_reason": null,
+  "sleeve_peak_equity_usd": 4090.879101169643,
+  "reconcile_mismatch_count": 0,
+  "web_picks_today": 0,
+  "web_picks_day": null,
+  "last_fill_to_bracket_seconds": null,
+  "last_session": null,
+  "regular_tick_count": 57,
+  "llm_review_count": 0,
+  "last_overnight_digest_at": null,
+  "last_premarket_digest_at": null,
+  "open_playbook": null,
+  "active_profile": "low_vol_trend",
+  "active_profile_source": "regime",
+  "active_profile_reason": "regime=low_vol_trend vix=Some(14.51) rv_pctile=50",
+  "last_regime": {
+    "above_sma_200": true,
+    "above_sma_50": true,
+    "benchmark_last": 762.6,
+    "benchmark_symbol": "SPY",
+    "class": "low_vol_trend",
+    "realized_vol_annualized_pct": 9.381128036611566,
+    "realized_vol_percentile": 50.0,
+    "recommended_profile": "low_vol_trend",
+    "signals": {
+      "realized_vol_high_percentile": 75.0,
+      "vix_high": 28.0,
+      "vix_low": 17.0
+    },
+    "vix": 15.44,
+    "vix_symbol": "$VIX"
+  },
+  "sizing_max_pct_binding_streak": 1,
+  "sizing_redundant_risk_warned": false
+}

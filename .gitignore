@@ -44,6 +44,7 @@ rules/trader-*.pid
 rules/trader-*.log
 
 # Backtest artifacts (regenerate: schwab-trader / schwab agent backtest prefetch / run)
+rules/analysis-*/.backtest-cache-*.json
 rules/.backtest-cache-*.json
 rules/.options-backtest-cache-*.json
 rules/trader-backtest-state-*.json
