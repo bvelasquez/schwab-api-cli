@@ -166,5 +166,8 @@ Verified: `cargo test -p schwab-trader --lib` → **120 passed, 0 failed**, incl
 tests pinning the fixed arm and regressing the old halt
 (`no_review_without_veto_proceeds_in_every_mode`, `no_review_with_veto_still_blocks_live_only`).
 
-Deployed: commit `<sha>`, jarvis `git pull --ff-only` + rebuild + unit restart.
+Deployed: commit `e3e8b0b`, jarvis `git pull --ff-only` (→ e3e8b0b) + `make install` +
+unit restart at 2026-09-21 08:04:11 PDT. Verified after restart: running exe sha256
+`326a0c4c30601ce9…` identical to the installed `~/.cargo/bin/schwab-trader`, both units
+active and ticking (`STALE: none`), 0 panics/errors in the journals.
 
