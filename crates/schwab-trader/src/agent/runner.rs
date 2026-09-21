@@ -991,12 +991,14 @@ async fn tick_regular(
                     continue;
                 }
 
-                let llm_ok = match &llm_review {
-                    Some(review) => candidate_approved(review, symbol, tick_rules.llm.veto_entries),
-                    None if rules.llm.enabled && !runtime.dry_run && !runtime.simulate => false,
-                    None if rules.llm.enabled && runtime.dry_run => true,
-                    None => true,
-                };
+                let llm_ok = llm_entry_allowed(
+                    llm_review.as_ref(),
+                    symbol,
+                    tick_rules.llm.veto_entries,
+                    rules.llm.enabled,
+                    runtime.dry_run,
+                    runtime.simulate,
+                );
                 if !llm_ok {
                     entry_attempts.push(json!({
                         "status": "skipped",
@@ -1214,6 +1216,32 @@ async fn llm_context_with_feeds(rules: &TraderRules, phase: &str, context: Value
     attach_feeds_to_context(context, rules, phase, &feeds)
 }
 
+/// Whether the LLM layer permits an entry for `symbol` on this tick.
+///
+/// A review is only computed every `review_every_ticks`, so `None` is the NORMAL case and
+/// must not be read as a veto. The arm this replaces blocked every entry in live whenever
+/// `llm_review` was `None`, regardless of `veto_entries` — so with a 40-tick review cadence
+/// the live bot could enter on ~1 tick in 40 while `--simulate` (the tested path) entered
+/// freely, and an unreachable LLM silently halted live entries under the same journal
+/// reason string as a real veto (`llm_veto_or_missing_review`). With no veto configured
+/// there is nothing to consult, so every mode proceeds.
+fn llm_entry_allowed(
+    review: Option<&TraderLlmReview>,
+    symbol: &str,
+    veto_entries: bool,
+    llm_enabled: bool,
+    dry_run: bool,
+    simulate: bool,
+) -> bool {
+    match review {
+        Some(r) => candidate_approved(r, symbol, veto_entries),
+        None if !veto_entries => true,
+        None if llm_enabled && !dry_run && !simulate => false,
+        None if llm_enabled && dry_run => true,
+        None => true,
+    }
+}
+
 /// Returns (phase, model, use_web) when an LLM call is warranted during regular hours.
 fn resolve_regular_llm_phase<'a>(
     rules: &'a TraderRules,
@@ -1330,4 +1358,77 @@ fn apply_web_picks(state: &mut TraderState, rules: &TraderRules, review: &Trader
         }));
     }
     added
+}
+
+#[cfg(test)]
+mod llm_entry_allowed_tests {
+    use super::*;
+    use crate::agent::llm::CandidateReview;
+
+    fn review(cands: &[(&str, &str)], entry_rec: &str) -> TraderLlmReview {
+        TraderLlmReview {
+            phase: "selection".into(),
+            model: "test".into(),
+            raw: json!({}),
+            market_commentary: String::new(),
+            web_insights: vec![],
+            candidates: cands
+                .iter()
+                .map(|(s, r)| CandidateReview {
+                    symbol: (*s).into(),
+                    recommendation: (*r).into(),
+                    reasoning: String::new(),
+                })
+                .collect(),
+            positions: vec![],
+            entry_recommendation: entry_rec.into(),
+            entry_reasoning: String::new(),
+            risk_alerts: vec![],
+            rule_patches: vec![],
+            profile_name: None,
+            profile_reasoning: None,
+        }
+    }
+
+    /// The fix: with no veto configured there is nothing to consult, so a tick that simply
+    /// did not run a review must not block entries — in live most of all.
+    #[test]
+    fn no_review_without_veto_proceeds_in_every_mode() {
+        for (dry, sim) in [(false, false), (false, true), (true, false)] {
+            assert!(
+                llm_entry_allowed(None, "GLD", false, true, dry, sim),
+                "dry_run={dry} simulate={sim} must proceed when veto_entries=false"
+            );
+        }
+    }
+
+    /// Regression guard for the halt this replaced: live used to block on every non-review
+    /// tick (reviews run every `review_every_ticks`), so only ~1 tick in 40 could enter.
+    #[test]
+    fn no_review_with_veto_still_blocks_live_only() {
+        assert!(!llm_entry_allowed(None, "GLD", true, true, false, false), "live: unreviewed means unapproved");
+        assert!(llm_entry_allowed(None, "GLD", true, true, false, true), "sim: unchanged");
+        assert!(llm_entry_allowed(None, "GLD", true, true, true, false), "dry-run: unchanged");
+    }
+
+    #[test]
+    fn llm_disabled_proceeds_even_with_veto() {
+        assert!(llm_entry_allowed(None, "GLD", true, false, false, false));
+    }
+
+    #[test]
+    fn veto_honours_the_review() {
+        let r = review(&[("GLD", "skip"), ("SPY", "proceed")], "proceed");
+        assert!(!llm_entry_allowed(Some(&r), "GLD", true, true, false, true));
+        assert!(llm_entry_allowed(Some(&r), "SPY", true, true, false, true));
+        // not named in the review -> falls back to the review-wide recommendation
+        let wide = review(&[], "skip");
+        assert!(!llm_entry_allowed(Some(&wide), "GLD", true, true, false, true));
+    }
+
+    #[test]
+    fn no_veto_ignores_the_review_recommendation() {
+        let r = review(&[("GLD", "skip")], "skip");
+        assert!(llm_entry_allowed(Some(&r), "GLD", false, true, false, true));
+    }
 }

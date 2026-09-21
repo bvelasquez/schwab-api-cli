@@ -77,18 +77,23 @@ let llm_ok = match &llm_review {
 `candidate_approved(..., veto=false)` returns `true` unconditionally, so the frozen veto
 is provably inert (measured: 245 blocks pre-freeze → **0 post-freeze**).
 
-But when `llm.enabled` is true in **live** (non-dry-run), *no review* ⇒ *no entries*, with
-the **same journal reason string as a veto**. An exhausted key cap (a $3 limit with
-~$2.89 still unused on 2026-09-21, so not imminent), an OpenRouter outage, or a malformed
-response silently stops the bot trading and reads in the
-journal exactly like "the LLM said no". Under `--simulate` (how both paper agents run) a
-missing review passes through, so this bites live only.
+But `llm_review` is a **per-tick local** (`runner.rs:892`), set only on ticks where
+`should_run_monitor_review` fires — every `review_every_ticks`. So this is not merely an
+outage risk: in **live**, on every tick that is not a review tick, *no review* ⇒ *no
+entries*, at the **same journal reason string as a real veto**. With
+`review_every_ticks: 40` the live path could enter on roughly **1 tick in 40**, while
+`--simulate` (how both paper agents run, and the only path we have ever measured) entered
+freely. **The tested path and the live path were different strategies**, and the live one
+was silently near-halted. An OpenRouter outage or a malformed reply produces the same
+silent stop.
 
 ## 5. Verdict
 
 - **"Burning tokens" is not the problem.** $2.9/month, $0.13/trading day, $18.64 lifetime.
   Turning the whole thing off saves $35/year.
-- **But a third of the spend is provably inert**: 531/531 learn calls → 0 applied patches.
+- **But a third of the historical spend was inert**: 531 learn calls → **1** applied patch.
+  That was pre-freeze, while adaptation was on; since the freeze the learn call is skipped
+  entirely (`should_run_learn` guards on `allow_rule_adaptation`).
 - The reviews (18/day, ~2/3 of spend) are now decision-empty for entries (veto frozen);
   their residual value is the market commentary / risk alerts Barry reads — informational,
   not P&L.
@@ -98,9 +103,13 @@ missing review passes through, so this bites live only.
 
 ## Proposals (need Barry's OK — jarvis rules/behavior change)
 
-1. **Skip the learn call when `allow_rule_adaptation: false`** (or set
-   `llm.learn_every_ticks: 0`). Removes 9.3 calls/day and an API dependency that has had
-   zero possible effect across 531 attempts. Evidence: §2.
+1. ~~**Skip the learn call when `allow_rule_adaptation: false`**~~ — **no change needed; the
+   guard already exists.** `learn.rs::should_run_learn` returns false when
+   `allow_rule_adaptation` is false, and the journal confirms 0 patches since the freeze
+   (last `rule_patch_proposed`: 2026-09-18). The 9.3 calls/day were spent *pre*-freeze, when
+   adaptation was ON — and the inert-ness is in the **apply path** (531 proposed → 1
+   applied), not a missing guard. If adaptation is ever re-enabled, that burn returns and
+   the fix belongs in the apply/bounds logic. Evidence: §2.
 2. **Live safety:** in live mode, don't map "review unavailable" onto "veto" — either
    proceed (as simulate does) or fail loudly and distinct (`llm_unavailable`), so a key cap
    can't silently halt trading. Evidence: §4.
@@ -121,3 +130,41 @@ ssh jarvis 'set -a; . $HOME/.config/environment.d/schwab-paper.conf; set +a; \
 
 Freeze boundary used throughout: **ts ≥ 2026-09-19** (the reload/restart landed
 2026-09-19T00:28Z = 2026-09-18 17:28 PDT; Friday's session ticks were still pre-freeze).
+
+## Resolution (2026-09-21) — fix applied
+
+Proposal #2 is implemented (proposal #1 needed nothing). The decision was extracted from
+the tick loop into a pure function so it is testable:
+
+```rust
+fn llm_entry_allowed(
+    review: Option<&TraderLlmReview>,
+    symbol: &str,
+    veto_entries: bool,
+    llm_enabled: bool,
+    dry_run: bool,
+    simulate: bool,
+) -> bool {
+    match review {
+        Some(r) => candidate_approved(r, symbol, veto_entries),
+        None if !veto_entries => true,      // nothing to consult -> never block
+        None if llm_enabled && !dry_run && !simulate => false,  // veto regime, live
+        None if llm_enabled && dry_run => true,
+        None => true,
+    }
+}
+```
+
+The **only** behavior change is live + `veto_entries: false` + no review: block → proceed.
+Every currently-running agent is untouched — both paper units run `--simulate` and the
+options unit has `veto_entries: true`, so their entry behavior is bit-identical to before.
+This deliberately does NOT close the wider live-vs-paper divergence for a veto-enabled
+config (sim proceeds on unreviewed ticks, live blocks): making that symmetric would change
+the options agent's measured paper behavior, which needs its own decision.
+
+Verified: `cargo test -p schwab-trader --lib` → **120 passed, 0 failed**, including 5 new
+tests pinning the fixed arm and regressing the old halt
+(`no_review_without_veto_proceeds_in_every_mode`, `no_review_with_veto_still_blocks_live_only`).
+
+Deployed: commit `<sha>`, jarvis `git pull --ff-only` + rebuild + unit restart.
+
