@@ -23,6 +23,8 @@ pub fn build_backtest_report(rules_path: &Path, rules: &RulesConfig) -> Result<V
     let mut trading_days = 0u32;
     let mut entries = 0u32;
     let mut rolls = 0u32;
+    let mut entry_credits: Vec<f64> = Vec::new();
+    let mut credit_to_width_pcts: Vec<f64> = Vec::new();
 
     for e in &events {
         let Some(t) = e.get("type").and_then(|v| v.as_str()) else {
@@ -34,7 +36,19 @@ pub fn build_backtest_report(rules_path: &Path, rules: &RulesConfig) -> Result<V
             "backtest_day_summary" => {
                 trading_days += 1;
             }
-            "sim_entry_filled" => entries += 1,
+            "sim_entry_filled" => {
+                entries += 1;
+                if let Some(credit) = payload.get("entry_credit").and_then(|v| v.as_f64()) {
+                    entry_credits.push(credit);
+                    if let Some(width) = payload
+                        .get("width")
+                        .and_then(|v| v.as_f64())
+                        .filter(|w| *w > f64::EPSILON)
+                    {
+                        credit_to_width_pcts.push((credit / width) * 100.0);
+                    }
+                }
+            }
             "defensive_roll" => rolls += 1,
             "sim_exit_filled" => {
                 let reason = payload
@@ -54,11 +68,26 @@ pub fn build_backtest_report(rules_path: &Path, rules: &RulesConfig) -> Result<V
         }
     }
 
+    let avg_entry_credit_usd = mean(&entry_credits);
+    let avg_credit_to_width_pct = mean(&credit_to_width_pcts);
+    // Breakeven win rate: the win rate at which avg win/loss dollars would net to zero
+    // (avg_loss / (avg_win + avg_loss)) — lets a run be compared against its actual
+    // win_rate_pct in `ledger_stats` the same way paper/live results are judged.
+    let breakeven_win_rate_pct = {
+        let avg_win = stats.avg_win_usd;
+        let avg_loss_abs = stats.avg_loss_usd.abs();
+        (avg_win > f64::EPSILON && avg_loss_abs > f64::EPSILON)
+            .then(|| (avg_loss_abs / (avg_win + avg_loss_abs)) * 100.0)
+    };
+
     Ok(json!({
         "agent_id": rules.agent_id,
         "pricing_model": "black_scholes_vix_iv",
         "caveat": "Synthetic BS marks using VIX as IV proxy — not OPRA historical fills. Use for gate/threshold research, not absolute expectancy.",
         "ledger_stats": stats,
+        "avg_entry_credit_usd": avg_entry_credit_usd,
+        "avg_credit_to_width_pct": avg_credit_to_width_pct,
+        "breakeven_win_rate_pct": breakeven_win_rate_pct,
         "event_counts": event_counts,
         "exit_reason_counts": exit_reasons,
         "monthly_closed_pnl_usd": monthly_pnl,
@@ -68,4 +97,8 @@ pub fn build_backtest_report(rules_path: &Path, rules: &RulesConfig) -> Result<V
         "open_positions": state.open_positions.len(),
         "closed_trades": state.sim.as_ref().map(|s| s.closed_trades.len()).unwrap_or(0),
     }))
+}
+
+fn mean(values: &[f64]) -> Option<f64> {
+    (!values.is_empty()).then(|| values.iter().sum::<f64>() / values.len() as f64)
 }

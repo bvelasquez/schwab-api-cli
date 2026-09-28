@@ -9,9 +9,19 @@ use crate::market_ctx::MarketCtx;
 use crate::rules::TraderRules;
 use crate::shuffle::{apply_shuffle_to_scan, symbol_group_cap_reason};
 use crate::technical::{
-    fetch_technical_snapshot_with_benchmark, passes_entry_filters, technical_to_json,
+    fetch_technical_snapshot_with_benchmark, passes_entry_filters, reason_code, technical_to_json,
     TechnicalSnapshot,
 };
+
+/// Rejection reason codes gated before any technical fetch never carry
+/// `technical_context` in the first place; this also guards future call
+/// sites from attaching a useless snapshot to them.
+fn rejection_wants_technical_context(code: &str) -> bool {
+    !matches!(
+        code,
+        "already_open" | "blocked_symbol" | "symbol_group_cap" | "re_entry_cooldown"
+    )
+}
 
 pub async fn run(runtime: &TraderRuntime, rules_path: &Path) -> Result<()> {
     let rules = TraderRules::load(rules_path)?;
@@ -60,19 +70,38 @@ pub async fn run_scan_inner(
 
     for symbol in symbols {
         if rules.is_core_holding(&symbol) {
-            rejected.push(json!({ "symbol": symbol, "reason": "core_holding" }));
+            let reason = "core_holding";
+            rejected.push(json!({
+                "symbol": symbol,
+                "reason": reason,
+                "reason_code": reason_code(reason),
+            }));
             continue;
         }
         if rules.is_blocked_symbol(&symbol) {
-            rejected.push(json!({ "symbol": symbol, "reason": "blocked_symbol" }));
+            let reason = "blocked_symbol";
+            rejected.push(json!({
+                "symbol": symbol,
+                "reason": reason,
+                "reason_code": reason_code(reason),
+            }));
             continue;
         }
         if state.has_open_symbol(&symbol) {
-            rejected.push(json!({ "symbol": symbol, "reason": "already_open" }));
+            let reason = "already_open";
+            rejected.push(json!({
+                "symbol": symbol,
+                "reason": reason,
+                "reason_code": reason_code(reason),
+            }));
             continue;
         }
         if let Some(reason) = symbol_group_cap_reason(rules, state, &symbol) {
-            rejected.push(json!({ "symbol": symbol, "reason": reason }));
+            rejected.push(json!({
+                "symbol": symbol,
+                "reason": reason,
+                "reason_code": reason_code(&reason),
+            }));
             continue;
         }
         let snap = match fetch_technical_snapshot_with_benchmark(
@@ -85,18 +114,33 @@ pub async fn run_scan_inner(
         {
             Ok(s) => s,
             Err(err) => {
-                rejected.push(json!({ "symbol": symbol, "reason": err.to_string() }));
+                let reason = err.to_string();
+                rejected.push(json!({
+                    "symbol": symbol,
+                    "reason": reason,
+                    "reason_code": reason_code(&reason),
+                }));
                 continue;
             }
         };
         if let Some(reason) =
             passes_entry_filters(&snap, &rules.playbook.entry, &rules.technical, rules)
         {
-            rejected.push(json!({
+            let code = reason_code(&reason);
+            let mut rejection = json!({
                 "symbol": symbol,
                 "reason": reason,
-                "technical_context": technical_to_json(&snap),
-            }));
+                "reason_code": code,
+            });
+            // Rejections gated before any fetch (already_open, blocked_symbol,
+            // symbol_group_cap, re_entry_cooldown) never carry a snapshot —
+            // only technical-filter rejections reach this branch, but keep
+            // the check in case a future reason here maps to one of those
+            // codes.
+            if rejection_wants_technical_context(code) {
+                rejection["technical_context"] = technical_to_json(&snap);
+            }
+            rejected.push(rejection);
             continue;
         }
         let score = candidate_score(&snap);
@@ -120,7 +164,10 @@ pub async fn run_scan_inner(
         "rejected": rejected,
         "candidate_count": candidates.len(),
         "active_profile": state.active_profile,
-        "effective_playbook": crate::learn::adaptable_playbook_snapshot(rules),
+        // Not duplicated here — the regular-hours tick already carries this
+        // at the top level (`tick_result.effective_playbook`); callers that
+        // only have a bare scan (e.g. this command's own CLI output) can
+        // read it from `trader rules show` instead.
         "market_cache": market.cache_status(),
         "entry_shuffle_enabled": rules.playbook.filters.shuffle.enabled,
     }))

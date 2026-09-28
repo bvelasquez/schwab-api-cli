@@ -40,6 +40,35 @@ pub struct TraderRules {
     pub simulation: Option<SimulationConfig>,
     #[serde(default)]
     pub adaptation: AdaptationConfig,
+    /// Paper-only alternative rule sets evaluated on the same live ticks.
+    #[serde(default, skip_serializing_if = "ShadowConfig::is_empty")]
+    pub shadow: ShadowConfig,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ShadowConfig {
+    pub enabled: bool,
+    pub arms: Vec<ShadowArmConfig>,
+}
+
+impl ShadowConfig {
+    pub fn is_empty(&self) -> bool {
+        !self.enabled && self.arms.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ShadowArmConfig {
+    /// Lowercase `[a-z0-9_-]`; used in the arm's state/journal file names.
+    pub id: String,
+    /// Full TraderRules file used as the arm's base instead of the production rules.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rules_file: Option<String>,
+    /// Deep-merged onto the base: maps merge, arrays and scalars replace.
+    #[serde(skip_serializing_if = "serde_json::Value::is_null")]
+    pub overrides: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1648,6 +1677,7 @@ impl Default for TraderRules {
             notify: NotifyConfig::default(),
             simulation: None,
             adaptation: AdaptationConfig::default(),
+            shadow: ShadowConfig::default(),
         }
     }
 }

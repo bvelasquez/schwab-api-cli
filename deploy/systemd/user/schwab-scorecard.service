@@ -1,0 +1,17 @@
+# End-of-day paper scorecard — swing + options metrics, optional Telegram.
+#
+# Read-only with respect to trading: reads rules/* state and journals only.
+
+[Unit]
+Description=Schwab paper trading daily scorecard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/schwabinvestbot
+EnvironmentFile=-%h/.config/environment.d/schwab-paper.conf
+ExecStart=/usr/bin/python3 %h/projects/schwabinvestbot/scripts/scorecard.py --telegram
+
+[Install]
+WantedBy=default.target

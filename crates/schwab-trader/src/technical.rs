@@ -128,7 +128,7 @@ async fn enrich_earnings_estimate(market: &MarketCtx, snap: &mut TechnicalSnapsh
     };
     let today = match market {
         MarketCtx::Replay { as_of, .. } => as_of.date_naive(),
-        MarketCtx::Live { .. } => crate::earnings::today_et_naive(),
+        MarketCtx::Live { .. } | MarketCtx::Tape { .. } => crate::earnings::today_et_naive(),
     };
     let est = crate::earnings::estimate_next_earnings(last, today);
     snap.last_earnings_date = Some(est.last_earnings_date.to_string());
@@ -472,6 +472,54 @@ pub fn technical_to_json(snap: &TechnicalSnapshot) -> Value {
     serde_json::to_value(snap).unwrap_or(json!({}))
 }
 
+/// Stable machine-readable classification of a human-readable rejection
+/// reason. Reason strings interpolate live values (RSI level, symbol group,
+/// etc.), so this matches by prefix/substring rather than exact equality —
+/// callers must NOT rely on the human `reason` text staying byte-for-byte
+/// identical across rule tweaks.
+pub fn reason_code(reason: &str) -> &'static str {
+    match reason {
+        "already_open" => return "already_open",
+        "blocked_symbol" => return "blocked_symbol",
+        _ => {}
+    }
+    if reason.starts_with("symbol_group_cap") {
+        "symbol_group_cap"
+    } else if reason.starts_with("re_entry_cooldown") {
+        "re_entry_cooldown"
+    } else if reason.starts_with("RSI") {
+        // Covers both "RSI x outside range" (swing) and "RSI x below
+        // momentum floor" (intraday).
+        "rsi_out_of_range"
+    } else if reason.contains("below SMA") {
+        "below_sma"
+    } else if reason.contains("above SMA") && reason.contains("pullback") {
+        "above_sma"
+    } else if reason.starts_with("RS vs benchmark") {
+        "rs_below_min"
+    } else if reason.contains("of estimated earnings") {
+        "earnings_blackout"
+    } else if reason.contains("of 52w high") {
+        "near_52w_high"
+    } else if reason.starts_with("reward/risk") {
+        "reward_risk_below_min"
+    } else if reason.starts_with("stop ") && reason.contains("ATR") {
+        "stop_inside_atr_noise"
+    } else if reason.starts_with("spread") && reason.contains("too wide") {
+        "spread_too_wide"
+    } else if (reason.starts_with("avg volume") || reason.starts_with("relative volume"))
+        && reason.contains("below min")
+    {
+        "low_volume"
+    } else if reason.starts_with("price ") && reason.contains("below min") {
+        "low_price"
+    } else if reason.contains("not fetched by production tick") {
+        "not_in_production_tape"
+    } else {
+        "other"
+    }
+}
+
 fn sma(values: &[f64], period: usize) -> Option<f64> {
     if values.len() < period || period == 0 {
         return None;
@@ -701,6 +749,48 @@ mod tests {
             reason.as_deref().is_some_and(|r| r.contains("pullback required")),
             "got {reason:?}"
         );
+    }
+
+    #[test]
+    fn reason_code_classifies_each_known_reason() {
+        let cases: &[(&str, &str)] = &[
+            ("already_open", "already_open"),
+            ("blocked_symbol", "blocked_symbol"),
+            ("symbol_group_cap: semis has 2/2 open", "symbol_group_cap"),
+            ("re_entry_cooldown: stop_loss 1d ago (< 2d)", "re_entry_cooldown"),
+            ("RSI 74.4 outside range", "rsi_out_of_range"),
+            ("RSI 30.0 below momentum floor 40.0", "rsi_out_of_range"),
+            ("below SMA 20", "below_sma"),
+            ("intraday: below SMA 9", "below_sma"),
+            ("above SMA 9 (pullback required)", "above_sma"),
+            (
+                "RS vs benchmark 30d -1.3% below min 0.0%",
+                "rs_below_min",
+            ),
+            (
+                "within 5d of estimated earnings 2026-10-01 (last=2026-07-01, confidence=heuristic)",
+                "earnings_blackout",
+            ),
+            ("within 3.0% of 52w high (-1.0% from high)", "near_52w_high"),
+            (
+                "reward/risk 0.00 below min 1.25 (target 3.0% / stop 5.0%)",
+                "reward_risk_below_min",
+            ),
+            (
+                "stop 5.5% is only 0.97x ATR (5.7%); need \u{2265}1.50x",
+                "stop_inside_atr_noise",
+            ),
+            ("spread 2.10% too wide", "spread_too_wide"),
+            ("avg volume 500000 below min", "low_volume"),
+            ("relative volume 0.50 below min 1.00", "low_volume"),
+            ("price 3.00 below min", "low_price"),
+            ("AMD quote not fetched by production tick", "not_in_production_tape"),
+            ("missing rsi_14", "other"),
+            ("core_holding", "other"),
+        ];
+        for (reason, expected) in cases {
+            assert_eq!(reason_code(reason), *expected, "reason: {reason}");
+        }
     }
 
     #[test]

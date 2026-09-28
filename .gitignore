@@ -42,6 +42,14 @@ rules/trader-state-*.json
 rules/trader-journal-*.jsonl
 rules/trader-*.pid
 rules/trader-*.log
+rules/trader-journal-*.jsonl.*
+rules/trader-shadow-*
+
+# Daily paper scorecards (scripts/scorecard.py on paper-host)
+rules/scorecards/
+
+# Intraday option chain snapshots (scripts/chain-snapshot.sh on paper-host)
+rules/chains/
 
 # Backtest artifacts (regenerate: schwab-trader / schwab agent backtest prefetch / run)
 rules/analysis-*/.backtest-cache-*.json

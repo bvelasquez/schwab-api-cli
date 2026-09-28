@@ -16,6 +16,25 @@ use crate::market_ctx::MarketCtx;
 use crate::rules::TraderRules;
 use crate::technical::fetch_technical_snapshot;
 
+/// Destination for a paper ledger's journal events and state saves.
+pub trait LedgerSink: Sync {
+    fn event(&self, event_type: &str, payload: Value) -> Result<()>;
+    fn persist(&self, state: &TraderState) -> Result<()>;
+}
+
+/// The production agent's `trader-journal-*` / `trader-state-*` files.
+pub struct ProductionSink<'a>(pub &'a Path);
+
+impl LedgerSink for ProductionSink<'_> {
+    fn event(&self, event_type: &str, payload: Value) -> Result<()> {
+        journal::append_event(self.0, event_type, payload)
+    }
+
+    fn persist(&self, state: &TraderState) -> Result<()> {
+        save_state(self.0, state)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimLedger {
     pub starting_cash_usd: f64,
@@ -178,6 +197,7 @@ pub fn record_sim_entry_at(
             oco_order_id: None,
             exit_plan_version: 1,
             peak_profit_pct: None,
+            trough_profit_pct: None,
             entry_rs_vs_benchmark_30d: None,
         },
     );
@@ -186,7 +206,7 @@ pub fn record_sim_entry_at(
 
 /// ATR trailing stop updates (mirrors live OCO tighten logic without broker orders).
 pub async fn process_sim_trailing_stops(
-    rules_path: &Path,
+    sink: &dyn LedgerSink,
     rules: &TraderRules,
     state: &mut TraderState,
     market: &MarketCtx,
@@ -227,17 +247,17 @@ pub async fn process_sim_trailing_stops(
             "last": last,
         });
         updates.push(event.clone());
-        journal::append_event(rules_path, "sim_trailing_stop_updated", event)?;
+        sink.event("sim_trailing_stop_updated", event)?;
     }
 
     if !updates.is_empty() {
-        save_state(rules_path, state)?;
+        sink.persist(state)?;
     }
     Ok(updates)
 }
 
 pub async fn process_sim_exits(
-    rules_path: &Path,
+    sink: &dyn LedgerSink,
     rules: &TraderRules,
     state: &mut TraderState,
     market: &MarketCtx,
@@ -249,7 +269,7 @@ pub async fn process_sim_exits(
 
     let mut exits = crate::closure::process_exit_plan_tightens(
         None,
-        rules_path,
+        sink,
         rules,
         state,
         None,
@@ -259,7 +279,7 @@ pub async fn process_sim_exits(
     )
     .await?;
 
-    let _ = process_sim_trailing_stops(rules_path, rules, state, market).await?;
+    let _ = process_sim_trailing_stops(sink, rules, state, market).await?;
 
     let regime_class = state
         .last_regime
@@ -298,7 +318,7 @@ pub async fn process_sim_exits(
 
         if let Some(p) = state.open_positions.get_mut(&pos_id) {
             p.market_value_usd = p.quantity * last;
-            crate::thesis_exit::update_peak_profit_pct(p, last);
+            crate::thesis_exit::update_peak_and_trough_profit_pct(p, last);
         }
 
         let snap = crate::technical::fetch_technical_snapshot(market, rules, &symbol).await?;
@@ -373,31 +393,36 @@ pub async fn process_sim_exits(
             "profit_limit": pos.profit_limit,
         }));
 
-        journal::append_event(
-            rules_path,
-            "sim_exit_filled",
-            json!({
-                "trade_id": pos_id,
-                "symbol": pos.symbol,
-                "quantity": pos.quantity,
-                "entry_price": pos.entry_price,
-                "exit_reason": reason,
-                "exit_price": exit_price,
-                "last": last,
-                "pnl_usd": pnl,
-                "pnl_pct": pnl_pct,
-                "hold_days": hold_days,
-                "hold_minutes": hold_minutes,
-                "stop_price": pos.stop_price,
-                "profit_limit": pos.profit_limit,
-                "active_profile": state.active_profile,
-                "regime_class": regime_class,
-            }),
-        )?;
+        let mut exit_payload = json!({
+            "trade_id": pos_id,
+            "symbol": pos.symbol,
+            "quantity": pos.quantity,
+            "entry_price": pos.entry_price,
+            "exit_reason": reason,
+            "exit_price": exit_price,
+            "last": last,
+            "pnl_usd": pnl,
+            "pnl_pct": pnl_pct,
+            "hold_days": hold_days,
+            "hold_minutes": hold_minutes,
+            "stop_price": pos.stop_price,
+            "profit_limit": pos.profit_limit,
+            "active_profile": state.active_profile,
+            "regime_class": regime_class,
+            "mfe_pct": pos.peak_profit_pct,
+            "mae_pct": pos.trough_profit_pct,
+        });
+        // Slippage through the stop only means anything for stop_loss exits
+        // (target/thesis/time exits fill at/near `last`, not `stop_price`).
+        if reason == "stop_loss" && pos.entry_price > 0.0 {
+            let slippage = (exit_price - pos.stop_price) / pos.entry_price * 100.0;
+            exit_payload["stop_gap_slippage_pct"] = json!(slippage);
+        }
+        sink.event("sim_exit_filled", exit_payload)?;
     }
 
     snapshot_equity(state, rules);
-    save_state(rules_path, state)?;
+    sink.persist(state)?;
     Ok(exits)
 }
 

@@ -201,6 +201,7 @@ pub async fn reconcile_tick(
                 oco_order_id: None,
                 exit_plan_version: 1,
                 peak_profit_pct: None,
+                trough_profit_pct: None,
                 entry_rs_vs_benchmark_30d: None,
             },
         );
@@ -412,6 +413,7 @@ async fn adopt_filled_buy(
             oco_order_id,
             exit_plan_version: 1,
             peak_profit_pct: None,
+            trough_profit_pct: None,
             entry_rs_vs_benchmark_30d: None,
         },
     );

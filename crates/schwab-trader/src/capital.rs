@@ -54,36 +54,79 @@ pub async fn compute_capital_check(
     simulate: bool,
     rules_path: Option<&Path>,
 ) -> Result<CapitalCheck> {
-    let bp = if simulate {
-        let ledger = state.sim.as_ref();
-        let cash = ledger.map(|l| l.cash_usd).unwrap_or_else(|| {
-            rules
-                .simulation
-                .as_ref()
-                .map(|s| s.starting_cash_usd)
-                .unwrap_or(rules.capital.fixed_sleeve_cap_usd)
-        });
-        schwab_cli::portfolio::BuyingPower {
-            cash_available_for_trading: cash,
-            cash_balance: cash,
-            option_buying_power: None,
-            liquidation_value: Some(cash),
-        }
-    } else {
-        schwab_cli::portfolio::account_buying_power(api, account_hash).await?
-    };
-    let cash_available = bp.cash_available_for_trading;
+    if simulate {
+        return Ok(compute_sim_capital_check(
+            rules,
+            state,
+            pending_cost,
+            pending_stop_risk,
+            rules_path,
+        ));
+    }
+    let bp = schwab_cli::portfolio::account_buying_power(api, account_hash).await?;
+    let opt = crate::options_reserve::load_options_reserve(rules);
+    Ok(build_capital_check(
+        rules,
+        state,
+        &bp,
+        opt,
+        pending_cost,
+        pending_stop_risk,
+        false,
+        rules_path,
+    ))
+}
 
-    let opt = if simulate {
-        crate::options_reserve::OptionsReserve {
-            reserved_risk_usd: 0.0,
-            source: "simulation".into(),
-            state_path: None,
-            state_paths: vec![],
-        }
-    } else {
-        crate::options_reserve::load_options_reserve(rules)
+/// Capital check against the paper ledger's cash — no broker call.
+pub fn compute_sim_capital_check(
+    rules: &TraderRules,
+    state: &TraderState,
+    pending_cost: Option<f64>,
+    pending_stop_risk: Option<f64>,
+    rules_path: Option<&Path>,
+) -> CapitalCheck {
+    let cash = state.sim.as_ref().map(|l| l.cash_usd).unwrap_or_else(|| {
+        rules
+            .simulation
+            .as_ref()
+            .map(|s| s.starting_cash_usd)
+            .unwrap_or(rules.capital.fixed_sleeve_cap_usd)
+    });
+    let bp = schwab_cli::portfolio::BuyingPower {
+        cash_available_for_trading: cash,
+        cash_balance: cash,
+        option_buying_power: None,
+        liquidation_value: Some(cash),
     };
+    let opt = crate::options_reserve::OptionsReserve {
+        reserved_risk_usd: 0.0,
+        source: "simulation".into(),
+        state_path: None,
+        state_paths: vec![],
+    };
+    build_capital_check(
+        rules,
+        state,
+        &bp,
+        opt,
+        pending_cost,
+        pending_stop_risk,
+        true,
+        rules_path,
+    )
+}
+
+fn build_capital_check(
+    rules: &TraderRules,
+    state: &TraderState,
+    bp: &schwab_cli::portfolio::BuyingPower,
+    opt: crate::options_reserve::OptionsReserve,
+    pending_cost: Option<f64>,
+    pending_stop_risk: Option<f64>,
+    simulate: bool,
+    rules_path: Option<&Path>,
+) -> CapitalCheck {
+    let cash_available = bp.cash_available_for_trading;
     let options_buffer = options_buffer_usd(rules, opt.reserved_risk_usd);
 
     let min_floor = rules.capital.min_cash_floor_usd;
@@ -142,7 +185,7 @@ pub async fn compute_capital_check(
     if tradable_budget <= 0.0 {
         check.passed = false;
         check.reject_reason = Some("tradable_budget is zero".into());
-        return Ok(check);
+        return check;
     }
 
     if let Some(cost) = pending_cost {
@@ -178,7 +221,7 @@ pub async fn compute_capital_check(
         check.reject_reason = Some(reason);
     }
 
-    Ok(check)
+    check
 }
 
 #[derive(Debug, Clone, Copy)]

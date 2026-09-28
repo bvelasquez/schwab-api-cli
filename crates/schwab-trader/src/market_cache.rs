@@ -131,6 +131,7 @@ impl LiveCacheHandle {
                 .write()
                 .unwrap_or_else(|e| e.into_inner());
             cache.ingest_schwab_history(&sym, &history);
+            advance_cache_to_watermark(&mut cache, &sym);
             cache.fetched_at = Utc::now();
             cache.save(&self.path)?;
         }
@@ -171,14 +172,76 @@ pub fn newest_bar_day(cache: &BacktestCache, symbol: &str) -> Option<chrono::Nai
     cache.symbols.get(&sym)?.last().map(|b| b.trading_date_et())
 }
 
+/// `to` is the cache-wide newest-bar watermark shown in status JSON —
+/// without this it freezes at whatever the cache was first built with, even
+/// as fresh bars get merged in on every refresh. Never moves it backwards.
+fn advance_cache_to_watermark(cache: &mut BacktestCache, symbol: &str) {
+    if let Some(newest) = newest_bar_day(cache, symbol) {
+        if newest > cache.to {
+            cache.to = newest;
+        }
+    }
+}
+
 #[cfg(test)]
 mod cache_config_tests {
-    use super::MarketCacheConfig;
+    use super::*;
+    use crate::backtest::cache::StoredCandle;
+    use chrono::NaiveDate;
 
     #[test]
     fn default_cache_config_enabled() {
         let cfg = MarketCacheConfig::default();
         assert!(cfg.enabled);
         assert_eq!(cfg.refresh_if_older_than_days, 1);
+    }
+
+    fn candle_on(date: NaiveDate) -> StoredCandle {
+        // Noon UTC keeps `trading_date_et` on the same calendar day regardless
+        // of the ET offset.
+        let dt = date.and_hms_opt(16, 0, 0).unwrap();
+        StoredCandle {
+            datetime_ms: dt.and_utc().timestamp_millis(),
+            open: 1.0,
+            high: 1.0,
+            low: 1.0,
+            close: 1.0,
+            volume: 1.0,
+        }
+    }
+
+    #[test]
+    fn advance_cache_to_watermark_moves_forward_on_fresh_bars() {
+        let old_to = NaiveDate::from_ymd_opt(2026, 7, 28).unwrap();
+        let mut cache = BacktestCache::new(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(), old_to);
+        let newest = NaiveDate::from_ymd_opt(2026, 9, 25).unwrap();
+        cache.merge_history("NVDA", vec![candle_on(old_to), candle_on(newest)]);
+
+        advance_cache_to_watermark(&mut cache, "NVDA");
+
+        assert_eq!(cache.to, newest);
+    }
+
+    #[test]
+    fn advance_cache_to_watermark_never_moves_backwards() {
+        let to = NaiveDate::from_ymd_opt(2026, 9, 25).unwrap();
+        let mut cache = BacktestCache::new(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(), to);
+        // Refreshing a symbol whose own history is stale must not regress the
+        // cache-wide watermark set by other symbols.
+        cache.merge_history("OLD", vec![candle_on(NaiveDate::from_ymd_opt(2026, 8, 1).unwrap())]);
+
+        advance_cache_to_watermark(&mut cache, "OLD");
+
+        assert_eq!(cache.to, to);
+    }
+
+    #[test]
+    fn advance_cache_to_watermark_no_op_when_symbol_missing() {
+        let to = NaiveDate::from_ymd_opt(2026, 9, 25).unwrap();
+        let mut cache = BacktestCache::new(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(), to);
+
+        advance_cache_to_watermark(&mut cache, "MISSING");
+
+        assert_eq!(cache.to, to);
     }
 }

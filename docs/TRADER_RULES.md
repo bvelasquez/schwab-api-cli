@@ -575,6 +575,75 @@ schwab-trader journal stats --rules-file rules/my-trader.yaml --json
 
 `sim report` includes: `ledger_stats`, `closed_trades_ledger`, `equity_curve`, `trade_journal`, `profile_timeline`, `regime_timeline`, `adaptations`, `event_counts`.
 
+## Shadow arms
+
+Shadow arms are alternative rule sets that run on the **same live regular-session ticks** as production. They use the same quotes, candles, and timestamps, but each arm keeps its own simulated ledger. That makes a rule change comparable day by day against production without waiting for a backtest or risking capital. Arms are pure simulation: they run alongside `--simulate` or live production, never place or cancel orders, never touch production state, and never send Telegram or audio alerts.
+
+```yaml
+shadow:
+  enabled: true            # default false; section may be omitted entirely
+  arms:
+    - id: pullback-sma9    # [a-z0-9_-]
+      overrides:           # deep-merged onto the live production rules
+        playbook:
+          entry:
+            require_below_sma: [9]
+    - id: from-file
+      rules_file: rules/arms/my-arm.yaml   # full TraderRules file (overrides apply on top)
+```
+
+- **Overlay merge.** Without `rules_file`, the arm starts from the current production rules, including learn patches. Maps merge recursively. Arrays, scalars, and `null` **replace**, so to add a symbol group or blocked symbol you must restate the whole list. `rules/arms/swing-arms.example.yaml` has four worked arms.
+- **Load and reload.** Arms are built and validated at startup, on SIGHUP or a rules-file change, and whenever production rules change (for example after a learn patch). Arm `rules_file`s are watched as well. A broken arm logs `shadow arm <id> disabled: …` to the trader log and is skipped. It never crashes the agent or blocks the production tick.
+- **Per tick.** After each production regular tick, every arm runs the engine's own steps against its own state:
+  1. Regime detection, then `apply_regime_profile` / `effective_rules`.
+  2. Sim exits: stop, target, trailing, thesis, and time stop.
+  3. Scan.
+  4. Entry gates: filters, reward/risk, symbol groups, cooldown, drawdown, and capital/sizing against the arm's sim cash.
+  5. Sim fills at the same prices production would use.
+
+  Each arm step reads from a **tick tape**, which holds exactly the data production fetched that tick. The arm makes **zero extra API calls**.
+
+**Files** (rules dir, gitignored via `rules/trader-shadow-*`):
+
+| File | Contents |
+|------|----------|
+| `trader-shadow-state-<trader_id>-<arm_id>.json` | Arm ledger (`TraderState`), `started_at`, current-day tallies |
+| `trader-shadow-journal-<trader_id>-<arm_id>.jsonl` | `shadow_entry_filled`, `shadow_exit_filled` (same payloads as the `sim_*` events, incl. `mfe_pct`, `mae_pct`, `stop_gap_slippage_pct`), and one `shadow_day_summary` per trading day (arm and production equity change, open positions, entries, exits, realized $, active profile, top rejection `reason_code`s) |
+
+Arms do not journal on every tick. Deleting an arm's state file restarts that arm from `simulation.starting_cash_usd`.
+
+**Report:**
+
+```bash
+schwab-trader shadow report rules/trader-swing.yaml          # text
+schwab-trader shadow report rules/trader-swing.yaml --json
+```
+
+For each arm, the report shows:
+
+- Closed trades, win rate, mean `pnl_pct` with a bootstrap 90% CI (10k resamples, fixed seed), profit factor, and realized $.
+- Open positions and equity.
+- The same closed-trade stats for production since the arm started.
+- A **day-paired** comparison: the daily equity change of the arm minus that of production, from `shadow_day_summary`. It reports the mean difference, a 90% CI, and the number of days the arm beat production.
+
+**Limitations.**
+
+- Arms only see symbols that production fetched during the tick. A candidate that production skipped before fetching data (blocked, group-capped, or on cooldown in production) becomes an arm rejection with reason `not_in_production_tape`. An arm that *loosens* a pre-fetch gate is therefore under-measured.
+- Arms inherit production's dynamic watchlist.
+- Arms do **not** model:
+  - the LLM (veto, web picks, profile selection)
+  - monitor exit adjustments
+  - the learn loop
+  - `safety.json` order validation
+- Exits use the quote production fetched for that symbol earlier in the same tick, which is at most a few seconds stale.
+
+**Promotion rule.** Propose promoting an arm to the operator only when **both** of these hold:
+
+- The arm has **≥ 30 closed trades**.
+- The day-paired mean-difference 90% CI **excludes 0**.
+
+The report flags this as `promotion_rule_met`. Arms **never auto-promote**, and a change to production rules is always a manual edit.
+
 ## Agent tick schedule
 
 | Session | When | Sleep | LLM | Trades |
@@ -719,6 +788,7 @@ schwab-trader watch --rules-file rules/my-trader.yaml --trust --yes
 | Agent orchestration | `agent/runner.rs` |
 | LLM client | `agent/llm.rs` |
 | Journal + sim report | `journal.rs` |
+| Shadow arms + report | `shadow/`, tick tape in `market_ctx.rs` |
 | Rules schema | `rules.rs` |
 
 ## v1 scope

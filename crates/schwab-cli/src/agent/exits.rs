@@ -365,6 +365,59 @@ pub fn stop_loss_armed(rules: &RulesConfig, analytics: Option<&SpreadAnalytics>)
     }
 }
 
+/// Non-urgent exit reasons the open-bell gate (`execution.min_minutes_after_open`) and
+/// degraded-quote deferral (`exit_rules.defer_non_urgent_on_degraded_quotes`) may
+/// delay. Everything else — `stop_loss`, thesis exits indicating a threatened short
+/// strike (delta breach / near-strike / inside-1σ / POP deterioration), and any
+/// future max-loss reason — is urgent and is never delayed. Unknown reasons default
+/// to urgent (fail-safe: new exit reasons are never silently delayed).
+pub fn is_urgent_exit_reason(reason: &str) -> bool {
+    !matches!(
+        reason,
+        "profit_target" | "dte_close" | "thesis_regime_mismatch" | "thesis_profit_giveback"
+    )
+}
+
+/// Part B: open-bell execution gate. `min_minutes_after_open` (from
+/// `execution.min_minutes_after_open`) delays new entries and non-urgent exits until
+/// that many minutes after the regular session open; `None` disables the gate.
+/// `minutes_since_open` is `None` outside the regular session (never blocks then —
+/// the schedule gate already handles that case).
+pub fn open_bell_gate_blocks(
+    min_minutes_after_open: Option<u32>,
+    minutes_since_open: Option<u32>,
+) -> bool {
+    let Some(threshold) = min_minutes_after_open else {
+        return false;
+    };
+    minutes_since_open.is_some_and(|elapsed| elapsed < threshold)
+}
+
+/// Part C: degraded-quote exit deferral. Returns a journal/action note when
+/// `defer_enabled` and the exit is non-urgent and its closing mark is degraded, up to
+/// `max_defer_minutes` after `deferred_since` (the position's first-deferred-at
+/// timestamp; `None` on the first tick it would defer) — past that ceiling the exit
+/// proceeds regardless of quote quality.
+pub fn degraded_quote_defer_reason(
+    defer_enabled: bool,
+    max_defer_minutes: u32,
+    reason: &str,
+    quote_degraded: bool,
+    deferred_since: Option<chrono::DateTime<chrono::Utc>>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<&'static str> {
+    if !defer_enabled || !quote_degraded || is_urgent_exit_reason(reason) {
+        return None;
+    }
+    if let Some(since) = deferred_since {
+        let elapsed_minutes = now.signed_duration_since(since).num_minutes().max(0) as u32;
+        if elapsed_minutes >= max_defer_minutes {
+            return None;
+        }
+    }
+    Some("exit_deferred_degraded_quote")
+}
+
 /// Primary + thesis deterioration exits (evaluated every tick when chain data is live).
 /// Profit target / DTE always apply; mark stop may require thin OTM cushion; thesis respects min_hold.
 /// Regime-mismatch early take runs even during min_hold (structure vs live preferred strategy).
@@ -1298,6 +1351,81 @@ pub fn option_group_from_tracked(tracked: &TrackedPosition) -> Option<OptionPosi
 mod tests {
     use super::*;
     use crate::rules::{ExitRules, RulesConfig, ThesisExitRules};
+
+    #[test]
+    fn urgent_exit_reasons_are_never_deferrable() {
+        assert!(!is_urgent_exit_reason("profit_target"));
+        assert!(!is_urgent_exit_reason("dte_close"));
+        assert!(!is_urgent_exit_reason("thesis_regime_mismatch"));
+        assert!(!is_urgent_exit_reason("thesis_profit_giveback"));
+
+        assert!(is_urgent_exit_reason("stop_loss"));
+        assert!(is_urgent_exit_reason("thesis_delta_breach"));
+        assert!(is_urgent_exit_reason("thesis_near_strike"));
+        assert!(is_urgent_exit_reason("thesis_inside_1sigma"));
+        assert!(is_urgent_exit_reason("thesis_pop_deterioration"));
+        // Unknown reasons default to urgent (fail-safe).
+        assert!(is_urgent_exit_reason("max_loss"));
+        assert!(is_urgent_exit_reason("some_future_reason"));
+    }
+
+    #[test]
+    fn open_bell_gate_disabled_when_unset() {
+        assert!(!open_bell_gate_blocks(None, Some(0)));
+        assert!(!open_bell_gate_blocks(None, None));
+    }
+
+    #[test]
+    fn open_bell_gate_blocks_inside_window_only() {
+        assert!(open_bell_gate_blocks(Some(15), Some(0)));
+        assert!(open_bell_gate_blocks(Some(15), Some(14)));
+        assert!(!open_bell_gate_blocks(Some(15), Some(15)));
+        assert!(!open_bell_gate_blocks(Some(15), Some(30)));
+        // Outside the regular session (None) never blocks — fail open.
+        assert!(!open_bell_gate_blocks(Some(15), None));
+    }
+
+    #[test]
+    fn degraded_quote_defer_skips_urgent_and_non_degraded() {
+        let now = chrono::Utc::now();
+        assert_eq!(
+            degraded_quote_defer_reason(true, 60, "stop_loss", true, None, now),
+            None,
+            "urgent reasons are never deferred"
+        );
+        assert_eq!(
+            degraded_quote_defer_reason(true, 60, "dte_close", false, None, now),
+            None,
+            "not deferred when the quote isn't degraded"
+        );
+        assert_eq!(
+            degraded_quote_defer_reason(false, 60, "dte_close", true, None, now),
+            None,
+            "disabled by config"
+        );
+    }
+
+    #[test]
+    fn degraded_quote_defer_respects_ceiling() {
+        let now = chrono::Utc::now();
+        assert_eq!(
+            degraded_quote_defer_reason(true, 60, "dte_close", true, None, now),
+            Some("exit_deferred_degraded_quote"),
+            "first sighting defers"
+        );
+        let deferred_since = now - chrono::Duration::minutes(30);
+        assert_eq!(
+            degraded_quote_defer_reason(true, 60, "dte_close", true, Some(deferred_since), now),
+            Some("exit_deferred_degraded_quote"),
+            "still within the ceiling"
+        );
+        let expired = now - chrono::Duration::minutes(90);
+        assert_eq!(
+            degraded_quote_defer_reason(true, 60, "dte_close", true, Some(expired), now),
+            None,
+            "past max_defer_minutes — proceed regardless of quote quality"
+        );
+    }
 
     #[test]
     fn evaluate_exit_from_mark_profit_target() {

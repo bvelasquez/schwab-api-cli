@@ -1,0 +1,18 @@
+# Intraday option chain snapshots for QQQ/SPY (read-only; token mirror only).
+#
+# Used by schwab-chain-snapshot.timer — not for manual trading.
+
+[Unit]
+Description=Schwab option chain snapshot (QQQ, SPY)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/schwabinvestbot
+EnvironmentFile=-%h/.config/environment.d/schwab-paper.conf
+Environment=SCHWAB_TOKEN_DIR=%h/.config/schwabinvestbot/agents
+ExecStart=%h/projects/schwabinvestbot/scripts/chain-snapshot.sh
+
+[Install]
+WantedBy=default.target

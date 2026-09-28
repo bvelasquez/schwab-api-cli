@@ -179,6 +179,11 @@ pub struct TrackedPosition {
     pub last_good_short_ask: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_good_long_bid: Option<f64>,
+    /// When a non-urgent exit was first deferred on a degraded quote
+    /// (`exit_rules.defer_non_urgent_on_degraded_quotes`). Cleared once the exit
+    /// proceeds (the position leaves `open_positions`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub degraded_quote_exit_deferred_at: Option<DateTime<Utc>>,
 }
 
 pub fn update_peak_profit_pct(position: &mut TrackedPosition, profit_pct: f64) {
@@ -407,6 +412,7 @@ impl Default for TrackedPosition {
             last_good_debit_to_close: None,
             last_good_short_ask: None,
             last_good_long_bid: None,
+            degraded_quote_exit_deferred_at: None,
         }
     }
 }
@@ -489,6 +495,25 @@ impl AgentState {
         self.open_positions
             .values()
             .filter(|p| p.account_hash == account_hash && p.strategy == strategy.as_str())
+            .count() as u32
+    }
+
+    /// Same as `count_open_for_strategy` but excludes one position by id — used when
+    /// evaluating a defensive-roll replacement while the position being rolled is still
+    /// open (it will vacate its slot once the roll's close completes).
+    pub fn count_open_for_strategy_excluding(
+        &self,
+        account_hash: &str,
+        strategy: StrategyKind,
+        exclude_position_id: Option<&str>,
+    ) -> u32 {
+        self.open_positions
+            .values()
+            .filter(|p| {
+                p.account_hash == account_hash
+                    && p.strategy == strategy.as_str()
+                    && exclude_position_id != Some(p.position_id.as_str())
+            })
             .count() as u32
     }
 

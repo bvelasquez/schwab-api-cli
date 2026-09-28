@@ -110,6 +110,24 @@ pub fn eqo_regular_session_estimate(now: DateTime<Utc>) -> bool {
     t >= open && t <= close
 }
 
+/// Minutes elapsed since the regular EQO session opened (09:30 ET) today, for the
+/// `execution.min_minutes_after_open` open-bell gate. `None` on a weekend or before
+/// 09:30 ET — the regular tick loop only runs once the session is open per
+/// `schedule.market_hours_only`, so callers should treat `None` as "gate doesn't
+/// apply" rather than blocking. Does not model exchange holidays.
+pub fn minutes_since_regular_open(now: DateTime<Utc>) -> Option<u32> {
+    let et = now.with_timezone(&New_York);
+    if matches!(et.weekday(), Weekday::Sat | Weekday::Sun) {
+        return None;
+    }
+    let open = NaiveTime::from_hms_opt(9, 30, 0)?;
+    let elapsed = et.time().signed_duration_since(open).num_seconds();
+    if elapsed < 0 {
+        return None;
+    }
+    Some((elapsed / 60) as u32)
+}
+
 /// Resolve EQO status: live/cached Schwab hours → recent agent state → ET schedule estimate.
 pub fn resolve_eqo_market_open(
     hours: Option<&Value>,
@@ -217,6 +235,30 @@ mod tests {
             .unwrap()
             .with_timezone(&Utc);
         assert_eq!(option_market_open_from_hours(&hours, pst), Some(false));
+    }
+
+    #[test]
+    fn minutes_since_open_at_open_bell() {
+        let at_open = DateTime::parse_from_rfc3339("2026-06-25T09:30:00-04:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(minutes_since_regular_open(at_open), Some(0));
+        let ten_past = DateTime::parse_from_rfc3339("2026-06-25T09:40:00-04:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(minutes_since_regular_open(ten_past), Some(10));
+    }
+
+    #[test]
+    fn minutes_since_open_none_before_open_or_weekend() {
+        let pre_open = DateTime::parse_from_rfc3339("2026-06-25T09:00:00-04:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(minutes_since_regular_open(pre_open), None);
+        let saturday = DateTime::parse_from_rfc3339("2026-06-27T10:00:00-04:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(minutes_since_regular_open(saturday), None);
     }
 
     #[test]

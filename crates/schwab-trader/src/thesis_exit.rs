@@ -4,13 +4,17 @@ use crate::agent::state::SwingPosition;
 use crate::rules::TraderRules;
 use crate::technical::TechnicalSnapshot;
 
-pub fn update_peak_profit_pct(position: &mut SwingPosition, last: f64) {
+/// Tracks both MFE (`peak_profit_pct`) and MAE (`trough_profit_pct`) from the
+/// same unrealized-pnl sample so callers only need one update per tick/bar.
+pub fn update_peak_and_trough_profit_pct(position: &mut SwingPosition, last: f64) {
     if position.entry_price <= f64::EPSILON || last <= 0.0 {
         return;
     }
     let profit_pct = ((last / position.entry_price) - 1.0) * 100.0;
     let peak = position.peak_profit_pct.unwrap_or(profit_pct);
     position.peak_profit_pct = Some(peak.max(profit_pct));
+    let trough = position.trough_profit_pct.unwrap_or(profit_pct);
+    position.trough_profit_pct = Some(trough.min(profit_pct));
 }
 
 pub fn is_thesis_exit_reason(reason: &str) -> bool {
@@ -109,6 +113,7 @@ mod tests {
             oco_order_id: Some("123".into()),
             exit_plan_version: 1,
             peak_profit_pct: Some(8.0),
+            trough_profit_pct: None,
             entry_rs_vs_benchmark_30d: Some(2.0),
         }
     }
@@ -122,6 +127,40 @@ mod tests {
             peak_fraction: None,
         });
         rules
+    }
+
+    #[test]
+    fn peak_and_trough_track_independently() {
+        let mut pos = sample_pos();
+        pos.peak_profit_pct = None;
+        pos.trough_profit_pct = None;
+
+        update_peak_and_trough_profit_pct(&mut pos, 105.0); // +5%
+        assert!((pos.peak_profit_pct.unwrap() - 5.0).abs() < 0.01);
+        assert!((pos.trough_profit_pct.unwrap() - 5.0).abs() < 0.01);
+
+        update_peak_and_trough_profit_pct(&mut pos, 110.0); // +10% new peak
+        assert!((pos.peak_profit_pct.unwrap() - 10.0).abs() < 0.01);
+        assert!((pos.trough_profit_pct.unwrap() - 5.0).abs() < 0.01); // trough unmoved
+
+        update_peak_and_trough_profit_pct(&mut pos, 98.0); // -2% new trough, peak unaffected
+        assert!((pos.peak_profit_pct.unwrap() - 10.0).abs() < 0.01);
+        assert!((pos.trough_profit_pct.unwrap() - (-2.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn peak_and_trough_ignore_invalid_inputs() {
+        let mut pos = sample_pos();
+        pos.peak_profit_pct = Some(3.0);
+        pos.trough_profit_pct = Some(-1.0);
+        update_peak_and_trough_profit_pct(&mut pos, 0.0);
+        assert_eq!(pos.peak_profit_pct, Some(3.0));
+        assert_eq!(pos.trough_profit_pct, Some(-1.0));
+
+        pos.entry_price = 0.0;
+        update_peak_and_trough_profit_pct(&mut pos, 100.0);
+        assert_eq!(pos.peak_profit_pct, Some(3.0));
+        assert_eq!(pos.trough_profit_pct, Some(-1.0));
     }
 
     #[test]

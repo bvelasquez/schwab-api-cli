@@ -15,13 +15,13 @@ use crate::agent::roll::{
     roll_biased_dte_min, roll_biased_max_width, roll_biased_short_delta_max, roll_eligible,
     roll_money_ok, RollEligibility,
 };
-use crate::agent::sim::{compute_stats, ensure_ledger, ClosedSimTrade};
+use crate::agent::sim::{compute_stats, ensure_ledger, fill_slippage_fraction, ClosedSimTrade};
 use crate::agent::spread_analytics::{compute_vertical_analytics, VerticalAnalyticsInput};
 use crate::agent::state::{save_state, AgentState, TrackedPosition};
 use crate::options::StrategyKind;
 use crate::rules::{OptionsRegimeConfig, RulesConfig};
 
-use super::bs::vertical_debit_to_close;
+use super::bs::{scaled_sigma, vertical_debit_to_close, PricingCalibration};
 use super::cache::BacktestCache;
 use super::synth::{
     pick_iron_condor, pick_vertical, vertical_passes_entry_gates, SynthCondor, SynthVertical,
@@ -279,7 +279,10 @@ fn process_open(
             let iv = cache
                 .vix_on_date(&rules.regime.vix_symbol, day)
                 .unwrap_or(v.iv_pct);
+            let calib = PricingCalibration::for_symbol(rules, &v.underlying);
             let dte = (v.expiry - day).num_days().max(0);
+            // Decision basis matches the live sim: raw (unslipped) chain/BS debit vs.
+            // the already-slipped entry credit stored on `pos` (see `insert_vertical`).
             let debit = vertical_debit_to_close(
                 v.is_put,
                 spot,
@@ -287,6 +290,7 @@ fn process_open(
                 v.long_strike,
                 dte,
                 iv,
+                calib,
             );
             let profit_pct = if pos.entry_credit > f64::EPSILON {
                 ((pos.entry_credit - debit) / pos.entry_credit) * 100.0
@@ -312,7 +316,7 @@ fn process_open(
                         v.short_strike,
                         crate::agent::backtest::bs::years_from_dte(dte),
                         0.0,
-                        (iv / 100.0).max(0.01),
+                        scaled_sigma(iv, calib.iv_multiplier),
                     ),
                 ),
                 long_delta: None,
@@ -361,7 +365,7 @@ fn process_open(
                         return Ok(Some(rolled));
                     }
                 }
-                close_position(rules_path, state, &pos, &eval.reason, debit, as_of, day)?;
+                close_position(rules_path, rules, state, &pos, &eval.reason, debit, as_of, day)?;
                 return Ok(None);
             }
             Ok(Some(pos))
@@ -373,10 +377,12 @@ fn process_open(
             let iv = cache
                 .vix_on_date(&rules.regime.vix_symbol, day)
                 .unwrap_or(c.iv_pct);
+            let calib = PricingCalibration::for_symbol(rules, &c.underlying);
             let dte = (c.expiry - day).num_days().max(0);
-            let put_debit = vertical_debit_to_close(true, spot, c.put_short, c.put_long, dte, iv);
+            let put_debit =
+                vertical_debit_to_close(true, spot, c.put_short, c.put_long, dte, iv, calib);
             let call_debit =
-                vertical_debit_to_close(false, spot, c.call_short, c.call_long, dte, iv);
+                vertical_debit_to_close(false, spot, c.call_short, c.call_long, dte, iv, calib);
             let debit = put_debit + call_debit;
             let profit_pct = if pos.entry_credit > f64::EPSILON {
                 ((pos.entry_credit - debit) / pos.entry_credit) * 100.0
@@ -405,7 +411,7 @@ fn process_open(
                 "iron_condor",
             );
             if let Some(eval) = exit {
-                close_position(rules_path, state, &pos, &eval.reason, debit, as_of, day)?;
+                close_position(rules_path, rules, state, &pos, &eval.reason, debit, as_of, day)?;
                 return Ok(None);
             }
             Ok(Some(pos))
@@ -479,6 +485,7 @@ fn try_roll(
     entry.max_width = roll_biased_max_width(entry.max_width, Some(width));
     entry.max_contracts_per_trade = pos.contracts.max(1);
 
+    let calib = PricingCalibration::for_symbol(rules, &v.underlying);
     let closes = cache.closes_through(&v.underlying, day);
     let Some(candidate) = pick_vertical(
         &v.underlying,
@@ -489,6 +496,7 @@ fn try_roll(
         &entry,
         v.is_put,
         pos.contracts,
+        calib,
     ) else {
         *skips.entry("no_roll_candidate".into()).or_insert(0) += 1;
         return Ok(None);
@@ -510,6 +518,7 @@ fn try_roll(
     // Close old, open new — successful roll skips stop cooldown.
     close_position(
         rules_path,
+        rules,
         state,
         pos,
         "defensive_roll",
@@ -527,6 +536,7 @@ fn try_roll(
     );
     let opened = insert_vertical(
         state,
+        rules,
         &pos.account_hash,
         day,
         as_of,
@@ -553,6 +563,7 @@ fn try_roll(
 
 fn close_position(
     rules_path: &Path,
+    rules: &RulesConfig,
     state: &mut AgentState,
     pos: &OpenBt,
     reason: &str,
@@ -562,6 +573,10 @@ fn close_position(
 ) -> Result<()> {
     let entry_credit = pos.entry_credit;
     let contracts = pos.contracts.max(1) as f64;
+    // Widen the close debit for slippage, same as the live sim's `record_sim_exit` —
+    // the exit *decision* upstream used the raw (unslipped) mark; only the recorded
+    // fill economics are slipped.
+    let debit = debit * (1.0 + fill_slippage_fraction(rules));
     let pnl_usd = (entry_credit - debit) * 100.0 * contracts;
     let pnl_pct = if entry_credit > f64::EPSILON {
         ((entry_credit - debit) / entry_credit) * 100.0
@@ -675,6 +690,7 @@ fn try_entry(
             continue;
         };
         let closes = cache.closes_through(&sym, day);
+        let calib = PricingCalibration::for_symbol(rules, &sym);
 
         if preferred == "iron_condor" && rules.strategies.iron_condor.enabled {
             let open_c = state.count_open_for_strategy(account, StrategyKind::IronCondor);
@@ -682,7 +698,7 @@ fn try_entry(
                 *skips.entry("max_open_condor".into()).or_insert(0) += 1;
                 continue;
             }
-            if let Some(c) = pick_iron_condor(&sym, day, spot, iv_pct, &closes, rules) {
+            if let Some(c) = pick_iron_condor(&sym, day, spot, iv_pct, &closes, rules, calib) {
                 let margin = condor_margin(&c);
                 if margin > rules.risk.max_risk_per_trade_usd
                     || state.reserved_risk_usd() + margin > rules.risk.max_portfolio_risk_usd
@@ -694,7 +710,8 @@ fn try_entry(
                 if state.open_positions.contains_key(&id) {
                     continue;
                 }
-                let opened = insert_condor(state, account, day, as_of, c.clone(), margin, &id);
+                let opened = insert_condor(state, rules, account, day, as_of, c.clone(), margin, &id);
+                let width = (c.put_short - c.put_long).abs().max((c.call_long - c.call_short).abs());
                 journal::append_backtest_event_at(
                     rules_path,
                     as_of,
@@ -705,7 +722,8 @@ fn try_entry(
                         "underlying": c.underlying,
                         "expiry": c.expiry.to_string(),
                         "dte": c.dte,
-                        "entry_credit": c.credit,
+                        "entry_credit": opened.entry_credit,
+                        "width": width,
                     }),
                 )?;
                 open.push(opened);
@@ -728,8 +746,9 @@ fn try_entry(
             *skips.entry("put_credit_guard".into()).or_insert(0) += 1;
             continue;
         }
-        let entry = &rules.entry_rules.vertical;
-        let mut entry = entry.clone();
+        // Per-symbol watchlist overrides (min_credit, max_width, deltas, ...) merged
+        // onto entry_rules.vertical, same as the live entry path.
+        let mut entry = rules.effective_vertical_entry(&sym);
         if caution_active {
             if let Some(cfg) = rules
                 .entry_policy
@@ -773,6 +792,7 @@ fn try_entry(
             &entry,
             is_put,
             entry.max_contracts_per_trade,
+            calib,
         ) else {
             *skips.entry("no_vertical_candidate".into()).or_insert(0) += 1;
             continue;
@@ -796,7 +816,7 @@ fn try_entry(
         if state.open_positions.contains_key(&id) {
             continue;
         }
-        let opened = insert_vertical(state, account, day, as_of, v.clone(), margin, &id, 0, false);
+        let opened = insert_vertical(state, rules, account, day, as_of, v.clone(), margin, &id, 0, false);
         journal::append_backtest_event_at(
             rules_path,
             as_of,
@@ -807,7 +827,8 @@ fn try_entry(
                 "underlying": v.underlying,
                 "expiry": v.expiry.to_string(),
                 "dte": v.dte,
-                "entry_credit": v.credit,
+                "entry_credit": opened.entry_credit,
+                "width": (v.short_strike - v.long_strike).abs(),
                 "short_delta": v.short_delta,
             }),
         )?;
@@ -831,6 +852,7 @@ fn condor_margin(c: &SynthCondor) -> f64 {
 
 fn insert_vertical(
     state: &mut AgentState,
+    rules: &RulesConfig,
     account: &str,
     day: NaiveDate,
     as_of: chrono::DateTime<Utc>,
@@ -843,6 +865,10 @@ fn insert_vertical(
     if !roll_replacement {
         state.trades_today = state.trades_today.saturating_add(1);
     }
+    // Margin and `entry_params.limit_credit` stay on the raw candidate credit (matches
+    // the live path's `estimate_order_margin`/signal params); only the tracked entry
+    // credit used for P&L and exit-target math is slipped, same as `record_sim_entry`.
+    let entry_credit = v.credit * (1.0 - fill_slippage_fraction(rules));
     state.open_positions.insert(
         id.to_string(),
         TrackedPosition {
@@ -852,7 +878,7 @@ fn insert_vertical(
             expiry: v.expiry.to_string(),
             strategy: "vertical".into(),
             opened_at: as_of,
-            entry_credit: Some(v.credit),
+            entry_credit: Some(entry_credit),
             max_loss_usd: margin,
             contracts: v.contracts,
             entry_params: Some(json!({
@@ -874,7 +900,7 @@ fn insert_vertical(
         id: id.to_string(),
         kind: OpenKind::Vertical(v.clone()),
         opened_on: day,
-        entry_credit: v.credit,
+        entry_credit,
         max_loss_usd: margin,
         contracts: v.contracts,
         peak_profit_pct: None,
@@ -886,6 +912,7 @@ fn insert_vertical(
 
 fn insert_condor(
     state: &mut AgentState,
+    rules: &RulesConfig,
     account: &str,
     day: NaiveDate,
     as_of: chrono::DateTime<Utc>,
@@ -894,6 +921,7 @@ fn insert_condor(
     id: &str,
 ) -> OpenBt {
     state.trades_today = state.trades_today.saturating_add(1);
+    let entry_credit = c.credit * (1.0 - fill_slippage_fraction(rules));
     state.open_positions.insert(
         id.to_string(),
         TrackedPosition {
@@ -903,7 +931,7 @@ fn insert_condor(
             expiry: c.expiry.to_string(),
             strategy: "iron_condor".into(),
             opened_at: as_of,
-            entry_credit: Some(c.credit),
+            entry_credit: Some(entry_credit),
             max_loss_usd: margin,
             contracts: c.contracts,
             entry_params: Some(json!({
@@ -923,12 +951,150 @@ fn insert_condor(
         id: id.to_string(),
         kind: OpenKind::Condor(c.clone()),
         opened_on: day,
-        entry_credit: c.credit,
+        entry_credit,
         max_loss_usd: margin,
         contracts: c.contracts,
         peak_profit_pct: None,
         rolls_used: 0,
         account_hash: account.to_string(),
         opened_at: as_of,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rules::{AccountType, RulesAccount, SimulationConfig};
+
+    fn rules_with_slippage(fill_slippage_pct: f64) -> RulesConfig {
+        RulesConfig {
+            version: 1,
+            agent_id: "test".into(),
+            accounts: vec![RulesAccount {
+                hash: "ABC".into(),
+                label: None,
+                r#type: AccountType::Margin,
+                enabled: true,
+            }],
+            schedule: Default::default(),
+            strategies: Default::default(),
+            watchlist: vec!["SPY".into()],
+            entry_policy: Default::default(),
+            entry_rules: Default::default(),
+            exit_rules: Default::default(),
+            risk: Default::default(),
+            regime: Default::default(),
+            execution: Default::default(),
+            llm: Default::default(),
+            notify: Default::default(),
+            simulation: Some(SimulationConfig {
+                starting_budget_usd: 4000.0,
+                fill_slippage_pct,
+                backtest_pricing: None,
+            }),
+        }
+    }
+
+    fn sample_vertical() -> SynthVertical {
+        SynthVertical {
+            underlying: "SPY".into(),
+            expiry: NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(),
+            is_put: true,
+            short_strike: 480.0,
+            long_strike: 475.0,
+            credit: 1.00,
+            dte: 35,
+            short_delta: -0.16,
+            long_delta: -0.10,
+            iv_pct: 18.0,
+            realized_vol_pct: 15.0,
+            contracts: 1,
+        }
+    }
+
+    #[test]
+    fn insert_vertical_slips_tracked_entry_credit_but_not_margin_inputs() {
+        // Matches `sim::record_sim_entry`: tracked/ledger entry credit is reduced by
+        // slippage, but margin and `entry_params.limit_credit` stay on the raw credit.
+        let rules = rules_with_slippage(5.0);
+        let mut state = AgentState::default();
+        let opened = insert_vertical(
+            &mut state,
+            &rules,
+            "ACC",
+            NaiveDate::from_ymd_opt(2026, 9, 1).unwrap(),
+            Utc::now(),
+            sample_vertical(),
+            400.0,
+            "pos-1",
+            0,
+            false,
+        );
+        assert!((opened.entry_credit - 0.95).abs() < 1e-9, "{}", opened.entry_credit);
+        let tracked = &state.open_positions["pos-1"];
+        assert!((tracked.entry_credit.unwrap() - 0.95).abs() < 1e-9);
+        let limit_credit = tracked.entry_params.as_ref().unwrap()["limit_credit"]
+            .as_f64()
+            .unwrap();
+        assert!((limit_credit - 1.00).abs() < 1e-9);
+    }
+
+    #[test]
+    fn insert_vertical_with_no_slippage_config_is_unchanged() {
+        let rules = rules_with_slippage(0.0);
+        let mut state = AgentState::default();
+        let opened = insert_vertical(
+            &mut state,
+            &rules,
+            "ACC",
+            NaiveDate::from_ymd_opt(2026, 9, 1).unwrap(),
+            Utc::now(),
+            sample_vertical(),
+            400.0,
+            "pos-1",
+            0,
+            false,
+        );
+        assert!((opened.entry_credit - 1.00).abs() < 1e-9);
+    }
+
+    #[test]
+    fn close_position_widens_exit_debit_by_slippage_after_decision() {
+        // The exit decision (profit target / stop) upstream compares the raw mark
+        // debit against the already-slipped entry credit; only the recorded fill
+        // widens the debit further, matching `sim::record_sim_exit`.
+        let rules = rules_with_slippage(5.0);
+        let rules_dir = tempfile::tempdir().unwrap();
+        let rules_path = rules_dir.path().join("rules.yaml");
+        let mut state = AgentState::default();
+        ensure_ledger(&mut state, &rules);
+        let pos = OpenBt {
+            id: "pos-1".into(),
+            kind: OpenKind::Vertical(sample_vertical()),
+            opened_on: NaiveDate::from_ymd_opt(2026, 9, 1).unwrap(),
+            entry_credit: 0.95,
+            max_loss_usd: 400.0,
+            contracts: 1,
+            peak_profit_pct: None,
+            rolls_used: 0,
+            account_hash: "ACC".into(),
+            opened_at: Utc::now(),
+        };
+        close_position(
+            &rules_path,
+            &rules,
+            &mut state,
+            &pos,
+            "profit_target",
+            0.20,
+            Utc::now(),
+            NaiveDate::from_ymd_opt(2026, 9, 20).unwrap(),
+        )
+        .unwrap();
+        let trade = &state.sim.as_ref().unwrap().closed_trades[0];
+        // 0.20 raw debit * (1 + 5%) = 0.21.
+        assert!((trade.exit_debit - 0.21).abs() < 1e-9, "{}", trade.exit_debit);
+        // pnl uses the already-slipped entry credit vs. the now-widened debit.
+        assert!((trade.pnl_usd - ((0.95 - 0.21) * 100.0)).abs() < 1e-6, "{}", trade.pnl_usd);
     }
 }

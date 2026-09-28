@@ -263,63 +263,8 @@ pub async fn attempt_entry(
         state.reset_trades_day(&rules.schedule.timezone);
     }
 
-    let block_reason = if replay {
-        state.entry_block_reason_replay(rules)
-    } else {
-        state.entry_block_reason(rules)
-    };
-    if let Some(reason) = block_reason {
-        return Ok(skip_entry(
-            &symbol,
-            &reason,
-            rules,
-            &active_profile,
-            replay,
-        ));
-    }
-
-    if rules.is_core_holding(&symbol) {
-        return Ok(skip_entry(&symbol, "core_holding", rules, &active_profile, replay));
-    }
-    if state.has_open_symbol(&symbol) {
-        return Ok(skip_entry(&symbol, "already_open", rules, &active_profile, replay));
-    }
-    if rules.playbook.direction != "long" {
-        return Ok(skip_entry(
-            &symbol,
-            "v1 supports long entries only",
-            rules,
-            &active_profile,
-            replay,
-        ));
-    }
-
-    if rules.is_blocked_symbol(&symbol) {
-        return Ok(skip_entry(&symbol, "blocked_symbol", rules, &active_profile, replay));
-    }
-    if rules.playbook.filters.shuffle.enabled {
-        let lookback = rules.playbook.filters.shuffle.lookback_days;
-        let recent =
-            crate::shuffle::collect_recent_exits(state, Some(rules_path), lookback);
-        let adj = crate::shuffle::compute_shuffle_adjustment(
-            rules, state, &symbol, 0.0, None, &recent,
-        );
-        if let Some(reason) = crate::shuffle::entry_shuffle_block_reason(
-            rules, state, &symbol, &adj, &recent,
-        ) {
-            return Ok(skip_entry(&symbol, &reason, rules, &active_profile, replay));
-        }
-    }
-    if !state.unbracketed_positions.is_empty()
-        && rules.execution.require_bracket_before_entry_resume
-    {
-        return Ok(skip_entry(
-            &symbol,
-            "unbracketed position exists — entries halted",
-            rules,
-            &active_profile,
-            replay,
-        ));
+    if let Some(reason) = entry_gate_reason(rules, state, &symbol, Some(rules_path), replay) {
+        return Ok(skip_entry(&symbol, &reason, rules, &active_profile, replay));
     }
 
     let snap = fetch_technical_snapshot(market, rules, &symbol).await?;
@@ -346,19 +291,14 @@ pub async fn attempt_entry(
         Some(rules_path),
     )
     .await?;
-    let range =
-        crate::capital::ExitRangeContext::from_history(rules, snap.history_features.as_ref());
-    let (profit_limit, stop_price, stop_limit) =
-        exit_prices(limit_price, rules, snap.atr_14, range);
-    let size_scalar = near_52w_high_size_scalar(rules, &snap);
-    let sizing = compute_position_sizing(
-        rules,
-        limit_price,
+    let EntryPlan {
+        profit_limit,
         stop_price,
-        capital_preview.tradable_budget_usd,
-        snap.atr_14,
-    );
-    let base_qty = sizing.quantity * size_scalar;
+        stop_limit,
+        range,
+        sizing,
+        quantity: base_qty,
+    } = plan_entry(rules, &snap, limit_price, capital_preview.tradable_budget_usd);
     let quantity = quantity_override.unwrap_or(base_qty);
     log_position_sizing(
         &if quantity_override.is_some() {
@@ -371,27 +311,13 @@ pub async fn attempt_entry(
         },
         rules.playbook.entry.position_size.max_position_pct,
     );
-    let min_qty = if rules.fractional_shares_allowed() {
-        MIN_FRACTIONAL_SHARES
-    } else {
-        1.0
-    };
-    if quantity < min_qty {
-        return Ok(skip_entry(
-            &symbol,
-            &format!(
-                "quantity below {} (budget ${:.2}, price ${limit_price:.2})",
-                if min_qty < 1.0 {
-                    format!("{min_qty}")
-                } else {
-                    "1".into()
-                },
-                capital_preview.tradable_budget_usd
-            ),
-            rules,
-            &active_profile,
-            replay,
-        ));
+    if let Some(reason) = quantity_below_min_reason(
+        rules,
+        quantity,
+        capital_preview.tradable_budget_usd,
+        limit_price,
+    ) {
+        return Ok(skip_entry(&symbol, &reason, rules, &active_profile, replay));
     }
 
     let estimated_cost = estimate_equity_buy_cost(quantity, "LIMIT", Some(limit_price), None)?;
@@ -517,45 +443,24 @@ pub async fn attempt_entry(
             range,
         )?;
         state.trades_today += 1;
+        let payload = SimEntryFill {
+            source,
+            trade_id: &pos_id,
+            symbol: &symbol,
+            quantity,
+            fill_price: limit_price,
+            stop_price,
+            profit_limit,
+            capital: &capital,
+            sizing: &sizing,
+        }
+        .payload(state);
         if backtest {
             save_backtest_state(rules_path, state)?;
-            journal::append_backtest_event(
-                rules_path,
-                fill_at,
-                "sim_entry_filled",
-                json!({
-                    "source": source,
-                    "trade_id": pos_id,
-                    "symbol": symbol,
-                    "quantity": quantity,
-                    "fill_price": limit_price,
-                    "stop_price": stop_price,
-                    "profit_limit": profit_limit,
-                    "capital_check": capital_check_to_json(&capital),
-                    "position_sizing": sizing,
-                    "active_profile": state.active_profile,
-                    "regime_class": state.last_regime.as_ref().and_then(|r| r.get("class")),
-                }),
-            )?;
+            journal::append_backtest_event(rules_path, fill_at, "sim_entry_filled", payload)?;
         } else {
             save_state(rules_path, state)?;
-            journal::append_event(
-                rules_path,
-                "sim_entry_filled",
-                json!({
-                    "source": source,
-                    "trade_id": pos_id,
-                    "symbol": symbol,
-                    "quantity": quantity,
-                    "fill_price": limit_price,
-                    "stop_price": stop_price,
-                    "profit_limit": profit_limit,
-                    "capital_check": capital_check_to_json(&capital),
-                    "position_sizing": sizing,
-                    "active_profile": state.active_profile,
-                    "regime_class": state.last_regime.as_ref().and_then(|r| r.get("class")),
-                }),
-            )?;
+            journal::append_event(rules_path, "sim_entry_filled", payload)?;
         }
 
         return Ok(EntryAttempt {
@@ -749,6 +654,7 @@ pub async fn attempt_entry(
             oco_order_id,
             exit_plan_version: 1,
             peak_profit_pct: None,
+            trough_profit_pct: None,
             entry_rs_vs_benchmark_30d: snap
                 .history_features
                 .as_ref()
@@ -787,6 +693,144 @@ pub async fn attempt_entry(
     })
 }
 
+/// Symbol-level entry gates evaluated before any market data fetch.
+/// `rules_path` feeds the shuffle cooldown's journal fallback; shadow arms
+/// pass `None` so cooldowns come from their own ledger only.
+pub(crate) fn entry_gate_reason(
+    rules: &TraderRules,
+    state: &TraderState,
+    symbol: &str,
+    rules_path: Option<&Path>,
+    replay: bool,
+) -> Option<String> {
+    let block_reason = if replay {
+        state.entry_block_reason_replay(rules)
+    } else {
+        state.entry_block_reason(rules)
+    };
+    if block_reason.is_some() {
+        return block_reason;
+    }
+    if rules.is_core_holding(symbol) {
+        return Some("core_holding".into());
+    }
+    if state.has_open_symbol(symbol) {
+        return Some("already_open".into());
+    }
+    if rules.playbook.direction != "long" {
+        return Some("v1 supports long entries only".into());
+    }
+    if rules.is_blocked_symbol(symbol) {
+        return Some("blocked_symbol".into());
+    }
+    if rules.playbook.filters.shuffle.enabled {
+        let lookback = rules.playbook.filters.shuffle.lookback_days;
+        let recent = crate::shuffle::collect_recent_exits(state, rules_path, lookback);
+        let adj =
+            crate::shuffle::compute_shuffle_adjustment(rules, state, symbol, 0.0, None, &recent);
+        if let Some(reason) =
+            crate::shuffle::entry_shuffle_block_reason(rules, state, symbol, &adj, &recent)
+        {
+            return Some(reason);
+        }
+    }
+    if !state.unbracketed_positions.is_empty()
+        && rules.execution.require_bracket_before_entry_resume
+    {
+        return Some("unbracketed position exists — entries halted".into());
+    }
+    None
+}
+
+/// Bracket geometry and size for a long entry at `limit_price`.
+pub(crate) struct EntryPlan {
+    pub profit_limit: f64,
+    pub stop_price: f64,
+    pub stop_limit: f64,
+    pub range: crate::capital::ExitRangeContext,
+    pub sizing: PositionSizing,
+    /// Sizing quantity after the near-52w-high scalar.
+    pub quantity: f64,
+}
+
+pub(crate) fn plan_entry(
+    rules: &TraderRules,
+    snap: &TechnicalSnapshot,
+    limit_price: f64,
+    tradable_budget: f64,
+) -> EntryPlan {
+    let range =
+        crate::capital::ExitRangeContext::from_history(rules, snap.history_features.as_ref());
+    let (profit_limit, stop_price, stop_limit) =
+        exit_prices(limit_price, rules, snap.atr_14, range);
+    let sizing =
+        compute_position_sizing(rules, limit_price, stop_price, tradable_budget, snap.atr_14);
+    let quantity = sizing.quantity * near_52w_high_size_scalar(rules, snap);
+    EntryPlan {
+        profit_limit,
+        stop_price,
+        stop_limit,
+        range,
+        sizing,
+        quantity,
+    }
+}
+
+pub(crate) fn quantity_below_min_reason(
+    rules: &TraderRules,
+    quantity: f64,
+    tradable_budget: f64,
+    limit_price: f64,
+) -> Option<String> {
+    let min_qty = if rules.fractional_shares_allowed() {
+        MIN_FRACTIONAL_SHARES
+    } else {
+        1.0
+    };
+    if quantity >= min_qty {
+        return None;
+    }
+    Some(format!(
+        "quantity below {} (budget ${tradable_budget:.2}, price ${limit_price:.2})",
+        if min_qty < 1.0 {
+            format!("{min_qty}")
+        } else {
+            "1".into()
+        },
+    ))
+}
+
+/// `sim_entry_filled` journal payload (shadow arms reuse it as `shadow_entry_filled`).
+pub(crate) struct SimEntryFill<'a> {
+    pub source: &'a str,
+    pub trade_id: &'a str,
+    pub symbol: &'a str,
+    pub quantity: f64,
+    pub fill_price: f64,
+    pub stop_price: f64,
+    pub profit_limit: f64,
+    pub capital: &'a crate::capital::CapitalCheck,
+    pub sizing: &'a PositionSizing,
+}
+
+impl SimEntryFill<'_> {
+    pub fn payload(&self, state: &TraderState) -> Value {
+        json!({
+            "source": self.source,
+            "trade_id": self.trade_id,
+            "symbol": self.symbol,
+            "quantity": self.quantity,
+            "fill_price": self.fill_price,
+            "stop_price": self.stop_price,
+            "profit_limit": self.profit_limit,
+            "capital_check": capital_check_to_json(self.capital),
+            "position_sizing": self.sizing,
+            "active_profile": state.active_profile,
+            "regime_class": state.last_regime.as_ref().and_then(|r| r.get("class")),
+        })
+    }
+}
+
 fn skip_entry(
     symbol: &str,
     reason: impl Into<String>,
@@ -820,7 +864,7 @@ fn skipped(symbol: &str, reason: impl Into<String>) -> EntryAttempt {
     }
 }
 
-fn resolve_entry_limit_price(snap: &TechnicalSnapshot, rules: &TraderRules) -> f64 {
+pub(crate) fn resolve_entry_limit_price(snap: &TechnicalSnapshot, rules: &TraderRules) -> f64 {
     match rules.execution.entry_limit_basis.as_str() {
         "bid" => snap.bid.unwrap_or(snap.last),
         "mid" => match (snap.bid, snap.ask) {

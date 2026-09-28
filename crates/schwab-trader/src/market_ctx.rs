@@ -1,7 +1,9 @@
-//! Live Schwab market data or replay from a backtest candle cache.
+//! Live Schwab market data, replay from a backtest candle cache, or replay of
+//! one live tick's recorded data (shadow arms).
 
+use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -13,16 +15,96 @@ use crate::market_cache::{cache_status_json, LiveCacheHandle};
 use crate::rules::TraderRules;
 use crate::technical::Candle;
 
+type Quote = (f64, Option<f64>, Option<f64>);
+type CandleKey = (String, String, u32, String);
+
+/// Every quote, fundamental block, and daily-bar series a live tick fetched
+/// (last write wins). Shadow arms evaluate against this so they see exactly
+/// the data production saw, without making API calls of their own.
+#[derive(Default)]
+pub struct TickTape {
+    quotes: Mutex<HashMap<String, Quote>>,
+    fundamentals: Mutex<HashMap<String, Value>>,
+    candles: Mutex<HashMap<CandleKey, Vec<Candle>>>,
+}
+
+impl TickTape {
+    fn candle_key(symbol: &str, period_type: &str, period: u32, frequency_type: &str) -> CandleKey {
+        (
+            symbol.to_string(),
+            period_type.to_string(),
+            period,
+            frequency_type.to_string(),
+        )
+    }
+
+    fn record_quote(&self, symbol: &str, quote: Quote) {
+        self.quotes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(symbol.to_string(), quote);
+    }
+
+    fn record_fundamental(&self, symbol: &str, fundamental: &Value) {
+        self.fundamentals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(symbol.to_string(), fundamental.clone());
+    }
+
+    fn record_candles(&self, key: CandleKey, candles: &[Candle]) {
+        self.candles
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(key, candles.to_vec());
+    }
+
+    fn quote(&self, symbol: &str) -> Result<Quote> {
+        self.quotes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(symbol)
+            .copied()
+            .with_context(|| format!("{symbol} quote not fetched by production tick"))
+    }
+
+    fn fundamental(&self, symbol: &str) -> Result<Value> {
+        self.fundamentals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(symbol)
+            .cloned()
+            .with_context(|| format!("{symbol} fundamentals not fetched by production tick"))
+    }
+
+    fn candles(&self, key: &CandleKey) -> Result<Vec<Candle>> {
+        self.candles
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(key)
+            .cloned()
+            .with_context(|| {
+                format!(
+                    "{} {}/{}/{} bars not fetched by production tick",
+                    key.0, key.1, key.2, key.3
+                )
+            })
+    }
+}
+
 #[derive(Clone)]
 pub enum MarketCtx {
     Live {
         market: Arc<MarketDataApi>,
         live_cache: Option<Arc<LiveCacheHandle>>,
+        tape: Option<Arc<TickTape>>,
     },
     Replay {
         cache: Arc<BacktestCache>,
         as_of: DateTime<Utc>,
     },
+    /// Serves only what a live tick recorded; has no API client to call.
+    Tape { tape: Arc<TickTape> },
 }
 
 impl MarketCtx {
@@ -30,7 +112,26 @@ impl MarketCtx {
         Self::Live {
             market,
             live_cache: None,
+            tape: None,
         }
+    }
+
+    /// Record everything this live context fetches into `tape`. No-op for replay.
+    pub fn with_tape(self, tape: Arc<TickTape>) -> Self {
+        match self {
+            Self::Live {
+                market, live_cache, ..
+            } => Self::Live {
+                market,
+                live_cache,
+                tape: Some(tape),
+            },
+            other => other,
+        }
+    }
+
+    pub fn from_tape(tape: Arc<TickTape>) -> Self {
+        Self::Tape { tape }
     }
 
     /// Live quotes + optional on-disk daily bar cache (from backtest prefetch).
@@ -46,6 +147,7 @@ impl MarketCtx {
         Self::Live {
             market,
             live_cache,
+            tape: None,
         }
     }
 
@@ -55,7 +157,7 @@ impl MarketCtx {
 
     pub fn as_of(&self) -> DateTime<Utc> {
         match self {
-            Self::Live { .. } => Utc::now(),
+            Self::Live { .. } | Self::Tape { .. } => Utc::now(),
             Self::Replay { as_of, .. } => *as_of,
         }
     }
@@ -69,13 +171,14 @@ impl MarketCtx {
                 "from": cache.from.to_string(),
                 "to": cache.to.to_string(),
             }),
+            Self::Tape { .. } => serde_json::json!({ "mode": "shadow_tape" }),
         }
     }
 
     pub async fn quote_last_bid_ask(&self, symbol: &str) -> Result<(f64, Option<f64>, Option<f64>)> {
         let symbol = symbol.trim().to_uppercase();
         match self {
-            Self::Live { market, .. } => {
+            Self::Live { market, tape, .. } => {
                 let raw = market
                     .quotes()
                     .get_quote(&symbol, Some("quote"), None)
@@ -84,8 +187,12 @@ impl MarketCtx {
                 let last = quote_f64(&quote, "lastPrice").unwrap_or(0.0);
                 let bid = quote_f64(&quote, "bidPrice");
                 let ask = quote_f64(&quote, "askPrice");
+                if let Some(tape) = tape {
+                    tape.record_quote(&symbol, (last, bid, ask));
+                }
                 Ok((last, bid, ask))
             }
+            Self::Tape { tape } => tape.quote(&symbol),
             Self::Replay { cache, as_of } => {
                 let bar = cache
                     .bar_on_or_before(&symbol, *as_of)
@@ -101,19 +208,24 @@ impl MarketCtx {
     pub async fn quote_fundamental(&self, symbol: &str) -> Result<Value> {
         let symbol = symbol.trim().to_uppercase();
         match self {
-            Self::Live { market, .. } => {
+            Self::Live { market, tape, .. } => {
                 let raw = market
                     .quotes()
                     .get_quote(&symbol, Some("quote,fundamental"), None)
                     .await
                     .with_context(|| format!("fundamental quote for {symbol}"))?;
                 let entry = extract_quote_entry(&raw, &symbol);
-                Ok(entry
+                let fundamental = entry
                     .get("fundamental")
                     .cloned()
-                    .unwrap_or(serde_json::json!({})))
+                    .unwrap_or(serde_json::json!({}));
+                if let Some(tape) = tape {
+                    tape.record_fundamental(&symbol, &fundamental);
+                }
+                Ok(fundamental)
             }
             Self::Replay { .. } => Ok(serde_json::json!({})),
+            Self::Tape { tape } => tape.fundamental(&symbol),
         }
     }
 
@@ -140,17 +252,35 @@ impl MarketCtx {
     ) -> Result<Vec<Candle>> {
         let symbol = symbol.trim().to_uppercase();
         match self {
-            Self::Live { market, live_cache } => {
-                self.live_daily_candles(
-                    market,
-                    live_cache.as_deref(),
-                    &symbol,
-                    period_type,
-                    period,
-                    frequency_type,
-                )
-                .await
+            Self::Live {
+                market,
+                live_cache,
+                tape,
+            } => {
+                let candles = self
+                    .live_daily_candles(
+                        market,
+                        live_cache.as_deref(),
+                        &symbol,
+                        period_type,
+                        period,
+                        frequency_type,
+                    )
+                    .await?;
+                if let Some(tape) = tape {
+                    tape.record_candles(
+                        TickTape::candle_key(&symbol, period_type, period, frequency_type),
+                        &candles,
+                    );
+                }
+                Ok(candles)
             }
+            Self::Tape { tape } => tape.candles(&TickTape::candle_key(
+                &symbol,
+                period_type,
+                period,
+                frequency_type,
+            )),
             Self::Replay { cache, as_of } => {
                 let min = min_bars_for_config(period_type, period);
                 let bars = cache.candles_through(&symbol, *as_of);
@@ -225,7 +355,7 @@ impl MarketCtx {
     pub fn replay_bar(&self, symbol: &str) -> Option<StoredCandle> {
         match self {
             Self::Replay { cache, as_of } => cache.bar_on_or_before(symbol, *as_of).ok(),
-            Self::Live { .. } => None,
+            Self::Live { .. } | Self::Tape { .. } => None,
         }
     }
 }

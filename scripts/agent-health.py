@@ -28,11 +28,38 @@ AGENTS = {
 # Per-agent fields worth printing: the agents do NOT share a schema, and there is no
 # `closed_trades` in either live state file (that field only exists in backtest output).
 EXTRAS = {
-    "options-<options-account>": ["cumulative_realized_pnl_usd", "open_positions",
-                     "llm_review_count", "last_regime"],
+    "options-<options-account>": ["open_positions", "llm_review_count", "last_regime"],
     "swing-<swing-account>": ["closed_trades_since_learn", "open_positions", "active_profile",
                    "active_profile_source", "last_regime"],
 }
+
+SWING_STARTING_CASH_USD = 4000.0
+
+
+def enrich_metrics(name, state, extra):
+    """Add PnL / deployment fields; agents do not share a schema."""
+    if name == "options-<options-account>":
+        sim = state.get("sim") or {}
+        if isinstance(sim, dict) and "realized_pnl_usd" in sim:
+            extra["realized_pnl_usd"] = sim["realized_pnl_usd"]
+        unreal = 0.0
+        for pos in (state.get("open_positions") or {}).values():
+            credit = pos.get("entry_credit")
+            debit = pos.get("last_good_debit_to_close")
+            contracts = pos.get("contracts") or 0
+            if credit is not None and debit is not None:
+                unreal += (credit - debit) * 100.0 * contracts
+        extra["unrealized_est_usd"] = round(unreal, 2)
+        return
+    if name == "swing-<swing-account>":
+        sim = state.get("sim")
+        if isinstance(sim, dict) and "realized_pnl_usd" in sim:
+            extra["realized_pnl_usd"] = sim["realized_pnl_usd"]
+        deployed = 0.0
+        for pos in (state.get("open_positions") or {}).values():
+            deployed += float(pos.get("market_value_usd") or 0.0)
+        extra["deployed_usd"] = round(deployed, 2)
+        extra["deployed_pct"] = round(100.0 * deployed / SWING_STARTING_CASH_USD, 1)
 
 
 def iso_age(ts):
@@ -63,6 +90,7 @@ def main():
         if open_n is not None:
             extra["open_n"] = open_n
             extra.pop("open_positions", None)
+        enrich_metrics(name, d, extra)
         print(f"{name:14} unit={active:8} last_tick={lt} "
               f"age={age:.1f}m{'  <-- STALE' if flagged else ''} {extra}")
         if flagged:

@@ -1,0 +1,14 @@
+# Weekday option chain snapshots during regular hours (Eastern).
+
+[Unit]
+Description=Run Schwab chain snapshots on weekdays
+
+[Timer]
+OnCalendar=Mon..Fri 10:00 America/New_York
+OnCalendar=Mon..Fri 12:30 America/New_York
+OnCalendar=Mon..Fri 15:45 America/New_York
+Persistent=false
+Unit=schwab-chain-snapshot.service
+
+[Install]
+WantedBy=timers.target
