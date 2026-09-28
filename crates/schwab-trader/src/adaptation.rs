@@ -167,6 +167,18 @@ pub fn apply_regime_profile(state: &mut TraderState, rules: &TraderRules, regime
     let recommended = regime.recommended_profile.as_str();
     if state.active_profile.as_deref() == Some(recommended) {
         state.regime_profile_pending = None;
+        // If LLM profile selection is now disabled, relabel the source so it
+        // doesn't keep reporting "llm" forever for a profile the regime
+        // engine independently agrees with.
+        if !rules.adaptation.llm_profile_select
+            && state.active_profile_source.as_deref() != Some("regime")
+        {
+            state.active_profile_source = Some("regime".into());
+            state.active_profile_reason = Some(format!(
+                "regime={} vix={:?} rv_pctile={:.0}",
+                regime.class, regime.vix, regime.realized_vol_percentile
+            ));
+        }
         return;
     }
 
@@ -453,6 +465,63 @@ mod tests {
         apply_regime_profile(&mut state, &rules, &regime_snapshot("elevated_vol"));
         assert_eq!(state.active_profile.as_deref(), Some("elevated_vol"));
         assert!(state.regime_profile_pending.is_none());
+    }
+
+    #[test]
+    fn stale_llm_source_relabeled_when_regime_agrees_and_llm_disabled() {
+        let mut rules = sample_rules();
+        rules.adaptation.regime_auto_select = true;
+        rules.adaptation.llm_profile_select = false;
+        rules.adaptation.regime.profile_switch_min_dwell_ticks = 0;
+        rules
+            .adaptation
+            .profiles
+            .insert("elevated_vol".into(), TradingProfile {
+                description: "t".into(),
+                overrides: Default::default(),
+            });
+
+        let mut state = TraderState::default();
+        // Simulate a prior LLM selection that happens to match the regime's
+        // recommendation; the profile itself doesn't need to change, but the
+        // source label is stale and should be corrected to "regime".
+        state.active_profile = Some("elevated_vol".into());
+        state.active_profile_source = Some("llm".into());
+        state.active_profile_reason = Some("LLM selected profile elevated_vol".into());
+
+        apply_regime_profile(&mut state, &rules, &regime_snapshot("elevated_vol"));
+
+        assert_eq!(state.active_profile.as_deref(), Some("elevated_vol"));
+        assert_eq!(state.active_profile_source.as_deref(), Some("regime"));
+        assert!(state
+            .active_profile_reason
+            .as_deref()
+            .unwrap()
+            .starts_with("regime=elevated_vol"));
+    }
+
+    #[test]
+    fn regime_source_left_untouched_when_already_regime() {
+        let mut rules = sample_rules();
+        rules.adaptation.regime_auto_select = true;
+        rules.adaptation.llm_profile_select = false;
+        rules.adaptation.regime.profile_switch_min_dwell_ticks = 0;
+        rules
+            .adaptation
+            .profiles
+            .insert("elevated_vol".into(), TradingProfile {
+                description: "t".into(),
+                overrides: Default::default(),
+            });
+
+        let mut state = TraderState::default();
+        state.active_profile = Some("elevated_vol".into());
+        state.active_profile_source = Some("regime".into());
+        state.active_profile_reason = Some("regime=elevated_vol vix=Some(20.0) rv_pctile=50".into());
+
+        apply_regime_profile(&mut state, &rules, &regime_snapshot("elevated_vol"));
+
+        assert_eq!(state.active_profile_source.as_deref(), Some("regime"));
     }
 
     #[test]

@@ -98,7 +98,7 @@ pub async fn detect_regime(market: &MarketCtx, rules: &TraderRules) -> Result<Re
     })
 }
 
-fn neutral_snapshot(cfg: &RegimeConfig, default_profile: &str) -> RegimeSnapshot {
+pub fn neutral_snapshot(cfg: &RegimeConfig, default_profile: &str) -> RegimeSnapshot {
     RegimeSnapshot {
         class: RegimeClass::Neutral.as_str().to_string(),
         benchmark_symbol: cfg.benchmark_symbol.clone(),

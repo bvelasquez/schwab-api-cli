@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -49,8 +50,30 @@ pub struct SimulationConfig {
     pub starting_budget_usd: f64,
     /// Spread slippage (percent, e.g. 5.0 = 5%): paper entry credit is reduced and
     /// exit debit increased by this % to approximate bid/ask cost on virtual fills.
+    /// Also applied by the synthetic backtest (`schwab agent backtest run`) so its
+    /// fills match the live --simulate path.
     #[serde(default)]
     pub fill_slippage_pct: f64,
+    /// Synthetic-backtest pricing calibration (IV level + put skew). Omit for the
+    /// legacy flat-VIX-IV, no-skew model so old backtest results stay reproducible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backtest_pricing: Option<BacktestPricingConfig>,
+}
+
+/// Calibration knobs for the synthetic options backtest's Black–Scholes pricing.
+/// Not a real vol surface — just enough to stop pricing every symbol/leg at the flat
+/// VIX close. Defaults reproduce the pre-calibration backtest price exactly.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct BacktestPricingConfig {
+    /// Per-symbol multiplier applied to the VIX-proxy IV (e.g. `QQQ: 1.25` since QQQ IV
+    /// typically runs ~1.2–1.3x SPX/VIX). Symbols not listed default to 1.0.
+    pub iv_multiplier_by_symbol: HashMap<String, f64>,
+    /// Put skew: IV points added per leg for every 10 delta a put leg sits further
+    /// OTM than 50-delta (e.g. 1.5 = +1.5 IV points per 10 delta), so a vertical's
+    /// long (further-OTM) leg prices at a higher IV than its short. Calls are
+    /// unaffected. 0.0 (default) = flat IV, matching the legacy model.
+    pub put_skew_per_10_delta_pts: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -571,6 +594,17 @@ pub struct ExitRules {
     /// Prefer a managed roll over a hard stop when eligible (verticals only).
     #[serde(default)]
     pub roll: RollConfig,
+    /// Skip a non-urgent exit (profit_target, dte_close, regime_mismatch,
+    /// profit_giveback) this tick when the closing mark is degraded
+    /// (`mark.quote_degraded`, e.g. `chain_degraded` last-good fallback), up to
+    /// `max_defer_minutes` — then it proceeds regardless. Off by default. Urgent
+    /// exits (stop_loss, threatened-short thesis exits, max-loss) always proceed.
+    #[serde(default)]
+    pub defer_non_urgent_on_degraded_quotes: bool,
+    /// Ceiling for the deferral above; past this many minutes the exit proceeds even
+    /// on a degraded quote. Only meaningful when `defer_non_urgent_on_degraded_quotes`.
+    #[serde(default)]
+    pub max_defer_minutes: u32,
 }
 
 impl Default for ExitRules {
@@ -582,6 +616,8 @@ impl Default for ExitRules {
             dte_close: 21,
             thesis: ThesisExitRules::default(),
             roll: RollConfig::default(),
+            defer_non_urgent_on_degraded_quotes: false,
+            max_defer_minutes: 60,
         }
     }
 }
@@ -827,6 +863,13 @@ pub struct ExecutionConfig {
     /// (see docs/OPTIONS_RULES.md).
     #[serde(default)]
     pub protective_order: ProtectiveOrderConfig,
+    /// Delay new entries and non-urgent exits until this many minutes after the
+    /// regular session open (ET) — quotes are widest right at 09:30. `None`/omit
+    /// disables the gate (default; existing agents are unchanged). Urgent exits
+    /// (stop_loss, thesis exits indicating a threatened short strike, max-loss) are
+    /// never delayed. See docs/OPTIONS_RULES.md.
+    #[serde(default)]
+    pub min_minutes_after_open: Option<u32>,
 }
 
 impl Default for ExecutionConfig {
@@ -837,6 +880,7 @@ impl Default for ExecutionConfig {
             wait_for_fill: true,
             fill_timeout_seconds: 300,
             protective_order: ProtectiveOrderConfig::default(),
+            min_minutes_after_open: None,
         }
     }
 }

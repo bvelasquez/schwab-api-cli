@@ -1,5 +1,42 @@
 //! Black–Scholes helpers for synthetic option marks.
 
+use crate::rules::RulesConfig;
+
+/// Backtest pricing calibration: symbol IV level scaling + put OTM skew add-on.
+/// `FLAT` reproduces the legacy flat-VIX-IV, no-skew model exactly.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PricingCalibration {
+    pub iv_multiplier: f64,
+    pub put_skew_per_10_delta_pts: f64,
+}
+
+impl PricingCalibration {
+    pub const FLAT: Self = Self {
+        iv_multiplier: 1.0,
+        put_skew_per_10_delta_pts: 0.0,
+    };
+
+    /// Resolve from `simulation.backtest_pricing` for `symbol`; missing config or a
+    /// symbol absent from `iv_multiplier_by_symbol` fall back to `FLAT`'s multiplier.
+    pub fn for_symbol(rules: &RulesConfig, symbol: &str) -> Self {
+        let Some(cfg) = rules
+            .simulation
+            .as_ref()
+            .and_then(|s| s.backtest_pricing.as_ref())
+        else {
+            return Self::FLAT;
+        };
+        Self {
+            iv_multiplier: cfg
+                .iv_multiplier_by_symbol
+                .get(&symbol.trim().to_uppercase())
+                .copied()
+                .unwrap_or(1.0),
+            put_skew_per_10_delta_pts: cfg.put_skew_per_10_delta_pts,
+        }
+    }
+}
+
 /// Standard normal CDF (Abramowitz & Stegun approximation).
 pub fn norm_cdf(x: f64) -> f64 {
     if x.is_nan() {
@@ -83,7 +120,37 @@ pub fn years_from_dte(dte: i64) -> f64 {
     (dte.max(0) as f64) / 365.0
 }
 
-/// Credit vertical mid: short premium − long premium (both same right).
+/// Symbol-scaled IV (decimal) from a base IV% (e.g. VIX close) and a `PricingCalibration`
+/// multiplier. Delta targeting and gates use this (unskewed) level — skew is a
+/// per-leg pricing add-on only, not a redefinition of "16 delta".
+pub fn scaled_sigma(iv_pct: f64, iv_multiplier: f64) -> f64 {
+    (iv_pct / 100.0 * iv_multiplier).max(0.01)
+}
+
+/// Per-leg vol after the (puts-only) OTM skew add-on: `put_skew_per_10_delta_pts` IV
+/// points for every 10 delta this strike sits further OTM than 50-delta, anchored on
+/// the unskewed `base_sigma` delta (skew is a small add-on, so the unskewed delta is
+/// an accurate enough anchor — this is a calibration knob, not a real vol surface).
+/// Calls, or a zero skew knob, return `base_sigma` unchanged.
+fn leg_sigma_with_skew(
+    is_put: bool,
+    spot: f64,
+    strike: f64,
+    t_years: f64,
+    base_sigma: f64,
+    put_skew_per_10_delta_pts: f64,
+) -> f64 {
+    if !is_put || put_skew_per_10_delta_pts.abs() < f64::EPSILON {
+        return base_sigma;
+    }
+    let delta_pct = bs_delta(is_put, spot, strike, t_years, 0.0, base_sigma).abs() * 100.0;
+    let otm_10s = (50.0 - delta_pct).max(0.0) / 10.0;
+    (base_sigma + put_skew_per_10_delta_pts * otm_10s / 100.0).max(0.01)
+}
+
+/// Credit vertical mid: short premium − long premium, each leg priced with its own IV
+/// per `calib` (symbol multiplier + put skew). `PricingCalibration::FLAT` reproduces
+/// the legacy single flat-IV price exactly.
 pub fn vertical_credit(
     is_put: bool,
     spot: f64,
@@ -91,11 +158,28 @@ pub fn vertical_credit(
     long_strike: f64,
     dte: i64,
     iv_pct: f64,
+    calib: PricingCalibration,
 ) -> f64 {
     let t = years_from_dte(dte);
-    let sigma = (iv_pct / 100.0).max(0.01);
-    let short = bs_price(is_put, spot, short_strike, t, 0.0, sigma);
-    let long = bs_price(is_put, spot, long_strike, t, 0.0, sigma);
+    let base_sigma = scaled_sigma(iv_pct, calib.iv_multiplier);
+    let short_sigma = leg_sigma_with_skew(
+        is_put,
+        spot,
+        short_strike,
+        t,
+        base_sigma,
+        calib.put_skew_per_10_delta_pts,
+    );
+    let long_sigma = leg_sigma_with_skew(
+        is_put,
+        spot,
+        long_strike,
+        t,
+        base_sigma,
+        calib.put_skew_per_10_delta_pts,
+    );
+    let short = bs_price(is_put, spot, short_strike, t, 0.0, short_sigma);
+    let long = bs_price(is_put, spot, long_strike, t, 0.0, long_sigma);
     (short - long).max(0.01)
 }
 
@@ -107,8 +191,9 @@ pub fn vertical_debit_to_close(
     long_strike: f64,
     dte: i64,
     iv_pct: f64,
+    calib: PricingCalibration,
 ) -> f64 {
-    vertical_credit(is_put, spot, short_strike, long_strike, dte, iv_pct)
+    vertical_credit(is_put, spot, short_strike, long_strike, dte, iv_pct, calib)
 }
 
 #[cfg(test)]
@@ -123,7 +208,67 @@ mod tests {
 
     #[test]
     fn put_credit_positive() {
-        let c = vertical_credit(true, 500.0, 480.0, 475.0, 35, 18.0);
+        let c = vertical_credit(true, 500.0, 480.0, 475.0, 35, 18.0, PricingCalibration::FLAT);
         assert!(c > 0.05, "credit={c}");
+    }
+
+    #[test]
+    fn flat_calibration_reproduces_legacy_single_iv_price() {
+        // Old behavior: both legs priced at the same flat sigma from `iv_pct`.
+        let (spot, short_strike, long_strike, dte, iv_pct) = (500.0, 474.0, 469.0, 35, 18.0);
+        let t = years_from_dte(dte);
+        let sigma = (iv_pct / 100.0_f64).max(0.01);
+        let legacy = (bs_price(true, spot, short_strike, t, 0.0, sigma)
+            - bs_price(true, spot, long_strike, t, 0.0, sigma))
+        .max(0.01);
+        let calibrated = vertical_credit(
+            true,
+            spot,
+            short_strike,
+            long_strike,
+            dte,
+            iv_pct,
+            PricingCalibration::FLAT,
+        );
+        assert!((legacy - calibrated).abs() < 1e-12, "legacy={legacy} calibrated={calibrated}");
+    }
+
+    #[test]
+    fn put_skew_raises_credit_vs_flat_iv_at_same_strikes() {
+        // 16-delta-ish short / 5-wide long on SPY-scale strikes; realistic skew knob.
+        let (spot, short_strike, long_strike, dte, iv_pct) = (500.0, 474.0, 469.0, 35, 18.0);
+        let flat = vertical_credit(true, spot, short_strike, long_strike, dte, iv_pct, PricingCalibration::FLAT);
+        let skewed = vertical_credit(
+            true,
+            spot,
+            short_strike,
+            long_strike,
+            dte,
+            iv_pct,
+            PricingCalibration {
+                iv_multiplier: 1.0,
+                put_skew_per_10_delta_pts: 1.5,
+            },
+        );
+        assert!(skewed > flat, "flat={flat} skewed={skewed}");
+    }
+
+    #[test]
+    fn iv_multiplier_scales_credit_up() {
+        let (spot, short_strike, long_strike, dte, iv_pct) = (500.0, 474.0, 469.0, 35, 18.0);
+        let base = vertical_credit(true, spot, short_strike, long_strike, dte, iv_pct, PricingCalibration::FLAT);
+        let scaled = vertical_credit(
+            true,
+            spot,
+            short_strike,
+            long_strike,
+            dte,
+            iv_pct,
+            PricingCalibration {
+                iv_multiplier: 1.25,
+                put_skew_per_10_delta_pts: 0.0,
+            },
+        );
+        assert!(scaled > base, "base={base} scaled={scaled}");
     }
 }

@@ -115,6 +115,11 @@ pub struct TraderState {
     /// After a thesis exit — prioritize scan on this symbol for redeploy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redeploy_signal: Option<RedeploySignal>,
+    /// Hash of the last `effective_playbook` written to the `sim_tick_summary`
+    /// journal — in-memory only (never persisted) so the journal can skip
+    /// rewriting the full playbook on ticks where it hasn't changed.
+    #[serde(skip)]
+    pub last_journaled_effective_playbook_hash: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,6 +148,9 @@ pub struct SwingPosition {
     pub exit_plan_version: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peak_profit_pct: Option<f64>,
+    /// Worst unrealized pnl % since entry — MAE companion to `peak_profit_pct`'s MFE.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trough_profit_pct: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry_rs_vs_benchmark_30d: Option<f64>,
 }
@@ -183,6 +191,7 @@ impl Default for SwingPosition {
             oco_order_id: None,
             exit_plan_version: 1,
             peak_profit_pct: None,
+            trough_profit_pct: None,
             entry_rs_vs_benchmark_30d: None,
         }
     }

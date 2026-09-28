@@ -51,6 +51,9 @@ async fn run() -> Result<()> {
         Some(Commands::Sim { command }) => {
             schwab_trader::commands::sim_cmd::run(&runtime, command).await
         }
+        Some(Commands::Shadow { command }) => {
+            schwab_trader::commands::shadow_cmd::run(&runtime, command).await
+        }
         Some(Commands::Backtest { command }) => {
             schwab_trader::commands::backtest_cmd::run(&runtime, command).await
         }

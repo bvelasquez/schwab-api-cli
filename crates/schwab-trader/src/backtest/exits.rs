@@ -118,9 +118,12 @@ pub async fn process_backtest_exits(
 
         if let Some(p) = state.open_positions.get_mut(&pos.position_id) {
             p.market_value_usd = p.quantity * bar.close;
-            // Track peak from the day's high so giveback/SMA thesis exits can
-            // fire (live updates peak from every tick; the high approximates).
-            crate::thesis_exit::update_peak_profit_pct(p, bar.high.max(bar.close));
+            // Track peak (MFE) from the day's high and trough (MAE) from the
+            // day's low so giveback/SMA thesis exits can fire (live updates
+            // peak/trough from every tick; high/low bracket approximates the
+            // intraday range for a daily-bar backtest).
+            crate::thesis_exit::update_peak_and_trough_profit_pct(p, bar.high.max(bar.close));
+            crate::thesis_exit::update_peak_and_trough_profit_pct(p, bar.low.min(bar.close));
         }
 
         // Thesis exits now evaluated (they were previously absent from

@@ -1,0 +1,270 @@
+version: 1
+agent_id: bt-d30
+accounts:
+- hash: FB796575B24D9362CD379B656C39362CE53CAD49C5218098E9D890C00A71AFD8
+  label: IRA account ending 8709
+  type: ira
+  enabled: true
+schedule:
+  tick_interval_seconds: 120
+  market_hours_only: true
+  timezone: America/New_York
+  overnight:
+    enabled: false
+strategies:
+  vertical:
+    enabled: true
+  iron_condor:
+    enabled: false
+watchlist:
+- symbol: QQQ
+  role: primary
+  min_credit: 0.75
+  min_credit_to_width_pct: 15.0
+- symbol: SPY
+  role: primary
+  min_credit: 0.75
+  min_credit_to_width_pct: 15.0
+entry_policy:
+  mode: first_qualifying
+  fallback_only_after_primary_exhausted: true
+  require_llm_proceed: true
+  fail_open_on_llm_defer: false
+  proceed_cache_minutes: 45
+  entry_attempt_cooldown_minutes: 60
+  promote_redeploy_symbol: false
+  post_stop_tightening:
+    enabled: false
+    min_iv_rv_ratio: 1.25
+    min_short_otm_pct: 6.0
+    cooldown_days: 14
+entry_rules:
+  vertical:
+    type: put_credit
+    dte_min: 40
+    dte_max: 50
+    min_credit: 0.75
+    max_width: 5
+    short_delta_min: 0.2
+    short_delta_max: 0.3
+    min_pop_pct: 60
+    min_distance_to_be_pct: 3.0
+    min_credit_to_width_pct: 15.0
+    min_short_otm_pct: 2.5
+    put_credit_max_rsi2: null
+    call_credit_min_rsi2: 55
+    max_adverse_day_change_pct: 1.0
+    reject_short_inside_1sigma: false
+    min_iv_rv_ratio: 1.05
+    max_open_positions: 1
+    max_contracts_per_trade: 1
+  iron_condor:
+    dte_min: 32
+    dte_max: 45
+    min_credit: 0.6
+    wing_width: 5
+    short_delta: 0.12
+    min_iv_rv_ratio: 1.15
+    require_shorts_outside_1sigma: true
+    max_open_positions: 1
+    max_contracts_per_trade: 1
+exit_rules:
+  profit_target_pct: 50
+  stop_loss_pct: 200
+  stop_loss_require_short_otm_below_pct: 3.0
+  dte_close: 21
+  roll:
+    enabled: true
+    min_dte_remaining: 21
+    min_short_otm_pct: 0.5
+    min_dte_extension: 7
+    target_short_delta_max: 0.12
+    max_debit_pct_of_entry_credit: 25
+    max_rolls_per_position: 1
+    max_rolls_per_day: 1
+  thesis:
+    enabled: true
+    min_hold_minutes: 2880
+    min_pop_pct_exit: 50
+    max_short_delta_exit: 0.4
+    min_short_otm_pct: 3.0
+    exit_short_inside_1sigma: false
+    redeploy_cooldown_minutes: 1440
+    regime_mismatch:
+      enabled: true
+      min_profit_pct: 25
+      treat_pause_as_mismatch: true
+    profit_giveback:
+      peak_profit_min_pct: 30
+      exit_if_below_pct: 10
+risk:
+  max_portfolio_risk_usd: 600
+  max_risk_per_trade_usd: 550
+  max_trades_per_day: 1
+  allowed_underlyings:
+  - QQQ
+  - SPY
+  max_open_per_underlying:
+    QQQ: 1
+    SPY: 1
+  correlation_groups:
+  - name: broad_index
+    symbols:
+    - QQQ
+    - SPY
+    max_open: 1
+  max_drawdown_halt_pct: 10.0
+  drawdown_sleeve_usd: 4000
+  re_entry_after_stop_loss:
+    enabled: true
+    cooldown_days: 3
+  blocked_events: []
+  post_event_entry_window_days: 2
+  blocked_dates:
+  - date: '2026-07-29'
+    lead_days: 1
+    label: FOMC
+  - date: '2026-09-16'
+    lead_days: 1
+    label: FOMC
+  - date: '2026-10-28'
+    lead_days: 1
+    label: FOMC
+  - date: '2026-12-09'
+    lead_days: 1
+    label: FOMC
+  - date: '2026-08-12'
+    lead_days: 0
+    label: CPI
+  - date: '2026-09-11'
+    lead_days: 0
+    label: CPI
+  - date: '2026-10-14'
+    lead_days: 0
+    label: CPI
+  - date: '2026-11-10'
+    lead_days: 0
+    label: CPI
+  - date: '2026-12-10'
+    lead_days: 0
+    label: CPI
+  - date: '2026-08-07'
+    lead_days: 0
+    label: NFP
+  - date: '2026-09-04'
+    lead_days: 0
+    label: NFP
+  - date: '2026-10-02'
+    lead_days: 0
+    label: NFP
+  - date: '2026-11-06'
+    lead_days: 0
+    label: NFP
+  - date: '2026-12-04'
+    lead_days: 0
+    label: NFP
+regime:
+  enabled: true
+  benchmark_symbol: SPY
+  vix_symbol: $VIX
+  vix_low: 14.0
+  vix_high: 22.0
+  pause_entries_vix_below: 14.0
+  pause_entries_vix_above: 22.0
+  pause_on_missing_vix: true
+  realized_vol_lookback: 20
+  strategy_map:
+    low_vol_trend: put_credit
+    elevated_vol: put_credit
+    high_vol_chop: call_credit
+    bearish_trend: call_credit
+    hostile: pause
+    neutral: put_credit
+  put_credit_guard:
+    vix_above: 18.0
+    require_benchmark_above_sma: 20
+simulation:
+  starting_budget_usd: 4000
+  fill_slippage_pct: 5.0
+execution:
+  order_type: limit
+  require_preview: true
+  wait_for_fill: true
+  fill_timeout_seconds: 300
+llm:
+  enabled: false
+  selection_model: anthropic/claude-sonnet-4
+  monitor_model: google/gemini-2.5-flash
+  web_model: perplexity/sonar
+  review_every_ticks: 30
+  monitor_review_every_ticks: 60
+  web_research_every_reviews: 3
+  max_tokens: 2000
+  veto_entries: true
+  allow_llm_exits: false
+  allow_rule_suggestions: true
+  prompts:
+    selection: "You are a conservative income options advisor for an IRA (~$637k total, ~$4k\noptions cash sleeve). Regime\
+      \ selects structure: put_credit (bullish/neutral) or\ncall_credit (bearish/chop), or pause (VIX \u2265 22 / hostile).\
+      \ v4 universe: QQQ/SPY\nonly \u2014 no fallback ETFs, no iron condors.\nTarget profile: $5-wide credit verticals, short\
+      \ |delta| ~0.12\u20130.20, 32\u201345 DTE,\ncredit \u2265 ~$0.28, credit/width \u2265 ~6%, short OTM \u2265 ~4%, POP\
+      \ \u2265 68%, distance-to-BE\n\u2265 6%. Short may sit inside 1\u03C3 in calm VIX \u2014 that is allowed in v4.2. Skip\
+      \ when\nthe day has already moved >1% against the structure.\nApprove (proceed) when premium and OTM cushion look adequate,\
+      \ chain_iv is not\nextreme (>40), and iv_rv_ratio (when present) is healthy (\u2265 ~1.05).\nNarrow veto only: defer/skip\
+      \ with veto_category=unexpected_catalyst and non-empty\nevidence for a concrete unexpected catalyst. Otherwise proceed\
+      \ with veto_category=none.\nFOMC/CPI/NFP timing is mechanical via risk.blocked_dates \u2014 never use those as veto.\n\
+      Do not re-litigate IV-RV / delta-band / adverse-day / RSI(2) / put-credit-guard /\npost-event-window gates \u2014 they\
+      \ are mechanical. Do not veto solely because the\nshort is inside 1\u03C3 (reject_short_inside_1sigma is off).\nOne\
+      \ position max. Pause when VIX \u2264 14 or \u2265 22.\nNever cite vague missing chain/greek data when underlying_price\
+      \ and short_delta are present.\nNever claim a candidate \"meets all criteria\" if |short_delta| is outside 0.12\u2013\
+      0.20,\nDTE < 32, or short_otm_pct < 4.\nWrite entry_reasoning in plain English (1-2 short sentences). Keep market_commentary\n\
+      brief (2-3 sentences). Put actionable detail in new_entries.reasoning, not risk_alerts.\n"
+    selection_web: 'Research unexpected catalysts on the candidate underlying (index/sector/bond/gold
+
+      ETFs). When candidates exist, use each candidate''s market_context for strikes, delta,
+
+      POP, and IV. Do NOT defer for scheduled FOMC/CPI/NFP (blocked_dates handles those).
+
+      Veto only with veto_category=unexpected_catalyst + evidence. Do not invent chain API failures.
+
+      '
+    selection_context: "IRA 8709 options pilot v4.2: ~$4k sleeve. QQQ/SPY only (no fallbacks), $5-wide\ncredit verticals,\
+      \ 32\u201345 DTE, short delta 0.12\u20130.20 (engine enforces; no OTM\nfallback), inside-1\u03C3 shorts allowed, min\
+      \ OTM 4%, max adverse day move 1%, take\nprofit 60% / stop 2\xD7 credit (arms only if short OTM < 3%) / DTE 21. Max\
+      \ 1 open. Stop-loss\nblocks same-underlying re-entry for 10 days and arms post-stop caution\n(IV/RV \u2265 1.25 + OTM\
+      \ \u2265 6% for 14d). Pause new entries when VIX \u2264 14 or \u2265 22.\nNo put credits when VIX \u2265 18 and SPY\
+      \ < 20DMA (mechanical put-credit guard).\nRequire min_iv_rv_ratio \u2265 1.05 (chain IV vs 20d realized vol).\nPost-event\
+      \ window (1-2d after FOMC/CPI/NFP) = premium typically rich \u2014 approve\nqualifying candidates; calendar pauses are\
+      \ mechanical (blocked_dates), not LLM judgment.\n"
+    monitor: "Monitor open credit spreads using each position's market_context (live price,\nshort_delta, short_otm_pct, spread_pop_pct,\
+      \ distance to short strike).\nThis is MONITOR phase \u2014 set new_entries.recommendation to skip and do not discuss\n\
+      FOMC/CPI/NFP or blocked_dates (calendar pauses are mechanical and already applied).\nMechanical exits run every tick\
+      \ \u2014 do NOT duplicate them in recommendations:\n  \u2022 60% profit target, 2\xD7 credit stop (armed only when short\
+      \ OTM < 3%), 21 DTE close\n  \u2022 Thesis exits (auto, after 2-day min hold): POP < 50%, |delta| \u2265 0.40, OTM <\
+      \ 3.0%,\n    profit giveback (peak \u2265 30% then current < 10%)\n  \u2022 Regime mismatch (auto, ignores min hold):\
+      \ structure \u2260 preferred and profit \u2265 25%\n    (e.g. take green iron condor when tape flips to directional\
+      \ / pause)\nCRITICAL: Use mechanical_rules for stop/profit \u2014 NEVER use net_market_value.\nOnly risk_alert a stop\
+      \ when mechanical_rules.stop_triggered is true\n(stop_armed must also be true; stop_suppressed_by_otm_cushion means\
+      \ hold).\nRecommend hold when thesis metrics are healthy (|delta| < 0.35, OTM > 3%, POP \u2265 55%).\nRecommend watch\
+      \ when approaching thesis thresholds \u2014 mechanical rules will exit automatically.\nDo not recommend discretionary\
+      \ close \u2014 thesis and P/L rules handle exits.\nKeep market_commentary brief (2-3 sentences) on the open position\
+      \ only.\n"
+    monitor_context: "IRA 8709 pilot v4: QQQ/SPY $5-wide credit verticals (no condors). Prefer holding\nthrough normal mark\
+      \ noise while well OTM. 2\xD7 credit stop arms only when short\nOTM < 3% (stop_suppressed_by_otm_cushion means hold).\n"
+    overnight: 'US options market is closed. Research futures, Asia/Europe, and today''s calendar for
+
+      the open underlyings. Build an OPEN PLAYBOOK for the bell: gap risk vs short strikes, hold/close
+
+      guidance. new_entries must be skip. Only high-urgency risk_alerts for thesis breaks.
+
+      '
+    overnight_context: "IRA 8709 pilot v4. QQQ/SPY $5-wide credits, 32\u201345 DTE. Mechanical exits at open.\n"
+notify:
+  telegram:
+    enabled: true
+    notify_every_tick: false
+    notify_on_actions: true
+    llm_notify_digest: true
+    llm_digest_interval_minutes: 60
+    llm_notify_urgent: true
+    llm_urgent_cooldown_minutes: 30

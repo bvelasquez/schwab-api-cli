@@ -1,0 +1,12 @@
+# Weekday scorecard after the regular session (4:20 PM Eastern).
+
+[Unit]
+Description=Run the Schwab paper scorecard on weekdays
+
+[Timer]
+OnCalendar=Mon..Fri 16:20 America/New_York
+Persistent=true
+Unit=schwab-scorecard.service
+
+[Install]
+WantedBy=timers.target

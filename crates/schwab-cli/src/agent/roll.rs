@@ -1,7 +1,7 @@
 //! Defensive rolling: when a credit vertical hits the mechanical stop, prefer
 //! close + reopen farther OTM / later DTE over eating a full stop (v1: verticals only).
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::rules::{RollConfig, VerticalEntryRules};
 
@@ -96,6 +96,55 @@ pub fn roll_money_ok(
 
 pub fn roll_net(close_debit: f64, new_credit: f64) -> f64 {
     new_credit - close_debit
+}
+
+/// Outcome of searching for + pricing a roll replacement, evaluated *before* the
+/// being-rolled position is closed (the search is read-only market data). Encodes the
+/// decision of whether to proceed with close+reopen or fall back to a plain stop_loss.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RollPrecheck {
+    /// A candidate exists and its economics clear `max_debit_pct_of_entry_credit`.
+    Proceed,
+    /// No candidate, or one existed but its economics failed — caller should not
+    /// close the position for a roll; the normal stop_loss exit path should run instead.
+    NoCandidate(String),
+}
+
+/// Decide whether a defensive roll should proceed to close+reopen, given the result of
+/// searching for a replacement candidate (`candidate_credit`, `None` if the search found
+/// nothing — pass the caller's own reason string for that case) and the roll's
+/// debit-tolerance economics. Pure and independent of I/O so the close only ever
+/// happens once a real, affordable candidate is confirmed.
+pub fn precheck_roll_candidate(
+    candidate_credit: Option<f64>,
+    no_candidate_reason: &str,
+    entry_credit: f64,
+    close_debit: f64,
+    max_debit_pct_of_entry_credit: f64,
+) -> RollPrecheck {
+    let Some(new_credit) = candidate_credit else {
+        return RollPrecheck::NoCandidate(no_candidate_reason.to_string());
+    };
+    if !roll_money_ok(entry_credit, close_debit, new_credit, max_debit_pct_of_entry_credit) {
+        return RollPrecheck::NoCandidate(format!(
+            "roll_debit_too_large:net={:.3}",
+            roll_net(close_debit, new_credit)
+        ));
+    }
+    RollPrecheck::Proceed
+}
+
+/// Overlay the corrected `exit_reason` and a `roll_attempt` note onto a defensive
+/// roll's close/open detail when the reopen failed — returned to the caller so the
+/// per-tick action/journal output is honest even though the underlying close event
+/// (already written) stays labeled `defensive_roll` in the append-only journal.
+pub fn roll_failed_close_detail(base: &Value, failed_reason: &str) -> Value {
+    let mut detail = base.clone();
+    if let Some(obj) = detail.as_object_mut() {
+        obj.insert("exit_reason".into(), json!("stop_loss"));
+        obj.insert("roll_attempt".into(), json!({ "failed": failed_reason }));
+    }
+    detail
 }
 
 /// Cap |short_delta| for the replacement: min(entry max, target, original − 0.04).
@@ -347,5 +396,43 @@ mod tests {
     fn width_bias_caps_to_original() {
         assert!((roll_biased_max_width(5.0, Some(3.0)) - 3.0).abs() < 1e-9);
         assert!((roll_biased_max_width(5.0, None) - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn precheck_rejects_when_search_found_nothing() {
+        assert_eq!(
+            precheck_roll_candidate(None, "roll_no_candidate:no short in delta band", 1.0, 1.2, 25.0),
+            RollPrecheck::NoCandidate("roll_no_candidate:no short in delta band".into())
+        );
+    }
+
+    #[test]
+    fn precheck_rejects_when_economics_fail() {
+        // entry 1.00, close 1.70, new candidate 1.50 -> net -0.20 = 20% debit, over 10% cap.
+        assert_eq!(
+            precheck_roll_candidate(Some(1.50), "", 1.0, 1.70, 10.0),
+            RollPrecheck::NoCandidate("roll_debit_too_large:net=-0.200".into())
+        );
+    }
+
+    #[test]
+    fn precheck_proceeds_when_candidate_is_affordable() {
+        assert_eq!(
+            precheck_roll_candidate(Some(1.80), "", 1.0, 2.00, 25.0),
+            RollPrecheck::Proceed
+        );
+    }
+
+    #[test]
+    fn failed_close_detail_overlays_stop_loss_and_roll_attempt() {
+        let base = json!({ "fill_status": "FILLED", "exit_reason": "defensive_roll" });
+        let out = roll_failed_close_detail(&base, "roll_open_failed:margin exceeded");
+        assert_eq!(out["exit_reason"], json!("stop_loss"));
+        assert_eq!(
+            out["roll_attempt"]["failed"],
+            json!("roll_open_failed:margin exceeded")
+        );
+        // Original fields are preserved.
+        assert_eq!(out["fill_status"], json!("FILLED"));
     }
 }

@@ -50,6 +50,17 @@ pub fn backtest_journal_path(rules_path: &Path) -> PathBuf {
     ))
 }
 
+/// `trader-shadow-*` must never match the `trader-state-*` prefix that
+/// `risk::sibling_sleeve_deployed` scans, or arm positions would count
+/// against the production sleeve.
+pub fn shadow_state_path(rules_path: &Path, trader_id: &str, arm_id: &str) -> PathBuf {
+    rules_dir(rules_path).join(format!("trader-shadow-state-{trader_id}-{arm_id}.json"))
+}
+
+pub fn shadow_journal_path(rules_path: &Path, trader_id: &str, arm_id: &str) -> PathBuf {
+    rules_dir(rules_path).join(format!("trader-shadow-journal-{trader_id}-{arm_id}.jsonl"))
+}
+
 pub fn append_trader_log(rules_path: &Path, line: &str) -> std::io::Result<()> {
     use std::io::Write;
     let path = log_path(rules_path);

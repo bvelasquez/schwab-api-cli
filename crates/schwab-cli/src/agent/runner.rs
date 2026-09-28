@@ -37,9 +37,10 @@ use super::chains_util::{
     vertical_entry_strike_count,
 };
 use super::exits::{
-    candidate_fails_thesis_gates, evaluate_position_monitor, exit_signal_json_for_account,
-    find_tracked_position, option_group_from_tracked, reconcile_open_positions, stable_position_key,
-    update_last_good_close_quotes, ExitEvaluation,
+    candidate_fails_thesis_gates, degraded_quote_defer_reason, evaluate_position_monitor,
+    exit_signal_json_for_account, find_tracked_position, is_urgent_exit_reason,
+    open_bell_gate_blocks, option_group_from_tracked, reconcile_open_positions,
+    stable_position_key, update_last_good_close_quotes, ExitEvaluation, SpreadMark,
 };
 use super::journal;
 use super::llm::OpenRouterClient;
@@ -49,8 +50,8 @@ use super::market_context::{
 use super::regime::{detect_options_regime, put_credit_guard_active, OptionsRegimeSnapshot};
 use super::risk::{drawdown_to_json, record_live_realized_pnl, update_drawdown};
 use super::roll::{
-    original_width_from_params, roll_biased_entry_rules, roll_eligible, roll_money_ok, roll_net,
-    spread_type_from_tracked, RollEligibility,
+    original_width_from_params, precheck_roll_candidate, roll_biased_entry_rules, roll_eligible,
+    roll_failed_close_detail, roll_net, spread_type_from_tracked, RollEligibility, RollPrecheck,
 };
 use super::spread_analytics::{
     analytics_from_json, entry_analytics_pass, entry_analytics_reject_reason,
@@ -60,7 +61,7 @@ use super::volatility::{fetch_realized_vol_pct, iv_rv_ratio};
 use super::paths::{active_state_path, load_agent_state, load_sim_agent_state};
 use super::protective;
 use super::resilience;
-use super::sim::{ensure_ledger, record_sim_entry, record_sim_exit};
+use super::sim::{self, ensure_ledger, record_sim_entry, record_sim_exit};
 use super::technical;
 use super::schedule::{self, AgentSession};
 use super::state::{
@@ -534,6 +535,13 @@ pub async fn tick_once(
         }
     }
 
+    // Part B: open-bell execution gate — computed once per tick, reused for both the
+    // exit loops below and the entry-scan gate further down.
+    let now = Utc::now();
+    let minutes_since_open = crate::market_hours::minutes_since_regular_open(now);
+    let open_bell_active =
+        open_bell_gate_blocks(rules.execution.min_minutes_after_open, minutes_since_open);
+
     // Exit evaluation and position monitoring (always runs when market is open)
     if runtime.simulate {
         let position_ids: Vec<String> = state.open_positions.keys().cloned().collect();
@@ -562,6 +570,18 @@ pub async fn tick_once(
                 result.monitored_positions.push(monitor.snapshot);
             }
                 if let Some(eval) = monitor.exit {
+                    if let Some(skip_msg) = defer_non_urgent_exit(
+                        rules,
+                        state,
+                        &position_id,
+                        &eval.reason,
+                        &eval.mark,
+                        now,
+                        open_bell_active,
+                    ) {
+                        result.skipped.push(skip_msg);
+                        continue;
+                    }
                     if is_thesis_exit_reason(&eval.reason) {
                         state.redeploy_signal = Some(RedeploySignal {
                             at: Utc::now(),
@@ -660,6 +680,8 @@ pub async fn tick_once(
                             }
                         }
                     }
+                } else if let Some(p) = state.open_positions.get_mut(&position_id) {
+                    p.degraded_quote_exit_deferred_at = None;
                 }
         }
     } else {
@@ -693,6 +715,18 @@ pub async fn tick_once(
                 }
 
                 if let Some(eval) = monitor.exit {
+                    if let Some(skip_msg) = defer_non_urgent_exit(
+                        rules,
+                        state,
+                        &position_id,
+                        &eval.reason,
+                        &eval.mark,
+                        now,
+                        open_bell_active,
+                    ) {
+                        result.skipped.push(skip_msg);
+                        continue;
+                    }
                     if is_thesis_exit_reason(&eval.reason) {
                         state.redeploy_signal = Some(RedeploySignal {
                             at: Utc::now(),
@@ -796,6 +830,8 @@ pub async fn tick_once(
                             }
                         }
                     }
+                } else if let Some(p) = state.open_positions.get_mut(&position_id) {
+                    p.degraded_quote_exit_deferred_at = None;
                 }
             }
         }
@@ -881,6 +917,12 @@ pub async fn tick_once(
             "new entries paused — max_trades_per_day ({}) reached or reserved by pending entries \
              (soft churn cap; hard gates are max_open_positions + portfolio/trade risk)",
             rules.risk.max_trades_per_day
+        ));
+    } else if open_bell_active {
+        result.skipped.push(format!(
+            "new entries paused — open-bell gate active until {}m after open (elapsed {}m)",
+            rules.execution.min_minutes_after_open.unwrap_or(0),
+            minutes_since_open.unwrap_or(0)
         ));
     } else if trading_halted {
         result.skipped.push(format!(
@@ -1906,6 +1948,7 @@ async fn scan_watchlist_tier(
                         state,
                         account_hash,
                         vertical_type,
+                        None,
                     )
                     .await
                     {
@@ -2304,8 +2347,16 @@ async fn evaluate_vertical_entry(
     state: &AgentState,
     account_hash: &str,
     spread_type: &str,
+    exclude_position_id: Option<&str>,
 ) -> Result<VerticalEntryOutcome> {
-    let open_count = state.count_open_for_strategy(account_hash, StrategyKind::Vertical);
+    // `exclude_position_id` lets a defensive-roll replacement search run *before* the
+    // being-rolled position is closed, without that still-open position counting
+    // against the cap it is about to vacate.
+    let open_count = state.count_open_for_strategy_excluding(
+        account_hash,
+        StrategyKind::Vertical,
+        exclude_position_id,
+    );
     if open_count + state.pending_entry_count() >= entry.max_open_positions {
         return Ok(VerticalEntryOutcome::Skip(
             "max open vertical positions".into(),
@@ -3400,6 +3451,54 @@ async fn place_or_replace_protective_order(
     }
 }
 
+/// Parts B/C: should this non-urgent exit be deferred this tick? Urgent exits
+/// (`is_urgent_exit_reason`) are never deferred. Mutates
+/// `degraded_quote_exit_deferred_at` on the tracked position as a side effect of the
+/// degraded-quote deferral engaging. Returns a skip message when deferred.
+fn defer_non_urgent_exit(
+    rules: &RulesConfig,
+    state: &mut AgentState,
+    position_id: &str,
+    reason: &str,
+    mark: &SpreadMark,
+    now: chrono::DateTime<Utc>,
+    open_bell_active: bool,
+) -> Option<String> {
+    if is_urgent_exit_reason(reason) {
+        return None;
+    }
+    if open_bell_active {
+        return Some(format!(
+            "open-bell gate: defer non-urgent exit {position_id} ({reason}) until {}m after open",
+            rules.execution.min_minutes_after_open.unwrap_or(0)
+        ));
+    }
+    let deferred_since = state
+        .open_positions
+        .get(position_id)
+        .and_then(|p| p.degraded_quote_exit_deferred_at);
+    let note = degraded_quote_defer_reason(
+        rules.exit_rules.defer_non_urgent_on_degraded_quotes,
+        rules.exit_rules.max_defer_minutes,
+        reason,
+        mark.quote_degraded,
+        deferred_since,
+        now,
+    )?;
+    if let Some(p) = state.open_positions.get_mut(position_id) {
+        p.degraded_quote_exit_deferred_at.get_or_insert(now);
+    }
+    state.record_action(
+        note,
+        json!({
+            "position_id": position_id,
+            "reason": reason,
+            "quote_degraded": mark.quote_degraded,
+        }),
+    );
+    Some(format!("{note}: {position_id} ({reason})"))
+}
+
 enum DefensiveRollOutcome {
     /// Close + open succeeded; do not record stop_loss cooldown.
     Success(Value),
@@ -3413,6 +3512,16 @@ enum DefensiveRollOutcome {
 }
 
 /// Intercept mechanical `stop_loss` with a managed vertical roll when eligible.
+///
+/// The replacement candidate is searched for and priced **before** the position is
+/// closed (the search is read-only market data). If no candidate qualifies, nothing
+/// is touched here and `NotAttempted` is returned so the caller's normal `stop_loss`
+/// exit path runs on this same tick with an honest label — this is what keeps paper
+/// stats from undercounting stops as `defensive_roll` when nothing was ever rolled.
+/// The close (labeled `defensive_roll`) only happens once a real, affordable
+/// candidate is confirmed; if the reopen still fails afterward, the close is
+/// relabeled back to `stop_loss` with a `roll_attempt` note (see
+/// `sim::relabel_roll_close_as_stop_loss`).
 #[allow(clippy::too_many_arguments)]
 async fn try_defensive_roll(
     runtime: &RuntimeConfig,
@@ -3472,8 +3581,71 @@ async fn try_defensive_roll(
         });
     }
 
-    // Close first (cancels protective GTC via execute_exit / removes sim position).
-    let exit_signal = exit_signal_json_for_account(account_hash, group, eval);
+    // Search for + price a replacement BEFORE closing anything. `exclude_position_id`
+    // keeps this still-open position from counting against max_open_positions in the
+    // search — it will vacate that slot once the close below completes.
+    let original_width = tracked
+        .entry_params
+        .as_ref()
+        .and_then(original_width_from_params);
+    let biased = roll_biased_entry_rules(
+        &rules.entry_rules.vertical,
+        roll_cfg,
+        eval.mark.dte,
+        tracked.entry_short_delta,
+        original_width,
+        tracked.contracts.max(1),
+    );
+
+    let search = evaluate_vertical_entry(
+        market,
+        rules,
+        &biased,
+        &tracked.underlying,
+        today,
+        state,
+        account_hash,
+        &spread_type,
+        Some(position_id),
+    )
+    .await;
+    let (candidate_credit, mut candidate, no_candidate_reason) = match search {
+        Ok(VerticalEntryOutcome::Signal(signal)) => {
+            let credit = signal
+                .get("estimated_credit")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            (Some(credit), signal, String::new())
+        }
+        Ok(VerticalEntryOutcome::Skip(reason)) => {
+            (None, Value::Null, format!("roll_no_candidate:{reason}"))
+        }
+        Err(e) => (None, Value::Null, format!("roll_candidate_error:{e:#}")),
+    };
+    if let RollPrecheck::NoCandidate(reason) = precheck_roll_candidate(
+        candidate_credit,
+        &no_candidate_reason,
+        entry_credit,
+        close_debit,
+        roll_cfg.max_debit_pct_of_entry_credit,
+    ) {
+        return Ok(DefensiveRollOutcome::NotAttempted { reason });
+    }
+    let new_credit = candidate_credit.unwrap_or(0.0);
+    let next_rolls = tracked.rolls_used.saturating_add(1);
+    if let Some(obj) = candidate.as_object_mut() {
+        obj.insert("roll_replacement".into(), json!(true));
+        obj.insert("rolls_used".into(), json!(next_rolls));
+        obj.insert("closed_position_id".into(), json!(position_id));
+        obj.insert("roll_close_debit".into(), json!(close_debit));
+        obj.insert("roll_net".into(), json!(roll_net(close_debit, new_credit)));
+    }
+
+    // Candidate confirmed and affordable — now close, labeled `defensive_roll`.
+    let mut roll_exit_signal = exit_signal_json_for_account(account_hash, group, eval);
+    if let Some(obj) = roll_exit_signal.as_object_mut() {
+        obj.insert("reason".into(), json!("defensive_roll"));
+    }
     let close_detail = if simulate {
         match record_sim_exit(
             rules_path,
@@ -3482,7 +3654,7 @@ async fn try_defensive_roll(
             position_id,
             "defensive_roll",
             &eval.mark,
-            &exit_signal,
+            &roll_exit_signal,
         ) {
             Ok(d) => d,
             Err(e) => {
@@ -3499,7 +3671,7 @@ async fn try_defensive_roll(
             rules_path,
             rules,
             group,
-            &exit_signal,
+            &roll_exit_signal,
             state,
             None,
         )
@@ -3528,81 +3700,6 @@ async fn try_defensive_roll(
         });
     }
 
-    let original_width = tracked
-        .entry_params
-        .as_ref()
-        .and_then(original_width_from_params);
-    let biased = roll_biased_entry_rules(
-        &rules.entry_rules.vertical,
-        roll_cfg,
-        eval.mark.dte,
-        tracked.entry_short_delta,
-        original_width,
-        tracked.contracts.max(1),
-    );
-
-    let candidate = match evaluate_vertical_entry(
-        market,
-        rules,
-        &biased,
-        &tracked.underlying,
-        today,
-        state,
-        account_hash,
-        &spread_type,
-    )
-    .await
-    {
-        Ok(VerticalEntryOutcome::Signal(mut signal)) => {
-            let new_credit = signal
-                .get("estimated_credit")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(0.0);
-            if !roll_money_ok(
-                entry_credit,
-                close_debit,
-                new_credit,
-                roll_cfg.max_debit_pct_of_entry_credit,
-            ) {
-                return Ok(DefensiveRollOutcome::StopCompleted {
-                    detail: Some(close_detail),
-                    reason: format!(
-                        "roll_debit_too_large:net={:.3}",
-                        roll_net(close_debit, new_credit)
-                    ),
-                });
-            }
-            let next_rolls = tracked.rolls_used.saturating_add(1);
-            if let Some(obj) = signal.as_object_mut() {
-                obj.insert("roll_replacement".into(), json!(true));
-                obj.insert("rolls_used".into(), json!(next_rolls));
-                obj.insert("closed_position_id".into(), json!(position_id));
-                obj.insert("roll_close_debit".into(), json!(close_debit));
-                obj.insert(
-                    "roll_net".into(),
-                    json!(roll_net(close_debit, new_credit)),
-                );
-            }
-            signal
-        }
-        Ok(VerticalEntryOutcome::Skip(reason)) => {
-            return Ok(DefensiveRollOutcome::StopCompleted {
-                detail: Some(close_detail),
-                reason: format!("no_roll_candidate:{reason}"),
-            });
-        }
-        Err(e) => {
-            return Ok(DefensiveRollOutcome::StopCompleted {
-                detail: Some(close_detail),
-                reason: format!("roll_candidate_error:{e:#}"),
-            });
-        }
-    };
-
-    let new_credit = candidate
-        .get("estimated_credit")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(0.0);
     let new_id = candidate
         .get("position_id")
         .and_then(|v| v.as_str())
@@ -3620,9 +3717,11 @@ async fn try_defensive_roll(
         ) {
             Ok(d) => d,
             Err(e) => {
+                let reason = format!("roll_open_failed:{e:#}");
+                sim::relabel_roll_close_as_stop_loss(rules_path, simulate, state, position_id, &reason);
                 return Ok(DefensiveRollOutcome::StopCompleted {
-                    detail: Some(close_detail),
-                    reason: format!("roll_open_failed:{e:#}"),
+                    detail: Some(roll_failed_close_detail(&close_detail, &reason)),
+                    reason,
                 });
             }
         }
@@ -3640,15 +3739,19 @@ async fn try_defensive_roll(
         {
             Ok(Some(d)) => d,
             Ok(None) => {
+                let reason = "roll_open_dry_or_none".to_string();
+                sim::relabel_roll_close_as_stop_loss(rules_path, simulate, state, position_id, &reason);
                 return Ok(DefensiveRollOutcome::StopCompleted {
-                    detail: Some(close_detail),
-                    reason: "roll_open_dry_or_none".into(),
+                    detail: Some(roll_failed_close_detail(&close_detail, &reason)),
+                    reason,
                 });
             }
             Err(e) => {
+                let reason = format!("roll_open_failed:{e:#}");
+                sim::relabel_roll_close_as_stop_loss(rules_path, simulate, state, position_id, &reason);
                 return Ok(DefensiveRollOutcome::StopCompleted {
-                    detail: Some(close_detail),
-                    reason: format!("roll_open_failed:{e:#}"),
+                    detail: Some(roll_failed_close_detail(&close_detail, &reason)),
+                    reason,
                 });
             }
         }
@@ -3661,30 +3764,24 @@ async fn try_defensive_roll(
     if !open_fill.eq_ignore_ascii_case("FILLED")
         && !(open_fill.is_empty() && !rules.execution.wait_for_fill)
     {
-        // Working/skipped after close — treat as stop completed (position already closed).
-        if open_fill.eq_ignore_ascii_case("SKIPPED")
+        // SKIPPED/REJECTED/CANCELED is a definite failure; WORKING/unknown is at best
+        // uncertain this tick — either way nothing rolled, so relabel the close.
+        let reason = if open_fill.eq_ignore_ascii_case("SKIPPED")
             || open_fill.eq_ignore_ascii_case("REJECTED")
             || open_fill.eq_ignore_ascii_case("CANCELED")
         {
-            return Ok(DefensiveRollOutcome::StopCompleted {
-                detail: Some(json!({
-                    "close": close_detail,
-                    "open": open_detail,
-                })),
-                reason: format!("roll_open_status:{open_fill}"),
-            });
-        }
-        // WORKING: replacement pending — still count as roll in progress; bump rolls_today
-        // only on FILLED. Treat working as incomplete stop path so cooldown applies.
-        if !open_fill.eq_ignore_ascii_case("FILLED") {
-            return Ok(DefensiveRollOutcome::StopCompleted {
-                detail: Some(json!({
-                    "close": close_detail,
-                    "open": open_detail,
-                })),
-                reason: format!("roll_open_not_filled:{open_fill}"),
-            });
-        }
+            format!("roll_open_status:{open_fill}")
+        } else {
+            format!("roll_open_not_filled:{open_fill}")
+        };
+        sim::relabel_roll_close_as_stop_loss(rules_path, simulate, state, position_id, &reason);
+        return Ok(DefensiveRollOutcome::StopCompleted {
+            detail: Some(roll_failed_close_detail(
+                &json!({ "close": close_detail, "open": open_detail }),
+                &reason,
+            )),
+            reason,
+        });
     }
 
     state.rolls_today = state.rolls_today.saturating_add(1);

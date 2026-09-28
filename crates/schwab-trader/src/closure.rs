@@ -123,7 +123,8 @@ pub async fn process_closure_exits(
     }
 
     if runtime.simulate {
-        return sim::process_sim_exits(rules_path, rules, state, market).await;
+        return sim::process_sim_exits(&sim::ProductionSink(rules_path), rules, state, market)
+            .await;
     }
 
     let mut exits = Vec::new();
@@ -133,7 +134,7 @@ pub async fn process_closure_exits(
     if !runtime.dry_run {
         let plan_updates = process_exit_plan_tightens(
             Some(runtime),
-            rules_path,
+            &sim::ProductionSink(rules_path),
             rules,
             state,
             Some(api),
@@ -188,7 +189,7 @@ pub async fn process_closure_exits(
             // True mark-to-market — flooring at entry price hides unrealized
             // losses from sleeve equity, drawdown, and cap accounting.
             p.market_value_usd = p.quantity * last.max(0.0);
-            crate::thesis_exit::update_peak_profit_pct(p, last);
+            crate::thesis_exit::update_peak_and_trough_profit_pct(p, last);
         }
 
         let snap = fetch_technical_snapshot(market, rules, &symbol).await?;
@@ -250,6 +251,8 @@ pub async fn process_closure_exits(
                 "exit_reason": reason,
                 "fill_price": attempt.fill_price,
                 "quantity": pos.quantity,
+                "mfe_pct": pos.peak_profit_pct,
+                "mae_pct": pos.trough_profit_pct,
             }),
         )?;
     }
@@ -289,6 +292,8 @@ async fn process_oco_status_exits(
                     "symbol": pos.symbol,
                     "exit_reason": "oco_filled",
                     "oco_order_id": oco_id,
+                    "mfe_pct": pos.peak_profit_pct,
+                    "mae_pct": pos.trough_profit_pct,
                 }),
             )?;
         }
@@ -351,7 +356,7 @@ pub fn trailing_stop_candidate(
 /// Used by live ticks (optional OCO replace) and sim ticks (state-only).
 pub async fn process_exit_plan_tightens(
     runtime: Option<&TraderRuntime>,
-    rules_path: &Path,
+    sink: &dyn sim::LedgerSink,
     rules: &TraderRules,
     state: &mut TraderState,
     api: Option<&Arc<TraderApi>>,
@@ -441,8 +446,8 @@ pub async fn process_exit_plan_tightens(
             "oco_order_id": new_oco_id,
         });
         updates.push(event.clone());
-        journal::append_event(rules_path, "exit_plan_tightened", event)?;
-        save_state(rules_path, state)?;
+        sink.event("exit_plan_tightened", event)?;
+        sink.persist(state)?;
     }
 
     Ok(updates)
@@ -736,6 +741,8 @@ pub async fn flatten_all_live_positions(
                 "exit_reason": "manual_close_all",
                 "fill_price": attempt.fill_price,
                 "quantity": pos.quantity,
+                "mfe_pct": pos.peak_profit_pct,
+                "mae_pct": pos.trough_profit_pct,
             }),
         )?;
         closes.push(json!({
@@ -785,6 +792,7 @@ mod tests {
             oco_order_id: None,
             exit_plan_version: 1,
             peak_profit_pct: None,
+            trough_profit_pct: None,
             entry_rs_vs_benchmark_30d: None,
         };
 

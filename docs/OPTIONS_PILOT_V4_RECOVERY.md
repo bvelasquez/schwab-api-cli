@@ -137,12 +137,25 @@ If backtest is negative on v4, **do not** promote to live.
 
 ### Phase 4 — Promotion gates (all required for live)
 
-1. **≥15** simulated round trips on v4 rules.
-2. Sim **realized P/L ≥ 0** and **max drawdown ≤ 8%** of $4k sleeve.
-3. **Win rate ≥ 55%** with **avg win ≥ avg loss** (absolute USD).
-4. **`profit_target` exits ≥ 40%** of closes.
-5. **Zero** entries where mechanical context shows short inside 1σ.
-6. Manual sign-off after reviewing `agent-sim-journal-options-pilot-8709.jsonl`.
+Rewritten 2026-09-28 (`rules/analysis-20260928/audit.md`). The previous set could not pass: "avg win ≥
+avg loss" is structurally impossible for a 12–20Δ credit spread (a win is a fraction of the credit, a
+loss is a multiple of it), and "zero entries inside 1σ" contradicted v4.2, which disabled that gate.
+
+1. **Edge before sample.** Median entry credit/width ≥ **10%**, and the rules-implied breakeven win rate
+   (`avg_loss / (avg_win + avg_loss)` from the backtest *with* `fill_slippage_pct` applied) is at least
+   **8 points below** median entry POP. v4.2 paper (7–8% of width, breakeven ≈ POP) fails this.
+2. **≥ 20** closed simulated round trips on the promoted rules (paper, or paper + shadow arms on the same
+   ticks). Laddering SPY and QQQ under a correlation cap of 2 is allowed to reach n.
+3. Sim **expectancy per trade > 0** with a bootstrap 90% CI lower bound ≥ **−$5**, and **profit factor ≥ 1.2**.
+4. **No single loss > 2.5× its entry credit** (defined-risk tail is controlled by the exits, not luck), and
+   sleeve **max drawdown ≤ 8%** of $4k.
+5. Exit labels are honest: every `defensive_roll` close is paired with a roll open; failed rolls are
+   journaled as `stop_loss`.
+6. Manual sign-off after reviewing `agent-sim-journal-options-pilot-8709.jsonl` and the daily scorecard.
+
+The synthetic backtest is **not** admissible evidence for gate 1 until it applies slippage and watchlist
+credit floors and prices off recorded chain IV: on 2026-09-28 it produced credits ≈ 2× what paper filled
+(`rules/analysis-20260928/options/RESULTS.md`).
 
 ### Phase 5 — Live re-enable (explicit, not via `option-start.sh`)
 
@@ -172,3 +185,4 @@ same account hash with `max_open_positions` that can overlap the same names.
 
 - [OPTIONS_RULES.md](OPTIONS_RULES.md) — `--simulate` vs live
 - Live P/L history: `rules/agent-state-options-pilot-8709.json` → `cumulative_realized_pnl_usd` (~−$212 as of 2026-08-05)
+- Paper P/L: `rules/agent-sim-state-options-pilot-8709.json` → `sim.realized_pnl_usd` (`cumulative_realized_pnl_usd` stays 0 in simulate by design)

@@ -37,6 +37,16 @@ fn append_event_at(
     } else {
         journal_path(rules_path)
     };
+    append_event_to_path(&path, at, event_type, payload)
+}
+
+/// Append to an explicit journal file (shadow arms keep their own journals).
+pub fn append_event_to_path(
+    path: &Path,
+    at: DateTime<Utc>,
+    event_type: &str,
+    payload: Value,
+) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -48,10 +58,39 @@ fn append_event_at(
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&path)
+        .open(path)
         .with_context(|| format!("open journal {}", path.display()))?;
     writeln!(file, "{}", line)?;
     Ok(())
+}
+
+/// Stream a journal keeping only events whose `type` is in `types`. Lines are
+/// substring-filtered before parsing so multi-hundred-MB journals stay cheap.
+pub fn read_events_of_types(path: &Path, types: &[&str]) -> Result<Vec<Value>> {
+    use std::io::BufRead;
+    if !path.is_file() {
+        return Ok(vec![]);
+    }
+    let needles: Vec<String> = types.iter().map(|t| format!("\"type\":\"{t}\"")).collect();
+    let file = std::fs::File::open(path).with_context(|| format!("open journal {}", path.display()))?;
+    let mut out = Vec::new();
+    for line in std::io::BufReader::new(file).lines() {
+        let line = line?;
+        if !needles.iter().any(|n| line.contains(n.as_str())) {
+            continue;
+        }
+        let Ok(event) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if event
+            .get("type")
+            .and_then(|v| v.as_str())
+            .is_some_and(|t| types.contains(&t))
+        {
+            out.push(event);
+        }
+    }
+    Ok(out)
 }
 
 pub fn read_recent(rules_path: &Path, limit: usize) -> Result<Vec<Value>> {

@@ -61,6 +61,36 @@ If a wing is missing NBBO (`bid`/`ask` null or 0 — common on event days for fa
 
 Monitor LLM context includes `mechanical_rules.stop_triggered` — only treat a stop as hit when that field is `true`. See [LLM_SCHEMA_REFERENCE.md](LLM_SCHEMA_REFERENCE.md#field-reference--exit_rules-mechanical--authoritative).
 
+### Open-bell execution gate (`execution.min_minutes_after_open`)
+
+Quotes are widest right at the 09:30 ET bell. When set, no new entries and no
+**non-urgent** exits fire until this many minutes after the regular open. `None`/omit
+disables the gate (default — existing agents are unchanged). **Urgent** exits
+(`stop_loss`, thesis exits indicating a threatened short strike, max-loss) are never
+delayed — only `profit_target`, `dte_close`, `thesis_regime_mismatch`, and
+`thesis_profit_giveback` can be held back.
+
+```yaml
+execution:
+  min_minutes_after_open: 15   # unset by default
+```
+
+### Degraded-quote exit deferral (`exit_rules.defer_non_urgent_on_degraded_quotes`)
+
+When a non-urgent exit (see above) would fill from a degraded quote
+(`mark.quote_degraded: true`, e.g. `mark.source: "chain_degraded"` last-good
+fallback), skip it this tick and record an `exit_deferred_degraded_quote` action
+instead of filling on a fallback print. `max_defer_minutes` (default 60) is a
+ceiling — past it, the exit proceeds regardless of quote quality so a persistently
+degraded chain can't stall an exit indefinitely. Off by default. Urgent exits always
+proceed on whatever mark is available.
+
+```yaml
+exit_rules:
+  defer_non_urgent_on_degraded_quotes: false   # off by default
+  max_defer_minutes: 60
+```
+
 ### Defensive rolling
 
 When a **credit vertical** hits the mechanical `stop_loss`, the agent can attempt a **managed roll** (close the tested spread, then open a farther-OTM / later-DTE replacement) instead of eating a full stop. Iron condors, thesis exits, and DTE closes are out of scope for v1. Rolls are mechanical (same class as stops — they bypass `require_llm_proceed`) and use **two sequential orders** (close then open), not Schwab `VERTICAL_ROLL`.
@@ -75,6 +105,8 @@ When a **credit vertical** hits the mechanical `stop_loss`, the agent can attemp
 | `max_debit_pct_of_entry_credit` | 25 | Allow limited debit: `new_credit − close_debit ≥ −entry × pct/100` |
 | `max_rolls_per_position` | 1 | Per lineage (`TrackedPosition.rolls_used`) |
 | `max_rolls_per_day` | 1 | Soft account-wide daily cap |
+
+The replacement candidate is searched for and priced **before** anything is closed (read-only market data): if no candidate qualifies, the position is never touched by the roll logic at all — the normal `stop_loss` exit runs on the same tick, correctly labeled. The close only happens (labeled `defensive_roll`) once a real, affordable candidate is confirmed; if the reopen still fails afterward, the close is relabeled back to `stop_loss` (with a `roll_attempt` note) so paper/live stats never count an unrolled stop as a roll.
 
 A **successful** roll does **not** call `record_stop_loss_exit` (no stop re-entry cooldown). If the roll is ineligible or the replacement fails after close, the normal stop path / cooldown applies. Tick `skipped` strings distinguish `rolled` vs `stop_loss`. Journal / Telegram event type: `defensive_roll`.
 
@@ -102,6 +134,45 @@ schwab agent backtest report --rules-file rules/options-pilot-8709.yaml --json
 ```
 
 LLM selection is off in backtest (mechanical gates only). Fill model: daily close. Artifacts next to the rules file: `.options-backtest-cache-*.json`, `agent-backtest-state-*.json`, `agent-backtest-journal-*.jsonl`.
+
+The backtest now mirrors the live `--simulate` fill economics rather than pricing a
+frictionless mid:
+
+- **Slippage.** `simulation.fill_slippage_pct` is applied to backtest fills the same way
+  it is applied live (entry credit reduced, exit debit widened) — see
+  [Paper simulation slippage](#paper-simulation-slippage) below. The exit *decision*
+  (profit target / stop) still compares the raw modeled mark against the already-slipped
+  entry credit, matching the live sim's basis.
+- **Watchlist overrides.** Per-symbol `watchlist[].min_credit` / `min_credit_to_width_pct`
+  (etc.) are merged onto `entry_rules.vertical` for each symbol, the same as the live entry
+  path — the backtest no longer entry-gates every symbol on the global vertical defaults
+  alone.
+- **Pricing calibration (`simulation.backtest_pricing`, optional).** Both legs of a
+  vertical/condor were previously priced at one flat IV = the VIX close, for every symbol.
+  Two calibration knobs correct for that without changing the default model:
+  ```yaml
+  simulation:
+    backtest_pricing:
+      iv_multiplier_by_symbol:
+        QQQ: 1.25   # QQQ IV typically runs ~1.2-1.3x SPX/VIX; SPY omitted = 1.0
+      put_skew_per_10_delta_pts: 1.5   # +1.5 IV points per 10 delta further OTM than 50-delta (puts only)
+  ```
+  `iv_multiplier_by_symbol` rescales the modeled IV level (and the delta used for strike
+  selection/gates) per underlying; `put_skew_per_10_delta_pts` is a per-leg IV add-on so a
+  vertical's further-OTM long leg prices at a higher IV than its short — it does **not**
+  change which strike counts as "16 delta". Omitting `backtest_pricing` entirely reproduces
+  the pre-calibration price exactly, so existing results stay reproducible until you opt in.
+- **Report metrics.** `schwab agent backtest report` includes `avg_entry_credit_usd`,
+  `avg_credit_to_width_pct`, and `breakeven_win_rate_pct` (the win rate at which
+  `ledger_stats.avg_win_usd`/`avg_loss_usd` would net to zero) so a run can be compared
+  directly against paper/live credit and win-rate numbers.
+
+A chain-snapshot recorder (`scripts/chain-snapshot.sh`, run three times a day) saves real
+QQQ/SPY chains to `rules/chains/YYYY-MM-DD/<SYM>-<HHMM>ET.json.gz` with bid/ask/mark/IV/delta
+per contract. Until `backtest_pricing` is calibrated against those recorded chains (comparing
+modeled vs. recorded credit/IV at matching strikes/DTE), **treat backtest credit and
+credit/width numbers as optimistic** relative to real fills — Black–Scholes-off-VIX is still
+a proxy, not an OPRA-realistic quote.
 
 ## Broker-side protection (what survives if the agent is down)
 
@@ -136,8 +207,9 @@ execution:
 `simulation.fill_slippage_pct` (default 0) applies a spread-cost haircut to virtual fills:
 entry credit is reduced by X% and exit debit increased by X% (e.g. 5.0 = 5%). This makes
 paper P/L honest about bid/ask — the live sim should not look systematically better than
-reality. The synthetic backtest is a separate model (daily-close BS fills) and does not
-apply this; treat backtest as gate research, sim as paper P/L.
+reality. The synthetic backtest (see [Historical backtest](#historical-backtest-synthetic)
+above) applies the same haircut to its fills so the two are comparable; it is still a
+Black–Scholes/VIX-proxy pricing model, not OPRA-realistic quotes.
 
 If placement fails after `max_attempts`, the position stays open without broker-side
 protection and is retried every subsequent tick (`reconcile_protective_orders`) until it

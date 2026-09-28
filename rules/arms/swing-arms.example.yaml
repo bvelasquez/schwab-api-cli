@@ -1,0 +1,67 @@
+# Shadow arms for the swing paper agent (schwab-trader agent run … --simulate).
+#
+# Paste the `shadow:` block into the production rules file (e.g.
+# rules/trader-swing-9947.yaml on jarvis) and SIGHUP / restart the agent.
+# Each arm is an overlay deep-merged onto the live production rules at runtime:
+# maps merge, arrays and scalars REPLACE (restate a whole list to add to it).
+# Arms are paper-only, never consulted by the production agent, and never
+# auto-promote — see docs/TRADER_RULES.md § Shadow arms.
+#
+# Compare: schwab-trader shadow report rules/trader-swing-9947.yaml [--json]
+
+shadow:
+  enabled: true
+  arms:
+    # Shallow pullback: require price below the 9-day SMA at entry.
+    - id: pullback-sma9
+      overrides:
+        playbook:
+          entry:
+            require_below_sma: [9]
+
+    # Allow breakouts: drop the 52w-high distance gate and the recent-range
+    # target cap (which yields a 0% target at/above the 60d high).
+    - id: breakout-ok
+      overrides:
+        playbook:
+          filters:
+            min_distance_from_52w_high_pct: null
+          exit:
+            profit_target_recent_range_cap:
+              enabled: false
+
+    # Correlation caps for crypto proxies and megacap tech. symbol_groups and
+    # blocked_symbols are arrays, so the full lists are restated here. A symbol
+    # in two groups counts toward the FIRST one listed (NVDA → semicap).
+    - id: corr-groups
+      overrides:
+        playbook:
+          filters:
+            blocked_symbols: [TQQQ]
+            symbol_groups:
+              - { name: semicap, symbols: [AMD, ASML, SMH, MU, NVDA], max_open: 1 }
+              - { name: industrial, symbols: [CAT, RTX, XLI], max_open: 1 }
+              - { name: healthcare, symbols: [UNH, LLY], max_open: 1 }
+              - { name: utilities, symbols: [XLU, NEE, SO, DUK], max_open: 1 }
+              - { name: staples, symbols: [XLP, PG, KO, PEP, COST, WMT], max_open: 1 }
+              - { name: gold, symbols: [GLD, NEM], max_open: 1 }
+              - { name: crypto, symbols: [IBIT, BITO, MSTR, COIN], max_open: 1 }
+              - { name: megacap_tech, symbols: [AAPL, MSFT, GOOGL, AMZN, META, NVDA, TSLA, QQQ], max_open: 2 }
+
+    # Only open new positions in the low_vol_trend regime profile.
+    - id: low-vol-only
+      overrides:
+        adaptation:
+          profiles:
+            baseline:
+              overrides:
+                entry:
+                  max_new_entries_per_day: 0
+            elevated_vol:
+              overrides:
+                entry:
+                  max_new_entries_per_day: 0
+            high_vol_chop:
+              overrides:
+                entry:
+                  max_new_entries_per_day: 0

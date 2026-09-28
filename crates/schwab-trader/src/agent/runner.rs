@@ -1,3 +1,5 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,7 +29,7 @@ use crate::commands::scan_cmd::run_scan_inner;
 use crate::config::TraderRuntime;
 use crate::entry::{attempt_entry, EntryStatus};
 use crate::journal;
-use crate::market_ctx::MarketCtx;
+use crate::market_ctx::{MarketCtx, TickTape};
 use crate::learn::{
     adaptation_allowed, apply_rule_patches, build_learn_context, should_run_learn,
 };
@@ -36,6 +38,7 @@ use crate::reconcile::reconcile_tick;
 use crate::regime::detect_regime;
 use crate::risk::{monitoring_metrics, update_drawdown};
 use crate::rules::TraderRules;
+use crate::shadow::ShadowArms;
 use crate::shuffle::{build_entry_shuffle_context, entry_shuffle_block_from_scan};
 use schwab_cli::rules_reload::{wait_for_next_tick, ReloadAttempt, RulesReloader};
 use crate::sim::{compute_stats, snapshot_equity};
@@ -62,6 +65,14 @@ struct TickOutcome {
     body: Value,
     next_sleep_seconds: u64,
     session: String,
+    /// Everything the regular-session tick fetched, when shadow arms are active.
+    tape: Option<Arc<TickTape>>,
+}
+
+fn reload_watch_paths(rules: &TraderRules, rules_path: &Path) -> Vec<std::path::PathBuf> {
+    let mut paths = rules.watch_paths(rules_path);
+    paths.extend(crate::shadow::arm_watch_paths(rules, rules_path));
+    paths
 }
 
 pub async fn run_agent_loop(
@@ -104,6 +115,8 @@ pub async fn run_agent_loop(
     };
 
     let mut state = load_state(rules_path, &rules.trader_id)?;
+    let mut shadow = ShadowArms::default();
+    shadow.sync(rules_path, &rules);
 
     let llm_client = if rules.llm.enabled {
         OpenRouterClient::from_env().ok()
@@ -122,7 +135,7 @@ pub async fn run_agent_loop(
     schwab_cli::trade_audio::init(runtime.no_audio);
 
     let mut consecutive_failures: u32 = 0;
-    let mut reloader = RulesReloader::new(rules.watch_paths(rules_path));
+    let mut reloader = RulesReloader::new(reload_watch_paths(&rules, rules_path));
     if !options.once {
         reloader.spawn_sighup_listener();
         let _ = std::fs::write(
@@ -143,8 +156,10 @@ pub async fn run_agent_loop(
                 &mut account,
                 &mut llm_client,
                 &mut telegram,
+                &mut shadow,
             );
         }
+        shadow.sync(rules_path, &rules);
 
         // Soft re-auth probe so a fresh `schwab auth login` is picked up mid-run.
         if let Err(err) = refresh_access_token_soft(&api).await {
@@ -163,10 +178,11 @@ pub async fn run_agent_loop(
             &mut state,
             llm_client.as_ref(),
             telegram.as_ref(),
+            shadow.is_active(),
         )
         .await
         {
-            Ok(outcome) => {
+            Ok(mut outcome) => {
                 if consecutive_failures > 0 {
                     let msg = format!(
                         "agent recovered after {consecutive_failures} failure(s)"
@@ -214,6 +230,12 @@ pub async fn run_agent_loop(
                         "tick_result": outcome.body,
                     }),
                 ));
+
+                // Production state is saved and emitted before arms run; arms
+                // only read it and log their own failures.
+                if let Some(tape) = outcome.tape.take() {
+                    shadow.run_tick(rules_path, &state, tape).await;
+                }
 
                 notify::notify_tick_summary(
                     telegram.as_ref(),
@@ -278,6 +300,7 @@ fn apply_trader_rules_reload(
     account: &mut String,
     llm_client: &mut Option<OpenRouterClient>,
     telegram: &mut Option<TelegramNotifier>,
+    shadow: &mut ShadowArms,
 ) {
     let force = reloader.take_force();
     match reloader.try_load(force, || TraderRules::load(rules_path)) {
@@ -299,7 +322,8 @@ fn apply_trader_rules_reload(
             }
             *rules = new;
             rules.log_validation_hints();
-            reloader.set_paths(rules.watch_paths(rules_path));
+            reloader.set_paths(reload_watch_paths(rules, rules_path));
+            shadow.mark_dirty();
             if let Ok(a) = rules.primary_account() {
                 *account = a.hash.clone();
             }
@@ -437,14 +461,22 @@ async fn run_tick(
     state: &mut TraderState,
     llm_client: Option<&OpenRouterClient>,
     telegram: Option<&TelegramNotifier>,
+    record_tape: bool,
 ) -> Result<TickOutcome> {
     state.reset_trades_day(&rules.schedule.timezone);
-    let market_ctx = MarketCtx::for_rules(market.clone(), rules_path, rules);
 
     let transition =
         schedule::resolve_session(rules, state.last_session.as_deref());
     let session = transition.session;
     state.last_session = Some(session.as_str().to_string());
+
+    let tape = (record_tape && session == AgentSession::RegularHours)
+        .then(|| Arc::new(TickTape::default()));
+    let market_ctx = MarketCtx::for_rules(market.clone(), rules_path, rules);
+    let market_ctx = match &tape {
+        Some(t) => market_ctx.with_tape(t.clone()),
+        None => market_ctx,
+    };
 
     let outcome = match session {
         AgentSession::Idle => {
@@ -504,6 +536,7 @@ async fn run_tick(
         body: outcome,
         next_sleep_seconds: transition.sleep_seconds,
         session: session.as_str().to_string(),
+        tape,
     })
 }
 
@@ -802,19 +835,10 @@ async fn tick_regular(
 
     let regime = detect_regime(market, rules).await.unwrap_or_else(|err| {
         tracing::warn!("regime detection failed: {err}");
-        crate::regime::RegimeSnapshot {
-            class: "neutral".into(),
-            benchmark_symbol: rules.adaptation.regime.benchmark_symbol.clone(),
-            vix_symbol: rules.adaptation.regime.vix_symbol.clone(),
-            benchmark_last: 0.0,
-            vix: None,
-            above_sma_50: false,
-            above_sma_200: false,
-            realized_vol_annualized_pct: 0.0,
-            realized_vol_percentile: 50.0,
-            recommended_profile: rules.adaptation.default_profile.clone(),
-            signals: json!({}),
-        }
+        crate::regime::neutral_snapshot(
+            &rules.adaptation.regime,
+            &rules.adaptation.default_profile,
+        )
     });
     apply_regime_profile(state, rules, &regime);
     let mut tick_rules = effective_rules(rules, state);
@@ -1149,6 +1173,8 @@ async fn tick_regular(
         }
     }
 
+    let effective_playbook = crate::learn::adaptable_playbook_snapshot(&tick_rules);
+
     let tick_result = json!({
         "session": "regular",
         "at_open": at_open,
@@ -1186,7 +1212,9 @@ async fn tick_regular(
         "dry_run": runtime.dry_run,
         "simulate": runtime.simulate,
         "playbook_style": tick_rules.playbook.style,
-        "effective_playbook": crate::learn::adaptable_playbook_snapshot(&tick_rules),
+        // Full playbook kept here — this is `state.last_tick_result`, read by
+        // the live UI (ui/live.rs) every render, not just the journal.
+        "effective_playbook": effective_playbook,
         "market_cache": market.cache_status(),
         "state_path": state_path(rules_path),
     });
@@ -1205,10 +1233,42 @@ async fn tick_regular(
                 }),
             );
         }
-        let _ = journal::append_event(rules_path, "sim_tick_summary", tick_result.clone());
+        // `sim_tick_summary` fires every ~90s and the full playbook rarely
+        // changes tick-to-tick — journal it only when its hash differs from
+        // the last one we wrote, else a one-byte marker. `tick_result` (used
+        // for `state.last_tick_result` / the live UI) always keeps the full
+        // playbook untouched.
+        let journal_payload = slim_journaled_tick_result(&tick_result, &effective_playbook, state);
+        let _ = journal::append_event(rules_path, "sim_tick_summary", journal_payload);
     }
 
     Ok(tick_result)
+}
+
+/// Journal-only copy of the tick result: replaces `effective_playbook` with
+/// `effective_playbook_unchanged: true` when its hash matches the last one
+/// journaled (tracked in-memory on `state`, never persisted to disk).
+fn slim_journaled_tick_result(
+    tick_result: &Value,
+    effective_playbook: &Value,
+    state: &mut TraderState,
+) -> Value {
+    let mut hasher = DefaultHasher::new();
+    serde_json::to_string(effective_playbook)
+        .unwrap_or_default()
+        .hash(&mut hasher);
+    let hash = hasher.finish();
+
+    let mut payload = tick_result.clone();
+    if state.last_journaled_effective_playbook_hash == Some(hash) {
+        if let Some(obj) = payload.as_object_mut() {
+            obj.remove("effective_playbook");
+            obj.insert("effective_playbook_unchanged".into(), json!(true));
+        }
+    } else {
+        state.last_journaled_effective_playbook_hash = Some(hash);
+    }
+    payload
 }
 
 async fn llm_context_with_feeds(rules: &TraderRules, phase: &str, context: Value) -> Value {
@@ -1291,7 +1351,10 @@ fn resolve_regular_llm_phase<'a>(
     None
 }
 
-fn prioritise_scan_for_redeploy(scan: &mut Value, redeploy: Option<&crate::agent::state::RedeploySignal>) {
+pub(crate) fn prioritise_scan_for_redeploy(
+    scan: &mut Value,
+    redeploy: Option<&crate::agent::state::RedeploySignal>,
+) {
     let Some(sig) = redeploy else { return };
     let Some(sym) = sig.underlying.as_deref() else { return };
     let Some(candidates) = scan.get_mut("candidates").and_then(|v| v.as_array_mut()) else {
@@ -1310,7 +1373,7 @@ fn prioritise_scan_for_redeploy(scan: &mut Value, redeploy: Option<&crate::agent
     });
 }
 
-fn maybe_clear_stale_redeploy(state: &mut TraderState) {
+pub(crate) fn maybe_clear_stale_redeploy(state: &mut TraderState) {
     let Some(sig) = &state.redeploy_signal else {
         return;
     };
@@ -1430,5 +1493,56 @@ mod llm_entry_allowed_tests {
     fn no_veto_ignores_the_review_recommendation() {
         let r = review(&[("GLD", "skip")], "skip");
         assert!(llm_entry_allowed(Some(&r), "GLD", false, true, false, true));
+    }
+}
+
+#[cfg(test)]
+mod slim_journaled_tick_result_tests {
+    use super::*;
+
+    #[test]
+    fn first_tick_keeps_full_playbook_and_records_hash() {
+        let mut state = TraderState::default();
+        let playbook = json!({"exit": {"profit_target_pct": 8.0}});
+        let tick = json!({"tick": 1, "effective_playbook": playbook.clone()});
+
+        let out = slim_journaled_tick_result(&tick, &playbook, &mut state);
+
+        assert_eq!(out["effective_playbook"], playbook);
+        assert!(out.get("effective_playbook_unchanged").is_none());
+        assert!(state.last_journaled_effective_playbook_hash.is_some());
+    }
+
+    #[test]
+    fn unchanged_playbook_is_replaced_with_marker() {
+        let mut state = TraderState::default();
+        let playbook = json!({"exit": {"profit_target_pct": 8.0}});
+        let tick1 = json!({"tick": 1, "effective_playbook": playbook.clone()});
+        let _ = slim_journaled_tick_result(&tick1, &playbook, &mut state);
+
+        let tick2 = json!({"tick": 2, "effective_playbook": playbook.clone()});
+        let out2 = slim_journaled_tick_result(&tick2, &playbook, &mut state);
+
+        assert!(out2.get("effective_playbook").is_none());
+        assert_eq!(out2["effective_playbook_unchanged"], json!(true));
+        // Untouched fields still pass through.
+        assert_eq!(out2["tick"], json!(2));
+    }
+
+    #[test]
+    fn changed_playbook_is_kept_and_hash_updated() {
+        let mut state = TraderState::default();
+        let playbook1 = json!({"exit": {"profit_target_pct": 8.0}});
+        let tick1 = json!({"tick": 1, "effective_playbook": playbook1.clone()});
+        let _ = slim_journaled_tick_result(&tick1, &playbook1, &mut state);
+        let hash_after_first = state.last_journaled_effective_playbook_hash;
+
+        let playbook2 = json!({"exit": {"profit_target_pct": 9.0}});
+        let tick2 = json!({"tick": 2, "effective_playbook": playbook2.clone()});
+        let out2 = slim_journaled_tick_result(&tick2, &playbook2, &mut state);
+
+        assert_eq!(out2["effective_playbook"], playbook2);
+        assert!(out2.get("effective_playbook_unchanged").is_none());
+        assert_ne!(state.last_journaled_effective_playbook_hash, hash_after_first);
     }
 }

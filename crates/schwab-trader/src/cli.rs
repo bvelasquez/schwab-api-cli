@@ -93,6 +93,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: SimCommands,
     },
+    /// Shadow arms: paper-only rule variants evaluated on the agent's live ticks
+    Shadow {
+        #[command(subcommand)]
+        command: ShadowCommands,
+    },
     /// Historical swing backtest (Schwab daily bars)
     Backtest {
         #[command(subcommand)]
@@ -197,6 +202,14 @@ pub enum SimCommands {
     /// Reset paper portfolio and trade history
     Reset {
         #[arg(long)]
+        rules_file: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ShadowCommands {
+    /// Per-arm closed-trade stats and day-paired comparison vs production
+    Report {
         rules_file: PathBuf,
     },
 }

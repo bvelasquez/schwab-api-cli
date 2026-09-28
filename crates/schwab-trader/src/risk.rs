@@ -253,6 +253,7 @@ mod tests {
                 oco_order_id: None,
                 exit_plan_version: 1,
                 peak_profit_pct: None,
+                trough_profit_pct: None,
                 entry_rs_vs_benchmark_30d: None,
             },
         );

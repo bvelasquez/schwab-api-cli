@@ -386,6 +386,40 @@ pub fn record_sim_exit(
     Ok(detail)
 }
 
+/// Correct a defensive-roll close whose replacement failed to open: the close was
+/// journaled optimistically as `defensive_roll` (a candidate had already been found and
+/// priced before closing), but since nothing ended up rolled it must count as a plain
+/// stop for paper/live stats. In simulate mode this mutates the in-memory ledger entry
+/// directly (so `compute_stats`/`exit_reason_counts` are honest); in both modes it
+/// appends a correction event — the original close event stays put since the journal
+/// is append-only.
+pub fn relabel_roll_close_as_stop_loss(
+    rules_path: &Path,
+    simulate: bool,
+    state: &mut AgentState,
+    position_id: &str,
+    failed_reason: &str,
+) {
+    if let Some(ledger) = state.sim.as_mut() {
+        if let Some(trade) = ledger
+            .closed_trades
+            .iter_mut()
+            .rev()
+            .find(|t| t.position_id == position_id && t.exit_reason == "defensive_roll")
+        {
+            trade.exit_reason = "stop_loss".to_string();
+        }
+    }
+    let detail = json!({
+        "position_id": position_id,
+        "old_reason": "defensive_roll",
+        "new_reason": "stop_loss",
+        "roll_attempt": { "failed": failed_reason },
+    });
+    state.record_action("sim_exit_relabeled", detail.clone());
+    let _ = journal::append_event(rules_path, simulate, "sim_exit_relabeled", detail);
+}
+
 pub fn analysis_report(state: &AgentState, rules: &RulesConfig) -> Value {
     let stats = compute_stats(state, rules);
     let per_underlying: HashMap<String, f64> = state

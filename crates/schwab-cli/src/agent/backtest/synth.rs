@@ -8,7 +8,7 @@ use crate::agent::spread_analytics::{
 use crate::agent::volatility::realized_vol_annualized_pct;
 use crate::rules::{RulesConfig, VerticalEntryRules};
 
-use super::bs::{bs_delta, vertical_credit, years_from_dte};
+use super::bs::{bs_delta, scaled_sigma, vertical_credit, years_from_dte, PricingCalibration};
 
 #[derive(Debug, Clone)]
 pub struct SynthVertical {
@@ -79,10 +79,13 @@ pub fn pick_vertical(
     entry: &VerticalEntryRules,
     is_put: bool,
     contracts: u32,
+    calib: PricingCalibration,
 ) -> Option<SynthVertical> {
     let (expiry, dte) = pick_expiry(today, entry.dte_min, entry.dte_max)?;
     let t = years_from_dte(dte);
-    let sigma = (iv_pct / 100.0).max(0.01);
+    // Delta targeting/gates use the (unskewed) symbol-scaled level — skew is a
+    // per-leg pricing add-on only, not a redefinition of "16 delta".
+    let sigma = scaled_sigma(iv_pct, calib.iv_multiplier);
     let target = ((entry.short_delta_min + entry.short_delta_max) / 2.0).clamp(0.05, 0.40);
 
     let mut best: Option<(f64, f64, f64)> = None; // short, |delta|-target, delta
@@ -108,7 +111,7 @@ pub fn pick_vertical(
     if (short_strike - long_strike).abs() < entry.max_width * 0.4 {
         return None;
     }
-    let credit = vertical_credit(is_put, spot, short_strike, long_strike, dte, iv_pct);
+    let credit = vertical_credit(is_put, spot, short_strike, long_strike, dte, iv_pct, calib);
     if credit < entry.min_credit {
         return None;
     }
@@ -201,6 +204,7 @@ pub fn pick_iron_condor(
     iv_pct: f64,
     closes: &[f64],
     rules: &RulesConfig,
+    calib: PricingCalibration,
 ) -> Option<SynthCondor> {
     let ic = &rules.entry_rules.iron_condor;
     let put_entry = VerticalEntryRules {
@@ -222,6 +226,7 @@ pub fn pick_iron_condor(
         &put_entry,
         true,
         ic.max_contracts_per_trade,
+        calib,
     )?;
     let call = pick_vertical(
         underlying,
@@ -232,6 +237,7 @@ pub fn pick_iron_condor(
         &put_entry,
         false,
         ic.max_contracts_per_trade,
+        calib,
     )?;
     if put.expiry != call.expiry {
         return None;
@@ -243,7 +249,7 @@ pub fn pick_iron_condor(
     // Both wings outside 1σ expected move (GLD post-mortem gate). Fail-closed: when
     // IV is missing the check cannot pass, so no condor is picked.
     if ic.require_shorts_outside_1sigma {
-        let sigma = (iv_pct / 100.0).max(0.01);
+        let sigma = scaled_sigma(iv_pct, calib.iv_multiplier);
         let em = spot * sigma * (put.dte.max(1) as f64 / 365.0).sqrt();
         let put_dist = (spot - put.short_strike).max(0.0);
         let call_dist = (call.short_strike - spot).max(0.0);
