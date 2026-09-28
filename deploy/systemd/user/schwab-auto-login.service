@@ -1,0 +1,41 @@
+# Headless Schwab OAuth re-login (Playwright), for when the 7-day refresh
+# token is close to expiry or already dead. Cheap no-op most days — the
+# decision logic in schwab-auto-login.py only actually logs in when needed
+# (refresh token remaining < 36h, or unknown and 6+ days since last success).
+#
+# 2FA needs a human: at that step the script texts Barry on Telegram and
+# long-polls for his 6-digit reply (see schwab-auto-login.py). This unit
+# just needs to stay alive long enough for that — SCHWAB_2FA_WAIT_SECS
+# (default 600s) plus the rest of the flow.
+#
+# EnvironmentFile= here is schwab-paper.conf ONLY (Telegram creds + the
+# Schwab app key) — the login id/password live in a separate
+# ~/.config/schwabinvestbot/autologin.env (mode 600/400) that this script
+# reads directly, in-process. They must never enter a systemd
+# EnvironmentFile or any process environment.
+#
+# Never restarts the paper agents and never touches their token mirror
+# directly: on success it runs jarvis-token-keeper.sh (same as the timer
+# does) so the mirror is republished immediately.
+#
+# Also started on-demand by jarvis-token-keeper.sh when it finds itself
+# unauthenticated or a refresh fails (see that script), so a dead refresh
+# token gets a same-cycle self-heal attempt instead of waiting for the timer.
+
+[Unit]
+Description=Schwab headless OAuth re-login (Playwright + Telegram 2FA)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Default oneshot start timeout (90s) would kill this mid-Telegram-wait.
+# Up to two 2FA wait windows (SCHWAB_2FA_WAIT_SECS, default 600s each) plus
+# the rest of the flow comfortably fits in 30 minutes.
+TimeoutStartSec=1800
+WorkingDirectory=%h/projects/schwabinvestbot
+EnvironmentFile=-%h/.config/environment.d/schwab-paper.conf
+ExecStart=%h/projects/schwabinvestbot/scripts/schwab-auto-login.sh
+
+[Install]
+WantedBy=default.target

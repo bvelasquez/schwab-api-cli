@@ -95,10 +95,24 @@ JSON
   mv "$STATUS_JSON.tmp" "$STATUS_JSON"
 }
 
+# Best-effort kick of the headless auto-login on the two exit paths that mean
+# "an interactive-equivalent login is needed": unauthenticated, and a failed
+# refresh. This lets a dead refresh token self-heal within the same 5-min
+# cycle instead of waiting for schwab-auto-login.timer's daily run. The unit
+# itself has its own lockout/decision logic, so this is safe to call often;
+# errors (unit not installed yet, etc.) are ignored on purpose.
+trigger_auto_login() {
+  if (( DRY_RUN )); then return 0; fi
+  if systemctl --user list-unit-files schwab-auto-login.service >/dev/null 2>&1; then
+    systemctl --user start --no-block schwab-auto-login.service >/dev/null 2>&1 || true
+  fi
+}
+
 if [[ "$authenticated" != "true" ]]; then
   log "ERROR not authenticated; interactive login required (token=$token_path)"
   write_status "unauthenticated" false "interactive login required"
   echo "NOT AUTHENTICATED: run jarvis-auth-login.sh from the Mac" >&2
+  trigger_auto_login
   exit 2
 fi
 
@@ -112,11 +126,13 @@ if (( FORCE )) || (( expires_in < MIN_VALID_SECS )); then
       log "ERROR refresh failed: $(tr '\n' ' ' <<<"$refresh_json" | cut -c1-400)"
       write_status "refresh_failed" false "$(tr '\n' ' ' <<<"$refresh_json" | cut -c1-200)"
       echo "refresh failed" >&2
+      trigger_auto_login
       exit 3
     fi
     if [[ "$(jq -r '.success // false' <<<"$refresh_json" 2>/dev/null)" != "true" ]]; then
       log "ERROR refresh not successful: $(tr '\n' ' ' <<<"$refresh_json" | cut -c1-400)"
       write_status "refresh_failed" false "$(tr '\n' ' ' <<<"$refresh_json" | cut -c1-200)"
+      trigger_auto_login
       exit 3
     fi
     expires_in="$(jq -r '.data.expires_in_seconds // 0' <<<"$refresh_json" 2>/dev/null || echo 0)"
@@ -140,7 +156,7 @@ fi
 
 mkdir -p "$MIRROR_DIR"
 tmp="$MIRROR_DIR/.tokens.json.tmp.$$"
-jq '{access_token, refresh_token:"", token_type, expires_at, scope, obtained_at}' \
+jq '{access_token, refresh_token:"", token_type, expires_at, scope, obtained_at, login_at: (.login_at // null)}' \
   "$owner_file" >"$tmp"
 chmod 600 "$tmp"
 mv -f "$tmp" "$MIRROR_DIR/tokens.json"

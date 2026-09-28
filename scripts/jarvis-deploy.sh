@@ -52,6 +52,8 @@ cp -f deploy/systemd/user/schwab-scorecard.service "$unit_dir/"
 cp -f deploy/systemd/user/schwab-scorecard.timer "$unit_dir/"
 cp -f deploy/systemd/user/schwab-chain-snapshot.service "$unit_dir/"
 cp -f deploy/systemd/user/schwab-chain-snapshot.timer "$unit_dir/"
+cp -f deploy/systemd/user/schwab-auto-login.service "$unit_dir/"
+cp -f deploy/systemd/user/schwab-auto-login.timer "$unit_dir/"
 
 # Token-ownership drop-ins: the agents read the keeper's access-token-only
 # mirror so they can never start an OAuth refresh of their own (two refreshers
@@ -61,11 +63,11 @@ for u in schwab-options-8709 schwab-swing-9947; do
   cp -f deploy/systemd/user/schwab-agents-token-mirror.conf "$unit_dir/$u.service.d/token-mirror.conf"
 done
 
-chmod +x scripts/jarvis-token-keeper.sh scripts/jarvis-bot-watchdog.sh
+chmod +x scripts/jarvis-token-keeper.sh scripts/jarvis-bot-watchdog.sh scripts/schwab-auto-login.sh
 
 systemctl --user daemon-reload
 systemctl --user enable schwab-options-8709.service schwab-swing-9947.service
-systemctl --user enable --now schwab-token-keeper.timer schwab-bot-watchdog.timer schwab-scorecard.timer schwab-chain-snapshot.timer
+systemctl --user enable --now schwab-token-keeper.timer schwab-bot-watchdog.timer schwab-scorecard.timer schwab-chain-snapshot.timer schwab-auto-login.timer
 # Seed the mirror before the agents come up: they cannot refresh it themselves.
 scripts/jarvis-token-keeper.sh || true
 systemctl --user restart schwab-options-8709.service schwab-swing-9947.service
