@@ -104,8 +104,10 @@ impl DashboardContext {
                 "level": r.level.as_str(),
                 "message": r.message,
                 "obtained_at": r.obtained_at,
+                "login_at": r.login_at,
                 "access_expires_in_seconds": r.access_expires_in_seconds,
                 "refresh_expires_in_seconds": r.refresh_expires_in_seconds,
+                "refresh_expiry_known": r.login_at.is_some(),
                 "detail": r.detail_line(),
             })),
         })

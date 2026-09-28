@@ -137,7 +137,11 @@ async fn status(runtime: &RuntimeConfig) -> Result<()> {
                 "expires_in_seconds": t.expires_in_seconds(),
                 "expired": t.is_expired(),
                 "obtained_at": t.obtained_at,
+                "login_at": t.login_at,
+                // null when login_at is unknown (token predates login tracking) — never
+                // fall back to obtained_at, which would silently hide an outage.
                 "refresh_expires_in_seconds": t.refresh_expires_in_seconds(),
+                "refresh_expiry_known": t.login_at.is_some(),
                 "auth_reminder": {
                     "level": reminder.level.as_str(),
                     "message": reminder.message,
@@ -156,7 +160,7 @@ async fn status(runtime: &RuntimeConfig) -> Result<()> {
     let auth_needs_login = !envelope.data["authenticated"].as_bool().unwrap_or(false)
         || envelope.data["auth_reminder"]["level"]
             .as_str()
-            .is_some_and(|l| l == "urgent" || l == "expired");
+            .is_some_and(|l| matches!(l, "urgent" | "critical" | "expired" | "unknown"));
     if auth_needs_login {
         envelope.next_actions = vec!["schwab auth login".into()];
     }

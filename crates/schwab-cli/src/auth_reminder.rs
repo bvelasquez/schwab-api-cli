@@ -6,17 +6,25 @@ use schwab_api::{ClientConfig, Tokens};
 use crate::agent::state::AgentState;
 use crate::notify::TelegramNotifier;
 
-/// Warn when ≤2 days remain; urgent when ≤1 day.
-const SOON_THRESHOLD_SECS: i64 = 2 * 86400;
-const URGENT_THRESHOLD_SECS: i64 = 86400;
+/// Warn when ≤48h remain; urgent when ≤24h; critical when ≤6h.
+const SOON_THRESHOLD_SECS: i64 = 48 * 3600;
+const URGENT_THRESHOLD_SECS: i64 = 24 * 3600;
+const CRITICAL_THRESHOLD_SECS: i64 = 6 * 3600;
 const REMINDER_COOLDOWN_SECS: i64 = 24 * 3600;
+
+pub const UNKNOWN_LOGIN_AT_MESSAGE: &str =
+    "refresh-token age unknown (token predates login tracking) — re-login to start tracking";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthReminderLevel {
     None,
     Soon,
     Urgent,
+    Critical,
     Expired,
+    /// `login_at` is unknown (token file predates login tracking), so refresh expiry
+    /// cannot be computed. Must not be treated as "fresh".
+    Unknown,
 }
 
 impl AuthReminderLevel {
@@ -25,7 +33,9 @@ impl AuthReminderLevel {
             Self::None => "none",
             Self::Soon => "soon",
             Self::Urgent => "urgent",
+            Self::Critical => "critical",
             Self::Expired => "expired",
+            Self::Unknown => "unknown",
         }
     }
 }
@@ -34,7 +44,9 @@ impl AuthReminderLevel {
 pub struct AuthReminder {
     pub level: AuthReminderLevel,
     pub obtained_at: DateTime<Utc>,
-    pub refresh_expires_in_seconds: i64,
+    pub login_at: Option<DateTime<Utc>>,
+    /// `None` when `login_at` is unknown — never fall back to `obtained_at` here.
+    pub refresh_expires_in_seconds: Option<i64>,
     pub access_expires_in_seconds: i64,
     pub message: String,
 }
@@ -43,14 +55,13 @@ pub fn assess_refresh_token(tokens: &Tokens) -> AuthReminder {
     let refresh_expires_in_seconds = tokens.refresh_expires_in_seconds();
     let access_expires_in_seconds = tokens.expires_in_seconds();
 
-    let mut level = if refresh_expires_in_seconds <= 0 {
-        AuthReminderLevel::Expired
-    } else if refresh_expires_in_seconds <= URGENT_THRESHOLD_SECS {
-        AuthReminderLevel::Urgent
-    } else if refresh_expires_in_seconds <= SOON_THRESHOLD_SECS {
-        AuthReminderLevel::Soon
-    } else {
-        AuthReminderLevel::None
+    let mut level = match refresh_expires_in_seconds {
+        None => AuthReminderLevel::Unknown,
+        Some(secs) if secs <= 0 => AuthReminderLevel::Expired,
+        Some(secs) if secs <= CRITICAL_THRESHOLD_SECS => AuthReminderLevel::Critical,
+        Some(secs) if secs <= URGENT_THRESHOLD_SECS => AuthReminderLevel::Urgent,
+        Some(secs) if secs <= SOON_THRESHOLD_SECS => AuthReminderLevel::Soon,
+        Some(_) => AuthReminderLevel::None,
     };
 
     if tokens.is_expired() && level == AuthReminderLevel::None {
@@ -61,20 +72,26 @@ pub fn assess_refresh_token(tokens: &Tokens) -> AuthReminder {
         AuthReminderLevel::None => String::new(),
         AuthReminderLevel::Soon => format!(
             "Schwab login due in ~{} — run: schwab auth login",
-            format_days(refresh_expires_in_seconds)
+            format_days(refresh_expires_in_seconds.unwrap_or(0))
         ),
         AuthReminderLevel::Urgent => format!(
             "Schwab login needed within ~{} — run: schwab auth login now",
-            format_days(refresh_expires_in_seconds)
+            format_days(refresh_expires_in_seconds.unwrap_or(0))
+        ),
+        AuthReminderLevel::Critical => format!(
+            "Schwab refresh token expiring in ~{} — run: schwab auth login now",
+            format_days(refresh_expires_in_seconds.unwrap_or(0))
         ),
         AuthReminderLevel::Expired => {
             "Schwab refresh token expired — run: schwab auth login".to_string()
         }
+        AuthReminderLevel::Unknown => UNKNOWN_LOGIN_AT_MESSAGE.to_string(),
     };
 
     AuthReminder {
         level,
         obtained_at: tokens.obtained_at,
+        login_at: tokens.login_at,
         refresh_expires_in_seconds,
         access_expires_in_seconds,
         message,
@@ -85,10 +102,13 @@ impl AuthReminder {
     /// Extra context for status UIs (token issued, access + refresh horizons).
     pub fn detail_line(&self) -> String {
         let issued = format_ago((Utc::now() - self.obtained_at).num_seconds());
+        let refresh = match self.refresh_expires_in_seconds {
+            Some(secs) => format_days(secs),
+            None => "unknown".to_string(),
+        };
         format!(
-            "issued {issued} ago · access {} · refresh {}",
+            "issued {issued} ago · access {} · refresh {refresh}",
             format_duration(self.access_expires_in_seconds),
-            format_days(self.refresh_expires_in_seconds)
         )
     }
 }
@@ -189,29 +209,73 @@ fn format_ago(secs: i64) -> String {
 mod tests {
     use super::*;
 
-    fn sample_tokens(obtained_days_ago: i64) -> Tokens {
+    fn sample_tokens(login_days_ago: Option<i64>) -> Tokens {
         Tokens {
             access_token: "a".into(),
             refresh_token: "r".into(),
             token_type: "Bearer".into(),
             expires_at: Utc::now() + chrono::Duration::minutes(20),
             scope: None,
-            obtained_at: Utc::now() - chrono::Duration::days(obtained_days_ago),
+            obtained_at: Utc::now(),
+            login_at: login_days_ago.map(|days| Utc::now() - chrono::Duration::days(days)),
         }
     }
 
     #[test]
     fn urgent_when_one_day_left() {
-        let tokens = sample_tokens(6);
+        // 7d lifetime - 6d login age = 1d = 24h remaining, at the urgent threshold.
+        let tokens = sample_tokens(Some(6));
         let r = assess_refresh_token(&tokens);
         assert_eq!(r.level, AuthReminderLevel::Urgent);
     }
 
     #[test]
     fn none_when_fresh() {
-        let tokens = sample_tokens(1);
+        let tokens = sample_tokens(Some(1));
         let r = assess_refresh_token(&tokens);
         assert_eq!(r.level, AuthReminderLevel::None);
+    }
+
+    #[test]
+    fn soon_when_two_days_left() {
+        // 7d - 5d = 2d = 48h remaining, at the soon threshold.
+        let tokens = sample_tokens(Some(5));
+        let r = assess_refresh_token(&tokens);
+        assert_eq!(r.level, AuthReminderLevel::Soon);
+    }
+
+    #[test]
+    fn critical_when_six_hours_left() {
+        // 7d lifetime - (7d - 6h) login age = 6h remaining, at the critical threshold.
+        let tokens = Tokens {
+            login_at: Some(Utc::now() - chrono::Duration::hours(7 * 24 - 6)),
+            ..sample_tokens(Some(0))
+        };
+        let r = assess_refresh_token(&tokens);
+        assert_eq!(r.level, AuthReminderLevel::Critical);
+    }
+
+    #[test]
+    fn expired_when_past_seven_days() {
+        let tokens = sample_tokens(Some(8));
+        let r = assess_refresh_token(&tokens);
+        assert_eq!(r.level, AuthReminderLevel::Expired);
+    }
+
+    #[test]
+    fn unknown_when_login_at_missing() {
+        let tokens = sample_tokens(None);
+        let r = assess_refresh_token(&tokens);
+        assert_eq!(r.level, AuthReminderLevel::Unknown);
+        assert_eq!(r.message, UNKNOWN_LOGIN_AT_MESSAGE);
+        assert_eq!(r.refresh_expires_in_seconds, None);
+    }
+
+    #[test]
+    fn unknown_level_is_not_none_and_notifies() {
+        // Unknown must behave like a real warning level, not "no reminder needed".
+        let state = AgentState::default();
+        assert!(should_send_reminder(&state, AuthReminderLevel::Unknown));
     }
 
     #[test]

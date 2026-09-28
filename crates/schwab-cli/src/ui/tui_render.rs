@@ -209,10 +209,12 @@ pub fn agent_status_lines(
     if let Some(reminder) = ctx.auth_reminder.as_ref() {
         if reminder.level != AuthReminderLevel::None {
             let style = match reminder.level {
-                AuthReminderLevel::Soon => Style::default().fg(Color::Yellow),
-                AuthReminderLevel::Urgent | AuthReminderLevel::Expired => {
-                    Style::default().fg(Color::Red)
+                AuthReminderLevel::Soon | AuthReminderLevel::Unknown => {
+                    Style::default().fg(Color::Yellow)
                 }
+                AuthReminderLevel::Urgent
+                | AuthReminderLevel::Critical
+                | AuthReminderLevel::Expired => Style::default().fg(Color::Red),
                 AuthReminderLevel::None => Style::default(),
             };
             lines.push(Line::from(vec![
