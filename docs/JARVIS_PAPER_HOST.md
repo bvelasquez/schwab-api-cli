@@ -183,7 +183,7 @@ TELEGRAM_CHAT_ID=...
 # password must never be able to show up in a process's /proc/<pid>/environ.
 SCHWAB_LOGIN_ID=...
 SCHWAB_PASSWORD=...
-SCHWAB_2FA_METHOD=app   # or "sms"; optional, defaults to "app"
+SCHWAB_2FA_METHOD=sms   # or "push" (approve in the Schwab app); optional, defaults to "sms"
 ```
 
 The script refuses to run at all if `autologin.env` is missing, has a mode other than 600
@@ -194,12 +194,14 @@ or 400, or isn't owned by the current user — no silent fallback.
 1. Calls `getUpdates` once up front to find the current max `update_id`, and starts polling
    from `offset = max + 1` — anything already sitting in the queue (e.g. a stale code from a
    previous run) is ignored.
-2. Picks a method (`SCHWAB_2FA_METHOD`, default `app`) and, if Schwab shows a method-choice
-   screen, tries to click "authenticator app" / "security token" (or, for `sms`, "text me a
-   code") before looking for the code field.
-3. Sends: `🔐 Schwab re-login on jarvis needs your 2FA code. Reply with the 6-digit code
-   within 10 min. (nonce ABCD)` — a short random nonce, mostly so Barry can tell which
-   prompt a reply is answering if more than one is ever in flight.
+2. Waits for Schwab's "Confirm Your Identity" picker (`#/authenticators`; cards "Schwab
+   App", "Text me at …", "Call me at …", "Call Schwab") and clicks the card for
+   `SCHWAB_2FA_METHOD`: `sms` (default) → "Text me at"; `push` → "Schwab App". With
+   `push` the script just messages Barry to approve in the Schwab app and waits for the
+   page to move on; steps 3–5 apply to `sms` only.
+3. Sends: `🔐 Schwab re-login on jarvis: Schwab just texted you a code. Reply here with the
+   6-digit code within 10 min. (nonce ABCD)` — a short random nonce, mostly so Barry can
+   tell which prompt a reply is answering if more than one is ever in flight.
 4. Long-polls `getUpdates` (`timeout=30`, looped) for up to `SCHWAB_2FA_WAIT_SECS` (default
    600s). It accepts a reply **only** if all of: `message.chat.id == TELEGRAM_CHAT_ID`,
    `message.from.id == TELEGRAM_CHAT_ID` (i.e. Barry himself, in that private chat — not a

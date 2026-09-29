@@ -157,29 +157,37 @@ SUBMIT_SELECTORS = [
     "button:has-text('Log in')",
     "button:has-text('Sign In')",
 ]
-# --- UNVERIFIED (see note above): 2FA selectors ---
+# Method picker, verified live 2026-09-29: sws-gateway.schwab.com/ui/host/#/authenticators,
+# "Confirm Your Identity" with cards "Schwab App", "Text me at xxx-xxx-NNNN",
+# "Call me at ...", "Call Schwab". No authenticator/security-token card unless
+# one is registered in Schwab Security Center.
+TWOFA_PICKER_URL_FRAGMENT = "#/authenticators"
+TWOFA_METHOD_CARD_TEXT = {"sms": "Text me at", "push": "Schwab App"}
+TWOFA_METHODS = tuple(TWOFA_METHOD_CARD_TEXT)
+# --- UNVERIFIED: code-entry page after "Text me at" ---
 CODE_2FA_SELECTORS = [
     "#otpInput",
     "#securityCode",
-    "#totpCode",
     "#smsCode",
+    "input[autocomplete='one-time-code']",
     "input[name*='otp' i]",
     "input[name*='securityCode' i]",
     "input[name*='code' i]",
-    "input[autocomplete='one-time-code']",
     "input[placeholder*='code' i]",
+    "input[inputmode='numeric']",
+    "input[type='tel']",
+    "input[maxlength='6']",
 ]
-METHOD_APP_TEXT = ["security token", "authenticator app", "vip access", "symantec", "token"]
-METHOD_SMS_TEXT = ["text message", "text me", "send code to my phone", "sms", "send a text"]
 TWOFA_PROMPT_TEXT = [
-    "choose a way",
+    "confirm your identity",
+    "select which method",
+    "verify your identity",
     "choose a method",
-    "verify it's you",
     "select a method",
     "enter the code",
     "enter code",
     "security code",
-    "how would you like",
+    "verification code",
 ]
 # --- end unverified block ---
 CONSENT_AGREE_TEXT = ["i agree", "i accept", "accept terms", "agree to terms"]
@@ -806,16 +814,25 @@ def find_first_visible(page, selectors: list[str], timeout_ms: int = FIELD_WAIT_
     return None, None
 
 
+TEXT_BUTTON_TAGS = ("button", "a", "input[type='submit']", "input[type='button']")
+
+
 def find_text_button(page, phrases: list[str], timeout_ms: int = 1500):
-    for phrase in phrases:
-        for tag in ("button", "a", "input[type='submit']", "input[type='button']"):
-            try:
-                loc = page.locator(f"{tag}:has-text('{phrase}')").first
-                loc.wait_for(state="visible", timeout=timeout_ms)
-                if loc.is_enabled():
-                    return phrase, loc
-            except Exception:
-                continue
+    """One combined wait for any phrase/tag, so a miss costs timeout_ms total."""
+    candidates = [(p, f"{tag}:has-text('{p}')") for p in phrases for tag in TEXT_BUTTON_TAGS]
+    try:
+        page.locator(", ".join(sel for _p, sel in candidates)).first.wait_for(
+            state="visible", timeout=timeout_ms
+        )
+    except Exception:
+        return None, None
+    for phrase, sel in candidates:
+        loc = page.locator(sel).first
+        try:
+            if loc.is_visible() and loc.is_enabled():
+                return phrase, loc
+        except Exception:
+            continue
     return None, None
 
 
@@ -868,26 +885,50 @@ def try_detect_code_error(page) -> Optional[str]:
     return page_has_text(page, CODE_ERROR_TEXT)
 
 
+def on_2fa_picker(page) -> bool:
+    return TWOFA_PICKER_URL_FRAGMENT in page.url or page_has_text(page, TWOFA_PROMPT_TEXT[:2]) is not None
+
+
+def wait_for_2fa_picker(page, timeout_s: float, captured: dict) -> bool:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if captured.get("url"):
+            return False
+        if on_2fa_picker(page):
+            return True
+        time.sleep(0.5)
+    return False
+
+
 def choose_2fa_method(page, method: str, log: Logger) -> None:
-    """UNVERIFIED selectors (see module header) — best-effort; a miss here is
-    not fatal by itself, find_2fa_code_field() below is what actually gates
-    whether we proceed to wait for Barry's reply."""
-    if page_has_text(page, TWOFA_PROMPT_TEXT) is None:
-        return
-    phrases = METHOD_SMS_TEXT if method == "sms" else METHOD_APP_TEXT
-    phrase, loc = find_text_button(page, phrases)
-    if loc is None:
-        log.line(f"step=choose_2fa_method no_match method={method} (selector unverified)")
-        return
-    log.line(f"step=choose_2fa_method phrase={phrase}")
-    loc.click()
+    card_text = TWOFA_METHOD_CARD_TEXT[method]
+    try:
+        card = page.get_by_text(card_text, exact=False).first
+        card.wait_for(state="visible", timeout=5000)
+        card.click()
+    except Exception as exc:
+        raise StepError("2fa_method", f"could not click the {card_text!r} card: {type(exc).__name__}")
+    log.line(f"step=choose_2fa_method method={method} card={card_text!r}")
     _phrase, cont = find_text_button(page, METHOD_CONFIRM_BUTTON_TEXT, timeout_ms=1500)
     if cont is not None:
         cont.click()
 
 
 def find_2fa_code_field(page, timeout_ms: int = FIELD_WAIT_MS):
-    return find_first_visible(page, CODE_2FA_SELECTORS, timeout_ms=timeout_ms)
+    """One combined wait (not per-selector) so a miss costs timeout_ms, not N×timeout_ms."""
+    combined = page.locator(", ".join(CODE_2FA_SELECTORS)).first
+    try:
+        combined.wait_for(state="visible", timeout=timeout_ms)
+    except Exception:
+        return None, None
+    for sel in CODE_2FA_SELECTORS:
+        loc = page.locator(sel).first
+        try:
+            if loc.is_visible():
+                return sel, loc
+        except Exception:
+            continue
+    return None, None
 
 
 def submit_2fa_code(page, code: str, log: Logger) -> None:
@@ -907,41 +948,68 @@ def submit_2fa_code(page, code: str, log: Logger) -> None:
         loc.press("Enter")
 
 
+def twofa_method(creds: dict) -> Optional[str]:
+    method = (creds.get("SCHWAB_2FA_METHOD") or "sms").strip().lower()
+    return method if method in TWOFA_METHODS else None
+
+
+def wait_for_push_approval(page, captured: dict, timeout_s: float) -> bool:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if captured.get("url"):
+            return True
+        if TWOFA_PICKER_URL_FRAGMENT not in page.url and not page_has_text(page, TWOFA_PROMPT_TEXT):
+            return True
+        time.sleep(2.0)
+    return False
+
+
 def handle_2fa_if_present(
-    page, browser_env: dict, creds: dict, log: Logger, chat_id: Optional[int]
+    page, browser_env: dict, creds: dict, captured: dict, log: Logger, chat_id: Optional[int]
 ) -> None:
-    """If Schwab is showing a 2FA challenge, walk it via a Telegram round
-    trip with Barry; otherwise no-op (e.g. a trusted-device cookie skipped
-    2FA entirely). Raises StepError on any failure — all of which happen
-    strictly after step_submit_login, so they count toward the lockout
+    """If Schwab shows the "Confirm Your Identity" picker, walk it with Barry
+    over Telegram (SMS code relay or Schwab App push approval); otherwise
+    no-op (e.g. a trusted-device cookie skipped 2FA). Raises StepError on any
+    failure — all after step_submit_login, so they count toward the lockout
     budget (see PRE_SUBMIT_STEPS / main()).
     """
-    time.sleep(1.5)  # let the post-submit page settle/navigate
-
-    method = (creds.get("SCHWAB_2FA_METHOD") or "app").strip().lower()
-    choose_2fa_method(page, method, log)
-
-    sel, loc = find_2fa_code_field(page)
-    if loc is None:
-        if page_has_text(page, TWOFA_PROMPT_TEXT):
-            raise StepError(
-                "2fa_field",
-                "a 2FA prompt was detected but no known code-field selector matched "
-                "(selectors unverified — see saved artifacts)",
-            )
-        log.line("step=2fa not_present (no 2FA prompt/field detected)")
+    if not wait_for_2fa_picker(page, 20.0, captured):
+        log.line("step=2fa not_present (no method picker within 20s)")
         return
-    log.line(f"step=2fa_field_found selector={sel}")
+    log.line("step=2fa_picker_found")
 
     if chat_id is None:
-        raise StepError("telegram_config", "TELEGRAM_CHAT_ID not set; cannot request the 2FA code")
+        raise StepError("telegram_config", "TELEGRAM_CHAT_ID not set; cannot run 2FA")
+
+    method = twofa_method(creds) or "sms"
+    choose_2fa_method(page, method, log)
+    wait_min = max(1, TWOFA_WAIT_SECS // 60)
+
+    if method == "push":
+        notify_telegram(
+            browser_env,
+            f"📱 Schwab re-login on jarvis: approve the login in the Schwab app within {wait_min} min.",
+            log,
+        )
+        if not wait_for_push_approval(page, captured, TWOFA_WAIT_SECS):
+            notify_telegram(browser_env, "⏰ Schwab app approval not received; will retry at the next schedule.", log)
+            raise StepError("2fa_timeout", "Schwab app push not approved before timeout")
+        notify_telegram(browser_env, "✅ approved, finishing login", log)
+        return
+
+    sel, loc = find_2fa_code_field(page, timeout_ms=20000)
+    if loc is None:
+        raise StepError(
+            "2fa_field",
+            "picked 'Text me' but no known code-field selector matched (see saved artifacts)",
+        )
+    log.line(f"step=2fa_field_found selector={sel}")
 
     for attempt in (1, 2):
         nonce = make_nonce()
-        wait_min = max(1, TWOFA_WAIT_SECS // 60)
         prompt = (
-            f"🔐 Schwab re-login on jarvis needs your 2FA code. "
-            f"Reply with the 6-digit code within {wait_min} min. (nonce {nonce})"
+            f"🔐 Schwab re-login on jarvis: Schwab just texted you a code. "
+            f"Reply here with the 6-digit code within {wait_min} min. (nonce {nonce})"
         )
         if attempt > 1:
             prompt = "❗ Retry — the first code was rejected. " + prompt
@@ -1011,7 +1079,7 @@ def run_login_flow(
     if captured.get("url"):
         return captured["url"]
 
-    handle_2fa_if_present(page, browser_env, creds, log, chat_id)
+    handle_2fa_if_present(page, browser_env, creds, captured, log, chat_id)
 
     if captured.get("url"):
         return captured["url"]
@@ -1422,6 +1490,13 @@ def main(argv: list[str]) -> int:
             print(
                 "schwab-auto-login: missing required var(s) in "
                 f"{paths.autologin_env_file}: {', '.join(missing_creds)}; refusing to run.",
+                file=sys.stderr,
+            )
+            return 4
+        if twofa_method(creds) is None:
+            print(
+                f"schwab-auto-login: SCHWAB_2FA_METHOD must be one of {', '.join(TWOFA_METHODS)}; "
+                "refusing to run.",
                 file=sys.stderr,
             )
             return 4
