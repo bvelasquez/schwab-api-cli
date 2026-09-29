@@ -512,6 +512,34 @@ def in_awake_window(now: Optional[datetime] = None) -> bool:
     return AWAKE_START_HOUR <= local.hour < AWAKE_END_HOUR
 
 
+def week_coverage_deadline(now: datetime) -> Optional[datetime]:
+    """On a Sat/Sun (AWAKE_TZ), the Saturday 00:00 after the coming trading
+    week; the token must outlive it so Mon–Fri never needs a login. None on
+    weekdays."""
+    local = now.astimezone(AWAKE_TZ)
+    if local.weekday() < 5:
+        return None
+    monday = local.date() + timedelta(days=7 - local.weekday())
+    saturday = monday + timedelta(days=5)
+    return datetime(saturday.year, saturday.month, saturday.day, tzinfo=AWAKE_TZ).astimezone(timezone.utc)
+
+
+def decide_on_remaining(remaining_s: float, now: datetime) -> tuple[bool, str]:
+    remaining_h = remaining_s / 3600.0
+    deadline = week_coverage_deadline(now)
+    if deadline is not None:
+        expires = now + timedelta(seconds=remaining_s)
+        if expires < deadline:
+            return True, (
+                f"weekend: refresh token expires {iso(expires)}, before the coming trading week ends "
+                f"({iso(deadline)})"
+            )
+        return False, f"weekend: refresh token ({remaining_h:.1f}h) already covers the coming trading week"
+    if remaining_h < REMAINING_THRESHOLD_HOURS:
+        return True, f"refresh token remaining {remaining_h:.1f}h (< {REMAINING_THRESHOLD_HOURS}h)"
+    return False, f"refresh token remaining {remaining_h:.1f}h (>= {REMAINING_THRESHOLD_HOURS}h)"
+
+
 def decide_should_run(paths: Paths, env: dict, log: Logger) -> tuple[bool, str]:
     """No-op unless the refresh token has < REMAINING_THRESHOLD_HOURS left, or
     its remaining life is unknown and it has been >= UNKNOWN_RETRY_DAYS since
@@ -535,10 +563,7 @@ def decide_should_run(paths: Paths, env: dict, log: Logger) -> tuple[bool, str]:
     )
 
     if refresh_expiry_known and isinstance(remaining, (int, float)):
-        remaining_h = remaining / 3600.0
-        if remaining_h < REMAINING_THRESHOLD_HOURS:
-            return True, f"refresh token remaining {remaining_h:.1f}h (< {REMAINING_THRESHOLD_HOURS}h)"
-        return False, f"refresh token remaining {remaining_h:.1f}h (>= {REMAINING_THRESHOLD_HOURS}h)"
+        return decide_on_remaining(float(remaining), now_utc())
 
     last_success = read_last_success(paths)
     if last_success is None:
@@ -1491,6 +1516,26 @@ def self_test() -> int:
         write_last_success(paths, now=now_utc() - timedelta(days=7))
         should_run, reason = decide_should_run(paths, {"PATH": "/nonexistent"}, Logger(None))
         check("unknown + stale success (>=6d) -> run", should_run)
+
+    # --- Weekend week-coverage rule (2026-10-03 is a Saturday) ---
+    def local_dt(day: int, hour: int) -> datetime:
+        return datetime(2026, 10, day, hour, 0, tzinfo=AWAKE_TZ).astimezone(timezone.utc)
+
+    login = local_dt(1, 12)  # Thu login -> expires next Thu
+    sat_morning = local_dt(3, 8)
+    remaining = (login + timedelta(days=7) - sat_morning).total_seconds()
+    run, _ = decide_on_remaining(remaining, sat_morning)
+    check("weekend: token expiring mid-week -> prompt on Saturday", run)
+
+    fresh = (local_dt(3, 8) + timedelta(days=7) - local_dt(4, 9)).total_seconds()
+    run, _ = decide_on_remaining(fresh, local_dt(4, 9))
+    check("weekend: token from Saturday covers the week -> no Sunday re-prompt", not run)
+
+    wed = local_dt(7, 8)
+    run, _ = decide_on_remaining(100 * 3600, wed)
+    check("weekday: 100h left -> no-op", not run)
+    run, _ = decide_on_remaining(20 * 3600, wed)
+    check("weekday: 20h left -> safety-net prompt", run)
 
     # --- Quiet hours ---
     def at_local(hour: int) -> datetime:

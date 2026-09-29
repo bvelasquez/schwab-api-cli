@@ -130,7 +130,7 @@ attach to *some* display.
 |-------|----------------|
 | [`scripts/schwab-auto-login.py`](../scripts/schwab-auto-login.py) | The flow itself: decides whether a login is even needed, drives headless-under-Xvfb Chromium through login/2FA/consent, exchanges the code under the same `flock` the token keeper uses, and re-runs the keeper so the mirror is republished immediately |
 | [`scripts/schwab-auto-login.sh`](../scripts/schwab-auto-login.sh) | Wrapper: sources `schwab-paper.conf` (app key + Telegram creds only), runs the venv's python, passes args through. `--setup` creates the venv and installs Playwright + Chromium |
-| `schwab-auto-login.service` / `.timer` | Runs the wrapper daily at 08:00 America/Los_Angeles, plus Sun 17:00 (`deploy/systemd/user/`). Keeper-triggered runs outside 07:00–22:00 Pacific defer silently (`SCHWAB_AUTOLOGIN_AWAKE_START`/`_END`/`_TZ`) |
+| `schwab-auto-login.service` / `.timer` | Runs the wrapper daily at 08:00 America/Los_Angeles, plus Sat 15:00, Sun 09:00 and Sun 17:00 (`deploy/systemd/user/`). Keeper-triggered runs outside 07:00–22:00 Pacific defer silently (`SCHWAB_AUTOLOGIN_AWAKE_START`/`_END`/`_TZ`) |
 
 **No second-factor secret is stored on Jarvis.** There is no TOTP seed, no VIP Access
 credential, nothing that by itself could complete a login. At Schwab's 2FA step the script
@@ -144,7 +144,9 @@ authenticate; the second factor lives on Barry's phone and never touches disk on
 token file's `login_at`, which is carried forward across refreshes since refreshing an
 access token does **not** reset the refresh token's 7-day clock):
 
-- Known remaining life **< 36h** → run.
+- **Weekend (Sat/Sun Pacific):** run if the token expires before the Saturday 00:00 after
+  the coming trading week, so Mon–Fri is covered by a single weekend login.
+- **Weekday:** known remaining life **< 36h** → run (safety net if the weekend was missed).
 - Unknown (`refresh_expiry_known` false/missing, e.g. an older token file, or the CLI call
   itself failed) → run **at most once per 6 days**, tracked in a local last-success stamp
   (`~/.local/state/schwab-paper/auto-login-last-success.json`) — never falls back to

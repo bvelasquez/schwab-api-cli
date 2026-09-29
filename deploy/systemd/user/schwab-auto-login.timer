@@ -1,14 +1,16 @@
-# A human reply is required now (Barry texts back the 2FA code over Telegram),
-# so this only needs to run once a day plus an extra check before the Sunday
-# evening/Monday premarket window. schwab-auto-login.py's own decision logic
-# (refresh token remaining < 36h, or unknown-and-6-days-since-last-success)
-# makes every other day a silent no-op — no browser, no Telegram prompt.
+# A human reply is required (Barry texts back the 2FA code over Telegram).
+# Weekend runs re-login whenever the token wouldn't outlive the coming trading
+# week, so Mon–Fri never needs a prompt; four weekend slots (Sat 08/15, Sun
+# 09/17) give retries while respecting the 6h backoff and 2-per-24h cap.
+# Weekdays keep the < 36h safety net. Every other run is a silent no-op.
 
 [Unit]
 Description=Run the Schwab headless OAuth re-login check daily
 
 [Timer]
 OnCalendar=*-*-* 08:00:00 America/Los_Angeles
+OnCalendar=Sat *-*-* 15:00:00 America/Los_Angeles
+OnCalendar=Sun *-*-* 09:00:00 America/Los_Angeles
 OnCalendar=Sun *-*-* 17:00:00 America/Los_Angeles
 Persistent=true
 Unit=schwab-auto-login.service
