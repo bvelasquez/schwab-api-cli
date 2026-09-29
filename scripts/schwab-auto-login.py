@@ -109,6 +109,8 @@ BACKOFF_HOURS = float(os.environ.get("SCHWAB_AUTOLOGIN_BACKOFF_HOURS", "6"))
 CONSENT_TIMEOUT_SECS = float(os.environ.get("SCHWAB_AUTOLOGIN_TIMEOUT_SECS", "120"))
 FIELD_WAIT_MS = int(os.environ.get("SCHWAB_AUTOLOGIN_FIELD_WAIT_MS", "8000"))
 TWOFA_WAIT_SECS = int(os.environ.get("SCHWAB_2FA_WAIT_SECS", "600"))
+TELEGRAM_CONFLICT_GRACE_SECS = float(os.environ.get("SCHWAB_TELEGRAM_CONFLICT_GRACE_SECS", "90"))
+TELEGRAM_CONFLICT_RETRY_SECS = 3.0
 ARTIFACT_RETENTION_DAYS = 14
 
 REQUIRED_CRED_VARS = ("SCHWAB_LOGIN_ID", "SCHWAB_PASSWORD")
@@ -713,6 +715,26 @@ def wait_for_telegram_code(
     Telegram call."""
     if get_updates is None:
         get_updates = lambda offset, timeout_secs: telegram_get_updates(env, offset, timeout_secs)
+    raw_get_updates = get_updates
+    conflict_started: list[float] = []
+
+    def get_updates(offset: Optional[int], timeout_secs: int) -> dict:
+        # A transient 409 (some other client briefly polled this token) should
+        # not burn a login attempt; only a sustained conflict is fatal.
+        while True:
+            try:
+                resp = raw_get_updates(offset, timeout_secs)
+                conflict_started.clear()
+                return resp
+            except StepError as e:
+                if e.step != "telegram_conflict":
+                    raise
+                if not conflict_started:
+                    conflict_started.append(time.time())
+                    log.line("step=telegram_conflict_retry (HTTP 409; retrying)")
+                if time.time() - conflict_started[0] > TELEGRAM_CONFLICT_GRACE_SECS:
+                    raise
+                time.sleep(TELEGRAM_CONFLICT_RETRY_SECS)
 
     # Baseline: ignore anything already sitting in the update queue before we
     # even asked (e.g. an old code from a previous run).
@@ -1359,6 +1381,25 @@ def self_test() -> int:
         env_no_telegram, quiet_log, CHAT, "ABCD", "prompt", wait_secs=1, get_updates=stub_get_updates_never
     )
     check("wait_for_telegram_code times out (returns None) when nothing matches", code is None)
+
+    global TELEGRAM_CONFLICT_RETRY_SECS
+    saved_retry = TELEGRAM_CONFLICT_RETRY_SECS
+    TELEGRAM_CONFLICT_RETRY_SECS = 0.0
+    flaky = {"n": 0}
+
+    def stub_get_updates_flaky(offset, timeout_secs):
+        flaky["n"] += 1
+        if flaky["n"] in (1, 2):
+            raise StepError("telegram_conflict", "409")
+        if flaky["n"] == 3:
+            return {"result": []}
+        return {"result": [upd(9)]}
+
+    code = wait_for_telegram_code(
+        env_no_telegram, quiet_log, CHAT, "ABCD", "prompt", wait_secs=5, get_updates=stub_get_updates_flaky
+    )
+    check("transient 409s are retried instead of aborting", code == "123456")
+    TELEGRAM_CONFLICT_RETRY_SECS = saved_retry
 
     # --- autologin.env permission check ---
     with tempfile.TemporaryDirectory() as td:

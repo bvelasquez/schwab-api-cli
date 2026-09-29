@@ -215,10 +215,12 @@ or 400, or isn't owned by the current user — no silent fallback.
    password was actually submitted — the whole flow up through the 2FA field is "after
    submit" per the lockout accounting above, so a real timeout here does count.
 
-Nothing else on Jarvis polls this bot token (verified before shipping this — the
-furoshiki listener uses a separate token). If `getUpdates` ever returns HTTP 409 (some
-other poller or a webhook took the token), the script aborts immediately with a Telegram
-+ log error rather than silently missing Barry's reply. **The password and the 2FA code
+Nothing in this repo polls this bot token, and the furoshiki listener uses a separate
+token (`FUROSHIKI_BOT_TOKEN`). A transient HTTP 409 was nevertheless seen live on
+2026-09-29 (source unconfirmed; the root-owned Hermes gateway couldn't be inspected), so
+409s are retried every 3s and only abort after `SCHWAB_TELEGRAM_CONFLICT_GRACE_SECS`
+(default 90s) of continuous conflict. A poller that *consumes* updates could still eat
+Barry's reply; if that happens the run times out rather than guessing. **The password and the 2FA code
 are never logged or echoed anywhere** — not to the log file, not to Telegram, not to
 stdout.
 
