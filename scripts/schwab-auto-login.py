@@ -190,6 +190,9 @@ TWOFA_PROMPT_TEXT = [
     "verification code",
 ]
 # --- end unverified block ---
+CONSENT_TERMS_CHECKBOX = "#acceptTerms"
+CONSENT_MODAL_ACCEPT = "#agree-modal-btn-"
+CONSENT_SUBMIT = "#submit-btn"
 CONSENT_AGREE_TEXT = ["i agree", "i accept", "accept terms", "agree to terms"]
 CONSENT_SELECT_ALL_TEXT = ["select all", "all accounts"]
 CONSENT_BUTTON_TEXT = ["continue", "allow", "accept", "done", "submit", "next", "authorize"]
@@ -1037,7 +1040,36 @@ def handle_2fa_if_present(
         raise StepError("2fa", f"2FA code rejected twice: {err}")
 
 
+def click_if_visible(page, selector: str, log: Logger, label: str) -> bool:
+    loc = page.locator(selector).first
+    try:
+        if not (loc.is_visible() and loc.is_enabled()):
+            return False
+        loc.click(timeout=3000)
+    except Exception:
+        return False
+    log.line(f"step=consent_click {label}")
+    return True
+
+
 def try_handle_consent(page, log: Logger) -> bool:
+    # Trader API terms page, verified live 2026-09-29: checkbox #acceptTerms
+    # (may raise a confirm modal with #agree-modal-btn- "Accept"), then
+    # #submit-btn "Continue". Later pages (account pick, done) reuse #submit-btn
+    # or fall through to the generic text-button matching below.
+    terms = page.locator(CONSENT_TERMS_CHECKBOX).first
+    try:
+        if terms.is_visible() and not terms.is_checked():
+            terms.check(timeout=3000)
+            log.line("step=consent_click terms_checkbox")
+            return True
+    except Exception:
+        pass
+    if click_if_visible(page, CONSENT_MODAL_ACCEPT, log, "modal_accept"):
+        return True
+    if click_if_visible(page, CONSENT_SUBMIT, log, "submit_btn"):
+        return True
+
     acted = False
     phrase, agree = find_text_button(page, CONSENT_AGREE_TEXT, timeout_ms=1200)
     if agree is not None:
