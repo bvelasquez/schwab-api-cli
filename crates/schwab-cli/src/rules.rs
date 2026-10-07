@@ -590,6 +590,12 @@ pub struct ExitRules {
     #[serde(default)]
     pub stop_loss_require_short_otm_below_pct: Option<f64>,
     pub dte_close: u32,
+    /// While a closing mark is degraded and DTE is still positive, skip `dte_close`
+    /// when short OTM% is above this. A far-OTM short has no gamma problem; the wide
+    /// last-good debit is not a fill. At expiry (DTE ≤ 0) a still-far degraded short
+    /// settles worthless instead of at that debit. `None` = always calendar-close.
+    #[serde(default)]
+    pub dte_close_skip_degraded_above_otm_pct: Option<f64>,
     pub thesis: ThesisExitRules,
     /// Prefer a managed roll over a hard stop when eligible (verticals only).
     #[serde(default)]
@@ -614,6 +620,7 @@ impl Default for ExitRules {
             stop_loss_pct: 200.0,
             stop_loss_require_short_otm_below_pct: None,
             dte_close: 21,
+            dte_close_skip_degraded_above_otm_pct: None,
             thesis: ThesisExitRules::default(),
             roll: RollConfig::default(),
             defer_non_urgent_on_degraded_quotes: false,

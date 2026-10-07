@@ -343,7 +343,10 @@ pub fn evaluate_exit_from_mark_with_analytics(
         });
     }
 
-    if mark.dte <= rules.exit_rules.dte_close as i64 {
+    if mark.dte <= rules.exit_rules.dte_close as i64
+        && !dte_close_held_for_degraded_far_otm(&rules.exit_rules, &mark, analytics)
+    {
+        let mark = settle_expired_far_otm_degraded(&rules.exit_rules, &mark, analytics);
         return Some(ExitEvaluation {
             reason: "dte_close".into(),
             mark,
@@ -351,6 +354,57 @@ pub fn evaluate_exit_from_mark_with_analytics(
     }
 
     None
+}
+
+/// Hold `dte_close` when the mark is degraded, DTE is still positive, and the short
+/// is farther OTM than `dte_close_skip_degraded_above_otm_pct`. Missing OTM does not
+/// hold (fail-safe: calendar-close when the cushion is unknown).
+pub fn dte_close_held_for_degraded_far_otm(
+    exit_rules: &crate::rules::ExitRules,
+    mark: &SpreadMark,
+    analytics: Option<&SpreadAnalytics>,
+) -> bool {
+    let Some(floor) = exit_rules.dte_close_skip_degraded_above_otm_pct else {
+        return false;
+    };
+    if !mark.quote_degraded || mark.dte <= 0 {
+        return false;
+    }
+    analytics
+        .and_then(|a| a.short_otm_pct)
+        .is_some_and(|otm| otm > floor)
+}
+
+/// At expiry, a degraded mark on a short that is still beyond the OTM floor is not
+/// a fill. Settle the spread worthless (debit 0) so the slot is released and the
+/// wide last-good quote is not booked.
+fn settle_expired_far_otm_degraded(
+    exit_rules: &crate::rules::ExitRules,
+    mark: &SpreadMark,
+    analytics: Option<&SpreadAnalytics>,
+) -> SpreadMark {
+    let Some(floor) = exit_rules.dte_close_skip_degraded_above_otm_pct else {
+        return mark.clone();
+    };
+    let far = analytics
+        .and_then(|a| a.short_otm_pct)
+        .is_some_and(|otm| otm > floor);
+    if mark.dte > 0 || !mark.quote_degraded || !far {
+        return mark.clone();
+    }
+    SpreadMark {
+        debit_to_close: 0.0,
+        profit_pct: if mark.entry_credit > f64::EPSILON {
+            100.0
+        } else {
+            0.0
+        },
+        source: "expiry_otm_settle".into(),
+        quote_degraded: false,
+        suppress_profit_target: false,
+        quote_fallback: None,
+        ..mark.clone()
+    }
 }
 
 /// Credit-multiple stop is armed unless OTM cushion says we are still safely far from the short.
@@ -967,6 +1021,10 @@ pub fn monitor_snapshot_json(
             "quote_degraded": m.quote_degraded,
             "quote_fallback": m.quote_fallback,
             "profit_target_suppressed_degraded_quote": m.suppress_profit_target,
+            "dte_close_skip_degraded_above_otm_pct": exit_rules.dte_close_skip_degraded_above_otm_pct,
+            "dte_close_suppressed_degraded_far_otm": dte_close_held_for_degraded_far_otm(
+                exit_rules, m, analytics
+            ),
             "thesis_exits_enabled": exit_rules.thesis.enabled,
             "thesis_min_hold_minutes": exit_rules.thesis.min_hold_minutes,
             "peak_profit_pct": tracked.and_then(|p| p.peak_profit_pct),
@@ -1780,6 +1838,82 @@ mod tests {
                 .map(|e| e.reason.as_str()),
             Some("stop_loss")
         );
+    }
+
+    fn degraded_far_otm_mark(
+        dte: i64,
+        otm: Option<f64>,
+    ) -> (RulesConfig, SpreadMark, SpreadAnalytics) {
+        let mut rules = thesis_rules();
+        rules.exit_rules.dte_close = 21;
+        rules.exit_rules.dte_close_skip_degraded_above_otm_pct = Some(5.0);
+        let mark = SpreadMark {
+            entry_credit: 0.35,
+            debit_to_close: 0.68,
+            profit_pct: -94.0,
+            dte,
+            source: "chain_degraded".into(),
+            quote_degraded: true,
+            suppress_profit_target: true,
+            ..Default::default()
+        };
+        let analytics = SpreadAnalytics {
+            short_otm_pct: otm,
+            ..Default::default()
+        };
+        (rules, mark, analytics)
+    }
+
+    #[test]
+    fn dte_close_holds_degraded_quote_while_short_well_otm() {
+        let (rules, mark, far) = degraded_far_otm_mark(21, Some(8.9));
+        assert!(evaluate_exit_from_mark_with_analytics(
+            &rules,
+            Some(0.35),
+            &mark,
+            Some(&far)
+        )
+        .is_none());
+
+        let (rules, mark, near) = degraded_far_otm_mark(21, Some(2.0));
+        assert_eq!(
+            evaluate_exit_from_mark_with_analytics(&rules, Some(0.35), &mark, Some(&near))
+                .as_ref()
+                .map(|e| e.reason.as_str()),
+            Some("dte_close")
+        );
+
+        let (mut rules, mark, far) = degraded_far_otm_mark(21, Some(8.9));
+        rules.exit_rules.dte_close_skip_degraded_above_otm_pct = None;
+        assert_eq!(
+            evaluate_exit_from_mark_with_analytics(&rules, Some(0.35), &mark, Some(&far))
+                .as_ref()
+                .map(|e| e.reason.as_str()),
+            Some("dte_close"),
+            "unset floor keeps the legacy calendar close"
+        );
+
+        let (rules, mut mark, far) = degraded_far_otm_mark(21, Some(8.9));
+        mark.quote_degraded = false;
+        mark.source = "chain".into();
+        assert_eq!(
+            evaluate_exit_from_mark_with_analytics(&rules, Some(0.35), &mark, Some(&far))
+                .as_ref()
+                .map(|e| e.reason.as_str()),
+            Some("dte_close"),
+            "a real NBBO still calendar-closes"
+        );
+    }
+
+    #[test]
+    fn expired_degraded_far_otm_settles_worthless() {
+        let (rules, mark, far) = degraded_far_otm_mark(0, Some(8.9));
+        let exit = evaluate_exit_from_mark_with_analytics(&rules, Some(0.35), &mark, Some(&far))
+            .expect("expiry releases the slot");
+        assert_eq!(exit.reason, "dte_close");
+        assert!(exit.mark.debit_to_close.abs() < f64::EPSILON);
+        assert!((exit.mark.profit_pct - 100.0).abs() < f64::EPSILON);
+        assert_eq!(exit.mark.source, "expiry_otm_settle");
     }
 
     #[test]

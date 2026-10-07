@@ -52,7 +52,8 @@ While the agent is running, edits to this YAML are **hot-reloaded** (fail-closed
 | `profit_target_pct` | 50 | Close when captured ≥50% of entry credit |
 | `stop_loss_pct` | 200 | Close when debit to close ≥ 2× entry credit |
 | `stop_loss_require_short_otm_below_pct` | unset | If set, arm the mark stop only when short OTM% is below this (gives time while far from strike) |
-| `dte_close` | 21 | Close when DTE ≤ 21 regardless |
+| `dte_close` | 21 | Close when DTE ≤ 21 |
+| `dte_close_skip_degraded_above_otm_pct` | unset | If set, do not `dte_close` on a degraded quote while DTE > 0 and short OTM% is above this. At expiry (DTE ≤ 0) a still-far degraded short settles worthless (debit 0) |
 | `roll.enabled` | `false` | Prefer a managed vertical roll over a hard stop when eligible (see Defensive rolling) |
 
 Exits run **before** entry scans each regular tick. Marks come from live option chain **`debit_to_close`** (not Schwab `net_market_value`).

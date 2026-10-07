@@ -331,6 +331,7 @@ notify:
 | `profit_target_pct` | 50 | Close when captured profit ≥ this % of entry credit |
 | `stop_loss_pct` | 200 | Close when **debit_to_close** ≥ `(stop_loss_pct/100) × entry_credit` |
 | `dte_close` | 21 | Close when days to expiration ≤ this |
+| `dte_close_skip_degraded_above_otm_pct` | unset | Skip that close on a degraded quote while DTE > 0 and short OTM% is above this. At expiry a still-far degraded short settles worthless |
 
 **Stop example:** Entry credit $0.25/share, `stop_loss_pct: 200` → mechanical stop at **$0.50/share** debit to close.
 
