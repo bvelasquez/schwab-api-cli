@@ -684,7 +684,7 @@ List **every** options rules file that can run on the same account hash. Example
 capital:
   options_risk:
     rules_files:
-      - rules/options-pilot-<swing-account>.yaml
+      - rules/options-pilot.yaml
       - rules/options-monthly-income.yaml
     fallback_reserve_usd: 500
     buffer_pct: 10

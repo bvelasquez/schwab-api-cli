@@ -82,8 +82,8 @@ best risk-adjusted point in the sweep; 4% and above trades return for ruin risk.
 ## Reproduce
 ```
 ~/.hermes/hermes-agent/venv/bin/python scripts/gen_p3_arms.py   # then scripts/gen_p4_arms.py
-bash scripts/run_grid.sh <arm> [<arm> ...]                      # rules/trader-swing-<arm>-<swing-account>.yaml
+bash scripts/run_grid.sh <arm> [<arm> ...]                      # rules/trader-swing-<arm>.yaml
 ~/.hermes/hermes-agent/venv/bin/python scripts/sum_grid.py p4-
 ```
-Arm rules files and `.backtest-cache-*` are gitignored (`*-<swing-account>.yaml`) and are copies of the live
+Arm rules files and `.backtest-cache-*` are gitignored (`*.yaml`) and are copies of the live
 rules with only the arm's fields changed.

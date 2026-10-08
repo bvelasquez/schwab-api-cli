@@ -8,7 +8,7 @@ file is gitignored, so apply there). sha256 (16) at time of writing: `376a7b3e3d
 
 **Evidence it is not frozen** (from `scripts/agent-health.py` + the file):
 
-| path | swing-<swing-account> (frozen) | options-<options-account> |
+| path | swing (frozen) | options |
 |---|---|---|
 | `llm.veto_entries` | `false` | **`true`** (line 279) |
 | `llm.allow_llm_exits` | `false` | `false` |

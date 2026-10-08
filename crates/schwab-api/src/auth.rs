@@ -94,6 +94,16 @@ impl TokenStore {
     }
 
     pub async fn load(&self) -> Result<Option<Tokens>> {
+        if self.path.is_file() {
+            if let Err(err) = crate::atomic::restrict_owner_file(&self.path) {
+                tracing::warn!(%err, path = %self.path.display(), "could not restrict token file mode");
+            }
+            if let Some(parent) = self.path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                if let Err(err) = crate::atomic::restrict_owner_dir(parent) {
+                    tracing::warn!(%err, path = %parent.display(), "could not restrict token directory mode");
+                }
+            }
+        }
         match fs::read_to_string(&self.path).await {
             Ok(raw) if raw.trim().is_empty() => Err(ApiError::NotAuthenticated(format!(
                 "token file is empty ({}). Run `schwab auth login`",
@@ -112,7 +122,7 @@ impl TokenStore {
 
     pub async fn save(&self, tokens: &Tokens) -> Result<()> {
         let raw = serde_json::to_string_pretty(tokens)?;
-        crate::atomic::write_atomic(&self.path, raw)
+        crate::atomic::write_atomic_private(&self.path, raw)
             .await
             .map_err(|e| ApiError::TokenStore(e.to_string()))?;
         Ok(())
@@ -249,7 +259,9 @@ impl OAuthClient {
         }
 
         let parsed: TokenResponse = serde_json::from_str(&body).map_err(|e| {
-            ApiError::OAuth(format!("Token response parse error: {e}; body={body}"))
+            ApiError::OAuth(format!(
+                "Token response parse error: {e} (response body omitted)"
+            ))
         })?;
         Ok(Tokens {
             access_token: parsed.access_token,

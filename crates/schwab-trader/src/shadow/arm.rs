@@ -190,7 +190,7 @@ impl ShadowArmState {
 
     pub fn save(&self, path: &Path) -> Result<()> {
         let raw = serde_json::to_string_pretty(self)?;
-        schwab_api::write_atomic_sync(path, raw)
+        schwab_api::write_atomic_owner_sync(path, raw)
             .with_context(|| format!("write shadow state {}", path.display()))?;
         Ok(())
     }

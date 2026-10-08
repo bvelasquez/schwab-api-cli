@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -55,10 +54,7 @@ pub fn append_event_to_path(
         "type": event_type,
         "payload": payload,
     });
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
+    let mut file = schwab_api::open_owner_append(path)
         .with_context(|| format!("open journal {}", path.display()))?;
     writeln!(file, "{}", line)?;
     Ok(())

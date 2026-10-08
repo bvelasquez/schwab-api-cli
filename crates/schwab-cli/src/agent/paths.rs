@@ -92,10 +92,7 @@ pub fn append_agent_log(rules_path: &Path, line: &str) -> std::io::Result<()> {
     if let Some(parent) = log.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log)?;
+    let mut file = schwab_api::open_owner_append(&log)?;
     writeln!(file, "{line}")?;
     Ok(())
 }

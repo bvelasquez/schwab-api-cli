@@ -16,7 +16,7 @@ Wants=network-online.target
 Type=oneshot
 WorkingDirectory=%h/projects/schwabinvestbot
 EnvironmentFile=-%h/.config/environment.d/schwab-paper.conf
-ExecStart=%h/projects/schwabinvestbot/scripts/paper-host-bot-watchdog.sh
+ExecStart=%h/projects/schwabinvestbot/scripts/paper-host-watchdog.sh
 
 [Install]
 WantedBy=default.target

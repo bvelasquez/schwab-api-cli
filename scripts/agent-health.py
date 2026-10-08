@@ -1,44 +1,59 @@
 #!/usr/bin/env python3
-"""Health check for the paper-host paper agents.
+"""Health check for paper agents.
 
 `systemctl is-active` is NOT health: a unit can be "active" while its loop is wedged.
-The real signal is `last_tick` inside the agent's state file — but the two agents use
-DIFFERENT state-file names, which is easy to get wrong:
+The real signal is `last_tick` inside the agent's state file. The two agents use
+different state-file names:
 
-  options (schwab)         -> rules/agent-sim-state-options-pilot.json
-  swing   (schwab-trader)  -> rules/trader-state-trader-swing.json   <- not agent-sim-*
+  options (schwab)         -> rules/agent-sim-state-<rules-stem>.json
+  swing   (schwab-trader)  -> rules/trader-state-<rules-stem>.json
 
-Run on paper-host with the paper env loaded:
-  set -a; . $HOME/.config/environment.d/schwab-paper.conf; set +a
+Override paths with SCHWAB_REPO, SCHWAB_OPTIONS_RULES, SCHWAB_SWING_RULES,
+SCHWAB_OPTIONS_UNIT, and SCHWAB_SWING_UNIT.
 """
 import json
+import os
 import pathlib
 import subprocess
 import sys
 
-BASE = pathlib.Path.home() / "projects/schwabinvestbot"
+BASE = pathlib.Path(os.environ.get("SCHWAB_REPO", pathlib.Path.home() / "projects/schwabinvestbot"))
+
+
+def _stem(rel: str) -> str:
+    return pathlib.Path(rel).stem
+
+
+OPTIONS_RULES = os.environ.get("SCHWAB_OPTIONS_RULES", "rules/options-pilot.yaml")
+SWING_RULES = os.environ.get("SCHWAB_SWING_RULES", "rules/trader-swing.yaml")
+OPTIONS_NAME = "options"
+SWING_NAME = "swing"
 AGENTS = {
-    "options-<options-account>": (BASE / "rules/agent-sim-state-options-pilot.json",
-                     "schwab-options.service"),
-    "swing-<swing-account>": (BASE / "rules/trader-state-trader-swing.json",
-                   "schwab-swing.service"),
+    OPTIONS_NAME: (
+        BASE / f"rules/agent-sim-state-{_stem(OPTIONS_RULES)}.json",
+        os.environ.get("SCHWAB_OPTIONS_UNIT", "schwab-options.service"),
+    ),
+    SWING_NAME: (
+        BASE / f"rules/trader-state-{_stem(SWING_RULES)}.json",
+        os.environ.get("SCHWAB_SWING_UNIT", "schwab-swing.service"),
+    ),
 }
 
 
 # Per-agent fields worth printing: the agents do NOT share a schema, and there is no
 # `closed_trades` in either live state file (that field only exists in backtest output).
 EXTRAS = {
-    "options-<options-account>": ["open_positions", "llm_review_count", "last_regime"],
-    "swing-<swing-account>": ["closed_trades_since_learn", "open_positions", "active_profile",
-                   "active_profile_source", "last_regime"],
+    OPTIONS_NAME: ["open_positions", "llm_review_count", "last_regime"],
+    SWING_NAME: ["closed_trades_since_learn", "open_positions", "active_profile",
+                 "active_profile_source", "last_regime"],
 }
 
-SWING_STARTING_CASH_USD = 4000.0
+SWING_STARTING_CASH_USD = float(os.environ.get("SCHWAB_SWING_STARTING_CASH", "0") or 0)
 
 
 def enrich_metrics(name, state, extra):
     """Add PnL / deployment fields; agents do not share a schema."""
-    if name == "options-<options-account>":
+    if name == OPTIONS_NAME:
         sim = state.get("sim") or {}
         if isinstance(sim, dict) and "realized_pnl_usd" in sim:
             extra["realized_pnl_usd"] = sim["realized_pnl_usd"]
@@ -51,7 +66,7 @@ def enrich_metrics(name, state, extra):
                 unreal += (credit - debit) * 100.0 * contracts
         extra["unrealized_est_usd"] = round(unreal, 2)
         return
-    if name == "swing-<swing-account>":
+    if name == SWING_NAME:
         sim = state.get("sim")
         if isinstance(sim, dict) and "realized_pnl_usd" in sim:
             extra["realized_pnl_usd"] = sim["realized_pnl_usd"]
@@ -59,7 +74,8 @@ def enrich_metrics(name, state, extra):
         for pos in (state.get("open_positions") or {}).values():
             deployed += float(pos.get("market_value_usd") or 0.0)
         extra["deployed_usd"] = round(deployed, 2)
-        extra["deployed_pct"] = round(100.0 * deployed / SWING_STARTING_CASH_USD, 1)
+        if SWING_STARTING_CASH_USD > 0:
+            extra["deployed_pct"] = round(100.0 * deployed / SWING_STARTING_CASH_USD, 1)
 
 
 def iso_age(ts):

@@ -1723,12 +1723,12 @@ mod tests {
     }
 
     #[test]
-    fn swing__enables_horizon_cap_and_scales_target() {
+    fn swing_rules_enable_horizon_cap_and_scale_target() {
         let path = Path::new("../../rules/trader-swing.yaml");
         if !path.is_file() {
             return;
         }
-        let rules = TraderRules::load(path).expect("swing-<swing-account> rules should parse");
+        let rules = TraderRules::load(path).expect("swing rules should parse");
         assert!(rules.playbook.exit.profit_target_horizon_cap.enabled);
         assert!((rules.playbook.exit.profit_target_horizon_cap.sqrt_days_multiple - 1.0).abs() < 1e-9);
         assert_eq!(rules.playbook.holding_period.target_days, 10);

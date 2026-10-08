@@ -12,8 +12,8 @@ Each arm scales the risk budget linearly and lifts the caps that would otherwise
 import re
 import shutil
 
-SRC = "rules/trader-swing-p3-ctl-<swing-account>.yaml"
-CACHE = "rules/.backtest-cache-trader-swing-p3-ctl-<swing-account>.json"
+SRC = "rules/trader-swing-p3-ctl.yaml"
+CACHE = "rules/.backtest-cache-trader-swing-p3-ctl.json"
 
 # arm -> (risk_per_trade_pct, max_positions, max_position_pct, max_portfolio_heat_pct)
 ARMS = {
@@ -37,9 +37,9 @@ for name, (risk, maxpos, maxpos_pct, heat) in ARMS.items():
     for pat, new in reps:
         s, n = re.subn(pat, new, s)
         assert n == 1, f"{name}: pattern {pat!r} matched {n} times"
-    out = f"rules/trader-swing-{name}-<swing-account>.yaml"
+    out = f"rules/trader-swing-{name}.yaml"
     open(out, "w").write(s)
-    shutil.copy(CACHE, f"rules/.backtest-cache-trader-swing-{name}-<swing-account>.json")
+    shutil.copy(CACHE, f"rules/.backtest-cache-trader-swing-{name}.json")
 
     # verify via the parser: what the engine will actually read
     import yaml

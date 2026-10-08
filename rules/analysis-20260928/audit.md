@@ -1,28 +1,28 @@
 # Swing + options paper agents — results audit
 
 **Date:** 2026-09-28 (Mon, pre-open) · **Host:** paper-host · **Binaries:** installed 2026-09-21 08:02/08:04 (`e3e8b0b`)
-**Windows:** swing-<swing-account> 2026-06-29 → 2026-09-28 (archive `analysis-20260925/…archived-20260925` + live journal);
-options-<options-account> v4.2 paper 2026-08-28 → 2026-09-28 (`agent-sim-journal-options-pilot.jsonl`).
+**Windows:** swing paper 2026-06-29 → 2026-09-28; options v4.2 paper 2026-08-28 → 2026-09-28.
+Dollar figures below are from a paper sleeve and are not a brokerage statement.
 
 Verdict: **neither agent shows positive ROI.** Swing is statistically flat and trails SPY; options v4.2 is
 negative-EV by construction. The larger defect is that no instrument has power: ~13 swing and ~2 option
 trades per month cannot arbitrate rule changes, and the LLM learn loop that was meant to adapt was inert.
 
-## 1. Swing (schwab-trader, $4,000 sleeve)
+## 1. Swing (schwab-trader, paper sleeve)
 
 | metric | value |
 |---|---|
 | closed trades | 38 (14 wins, 37%) |
 | mean pnl / trade | −0.62% (sd 5.27, CI95 ≈ [−2.3, +1.1]) |
-| realized | +$32.60 (sizes grew over time; early AMD trades were tiny) |
-| sleeve equity | $4,000 → $3,990 |
+| realized | about flat in dollars (sizes grew over time; early trades were tiny) |
+| sleeve equity | about unchanged over the window |
 | SPY (benchmark_last) | 741.0 → 771.35 (+4.1%) |
 | avg deployment | ≈ 33% of sleeve |
 | exits | stop_loss 22 (−4.16%), profit_target 10 (+7.05%), thesis_rs 4 (−1.17%), thesis_regime 2 (+1.11%) |
 | avg win / avg loss | +5.32% / −4.09% |
 
-- **Underperforms buy-and-hold and exposure-matched SPY** (33% × 4.1% ≈ +1.35% ≈ $54 vs −$10).
-- **Regime split:** July (elevated_vol; 10/19 trades AMD) ≈ −$66; Aug→ (low_vol_trend) ≈ +$99 on 18 trades.
+- **Underperforms buy-and-hold and exposure-matched SPY** (33% × 4.1% ≈ +1.35% vs a small sleeve loss).
+- **Regime split:** July (elevated_vol) was the losing stretch; Aug onward (low_vol_trend) was positive on 18 trades.
 - **Gap-through stops:** AMD 07-07 −4.85%, WMT 08-20 −4.44%, ASML 07-07 −2.58% beyond `stop_price`. A live
   stop-limit OCO may not fill at all on those gaps.
 - **Correlated doubles:** IBIT + BITO stopped the same day (08-13/14) and targeted the same day (08-21); no
@@ -43,12 +43,12 @@ trades per month cannot arbitrate rule changes, and the LLM learn loop that was 
 | date | event | detail |
 |---|---|---|
 | 08-28 | open QQQ 674/669P 09-30 | credit 0.3895, short Δ −0.158, POP 77%, short **inside 1σ** |
-| 09-01 | close "defensive_roll" | debit 0.81, **−$46.10** (−118% of credit); no roll opened — a stop |
+| 09-01 | close "defensive_roll" | debit 0.81 (−118% of credit); no roll opened — a stop |
 | 09-08 | open QQQ 670/665P 10-16 | credit 0.4275 |
-| 09-25 | close dte_close | debit 0.65 on `chain_degraded` last-good quotes, **−$25.50** |
+| 09-25 | close dte_close | debit 0.65 on `chain_degraded` last-good quotes |
 | 09-25 | open QQQ 689/684P 10-30 | credit 0.3515; mark 0.68 (underwater, peak −93%) |
 
-Realized **−$71.60**, 0/2 wins.
+Realized a loss on both closes, 0/2 wins.
 
 - **Negative EV by construction.** Credits 7-8% of width; 60% target nets ≈ $20 after 5% slippage; losses
   $25-75 (max $460). Breakeven win rate ≈ 67-80% ≈ entry POP 77-80%. The v4.1 backtest (18 trades, 15 wins,
@@ -60,8 +60,8 @@ Realized **−$71.60**, 0/2 wins.
   impossible for a 15Δ credit spread; "zero entries inside 1σ" contradicts v4.2 disabling that gate; ≥15 round
   trips at ~1 per 2-3 weeks is 8+ months.
 - **Monitoring bug:** `agent-health.py` printed `cumulative_realized_pnl_usd` (0.0 in simulate by design);
-  the ledger is `sim.realized_pnl_usd` (−71.60).
-- The Aug-5 `agent-state-options-pilot.json` (cumulative −$211.98) is the retired v3 live state.
+  the ledger is `sim.realized_pnl_usd`.
+- An older `agent-state-options-pilot.json` is retired v3 live state, not the paper ledger.
 
 ## 3. Cross-cutting
 

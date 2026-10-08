@@ -11,7 +11,7 @@ import json
 import shutil
 import os
 
-SRC = "rules/trader-swing-p2-base-<swing-account>.yaml"
+SRC = "rules/trader-swing-p2-base.yaml"
 CACHE = "rules/.backtest-cache-trader-swing.json"
 
 # arm -> (profit_target_pct, pt_atr_multiple, horizon_sqrt_days, stop_loss_pct, stop_atr_multiple)
@@ -48,9 +48,9 @@ for name, (pt, pt_atr, hor, sl, sl_atr) in ARMS.items():
     s = s.replace("    require_above_sma:\n    - 20\n    - 50\n",
                   "    require_above_sma:\n    - 20\n    - 50\n"
                   f"    # p3 ARM {name}: target={pt_atr}xATR stop={sl_atr}xATR pt_pct={pt} stop_pct={sl} horizon={hor}\n", 1)
-    out_yaml = f"rules/trader-swing-{name}-<swing-account>.yaml"
+    out_yaml = f"rules/trader-swing-{name}.yaml"
     open(out_yaml, "w").write(s)
-    shutil.copy(CACHE, f"rules/.backtest-cache-trader-swing-{name}-<swing-account>.json")
+    shutil.copy(CACHE, f"rules/.backtest-cache-trader-swing-{name}.json")
     # verify the arm's effective geometry is what we intended
     import yaml
     d = yaml.safe_load(s)["playbook"]["exit"]

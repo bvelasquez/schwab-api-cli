@@ -1,4 +1,4 @@
-# Intraday option chain snapshots for QQQ/SPY (read-only; token mirror only).
+# Intraday option chain snapshots for QQQ/SPY (read-only; does not refresh OAuth).
 #
 # Used by schwab-chain-snapshot.timer — not for manual trading.
 

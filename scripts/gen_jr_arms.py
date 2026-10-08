@@ -57,7 +57,7 @@ reps = [
 for pat, new in reps:
     s, n = re.subn(pat, new, s)
     assert n == 1, f"pattern {pat!r} matched {n} times"
-out = "rules/trader-swing-j-r3-<swing-account>.yaml"
+out = "rules/trader-swing-j-r3.yaml"
 open(out, "w").write(s)
 
 
@@ -79,9 +79,9 @@ print("      llm clamp:", d["llm"]["adaptation_bounds"]["risk_per_trade_pct"])
 # Write the control verbatim only now, after the transforms above have validated: a failed
 # transform must never leave a mislabelled control behind (it did once -- a grid run against it
 # would have silently compared change vs change).
-shutil.copy(SRC, "rules/trader-swing-j-ctl-<swing-account>.yaml")
+shutil.copy(SRC, "rules/trader-swing-j-ctl.yaml")
 
 for arm in ("j-ctl", "j-r3"):
-    shutil.copy(CACHE_SRC, f"rules/.backtest-cache-trader-swing-{arm}-<swing-account>.json")
-    yaml.safe_load(open(f"rules/trader-swing-{arm}-<swing-account>.yaml"))
+    shutil.copy(CACHE_SRC, f"rules/.backtest-cache-trader-swing-{arm}.json")
+    yaml.safe_load(open(f"rules/trader-swing-{arm}.yaml"))
 print("arms ready: j-ctl (control), j-r3 (sizing scaled)")

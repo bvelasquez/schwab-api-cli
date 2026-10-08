@@ -1,7 +1,7 @@
 # Risk-budget change applied to the paper-host paper bot — 2026-09-17
 
 **Venue rule (the operator): the live/paper test runs ONLY on paper-host.** This MacBook is source code only.
-Everything below was measured and deployed on paper-host; the local copies of `rules/*-<swing-account>.yaml` are stale
+Everything below was measured and deployed on paper-host; the local copies of `rules/*.yaml` are stale
 and must never be pushed up (they are gitignored, so `git pull` does not carry them either).
 
 ## What changed

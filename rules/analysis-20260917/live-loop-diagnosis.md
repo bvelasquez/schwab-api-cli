@@ -6,7 +6,7 @@ All numbers below are reproducible from the extraction scripts in `/tmp` (see `S
 
 ## Headline
 
-The paper sleeve realized **−$20.89 over 36 closed trades** (mean **−1.11%/trade**, 95% CI [−2.72%, +0.50%], 12W/24L, WR 33%).
+The paper sleeve realized a small loss over 36 closed trades (mean **−1.11%/trade**, 95% CI [−2.72%, +0.50%], 12W/24L, WR 33%).
 Exits are behaving; **the entry selection rule has no edge — it has negative edge**, and the deficit is entirely at entry.
 
 ## 1. The gate's admitted opportunity set has negative forward expectancy
@@ -42,7 +42,7 @@ With payoff > 1 and a 13-point WR deficit, the fix has to be entry quality, not 
 
 ## 3. Entry timing: real but minor, and NOT fixed by deferring
 
-Dollar P&L by entry clock time is **size-confounded** — position cost grew 6× mid-window ($122 → $720),
+Dollar P&L by entry clock time is **size-confounded** — position cost grew about 6× mid-window,
 so compare size-neutral `pnl_pct`:
 
 | entry bucket (ET) | n | mean pnl_pct | win | Jul only (n) | Aug–Sep only (n) |

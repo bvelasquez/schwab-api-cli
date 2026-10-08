@@ -20,7 +20,7 @@ This document describes how to author files consumed by `schwab plan validate` a
 | Field | Description |
 |-------|-------------|
 | `version` | Must be `1` |
-| `plan_id` | Stable id, lowercase slug (e.g. `<swing-account>-sgov-jpst-2026-06-19`) |
+| `plan_id` | Stable id, lowercase slug (e.g. `sgov-jpst-2026-06-19`) |
 | `title` | Short human title |
 | `account_hash` | **hashValue** from `schwab accounts numbers --json` |
 | `created_at` | ISO-8601 UTC timestamp |

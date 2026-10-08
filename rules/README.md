@@ -8,7 +8,7 @@
 
 **Personal configs (never commit):**
 
-Copy a template to a local name (e.g. `rules/my-options.yaml`) and add your Schwab `hashValue` from `schwab accounts numbers --json`. Files matching `*-<options-account>.yaml`, `*-<swing-account>.yaml`, and other account-specific names are gitignored.
+Copy a template to a local name such as `rules/options-pilot.yaml` or `rules/trader-swing.yaml` and add your Schwab `hashValue` from `schwab accounts numbers --json`. Those prefixes, plus `rules/trader-intraday*.yaml`, are gitignored. Do not commit account hashes.
 
 Runtime state (`agent-state-*.json`, `trader-state-*.json`, journals, logs) is also gitignored.
 

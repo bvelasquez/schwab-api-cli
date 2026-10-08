@@ -465,7 +465,7 @@ pub fn load_state(path: &Path) -> Result<AgentState> {
 
 pub fn save_state(path: &Path, state: &AgentState) -> Result<()> {
     let content = serde_json::to_string_pretty(state)?;
-    schwab_api::write_atomic_sync(path, content)
+    schwab_api::write_atomic_owner_sync(path, content)
         .with_context(|| format!("write agent state {}", path.display()))?;
     Ok(())
 }

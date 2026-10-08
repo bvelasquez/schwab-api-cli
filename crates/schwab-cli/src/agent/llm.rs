@@ -658,9 +658,9 @@ mod tests {
     #[test]
     fn user_message_includes_strategy_context() {
         let mut config = LlmConfig::default();
-        config.prompts.selection_context = "Account <swing-account>: conservative income pilot.".into();
+        config.prompts.selection_context = "Example account: conservative income pilot.".into();
         let msg = build_user_message(&config, LlmPhase::Selection, &json!({"tick": 1})).unwrap();
-        assert!(msg.contains("Account <swing-account>"));
+        assert!(msg.contains("Example account"));
         assert!(msg.contains("\"tick\": 1"));
     }
 

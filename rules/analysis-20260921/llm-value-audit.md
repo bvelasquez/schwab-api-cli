@@ -12,8 +12,7 @@ journald logs. The only token proxy is payload size (median review response 5,11
 ≈ 1.3k out-tokens).
 
 The authoritative number is the agents' own OpenRouter key
-(`~/.config/environment.d/schwab-paper.conf`, key hash `01fdcf54b0e8`, read via
-`GET https://openrouter.ai/api/v1/key` — read-only, key never printed):
+(read via `GET https://openrouter.ai/api/v1/key` — read-only, key never printed):
 
 | field | value |
 |---|---|
@@ -22,9 +21,7 @@ The authoritative number is the agents' own OpenRouter key
 | `usage_weekly` / `usage_daily` | $0.1066 (week began today) |
 | `limit` / `limit_remaining` | $3.00 / $2.893 |
 
-Attribution: this key exists **only** in `schwab-paper.conf` — no other env file, Hermes
-profile, or furoshiki config on paper-host uses OpenRouter, and the Mac's Hermes key is a
-different key (hash `30385d8abb97`). So **$2.885/month is the two paper agents alone**,
+Attribution: this key is used only by the paper agents. So **$2.885/month is the two paper agents alone**,
 ≈ **$0.13 per trading day**.
 
 ## 2. Volume — actual calls, not ticks

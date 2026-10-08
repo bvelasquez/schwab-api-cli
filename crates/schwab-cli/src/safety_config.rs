@@ -96,6 +96,9 @@ impl SafetyConfig {
     pub fn load() -> Result<Self> {
         let path = config_path();
         if path.is_file() {
+            if let Err(err) = schwab_api::restrict_owner_file(&path) {
+                tracing::warn!(%err, path = %path.display(), "could not restrict safety.json mode");
+            }
             let raw = fs::read_to_string(&path)
                 .with_context(|| format!("Failed to read safety config at {}", path.display()))?;
             let mut cfg: SafetyConfig = serde_json::from_str(&raw)
@@ -112,13 +115,10 @@ impl SafetyConfig {
         if path.is_file() {
             return Ok(path);
         }
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create config dir {}", parent.display()))?;
-        }
         let cfg = Self::default();
         let pretty = serde_json::to_string_pretty(&cfg)?;
-        fs::write(&path, pretty).with_context(|| format!("Failed to write {}", path.display()))?;
+        schwab_api::write_atomic_private_sync(&path, pretty)
+            .with_context(|| format!("Failed to write {}", path.display()))?;
         Ok(path)
     }
 

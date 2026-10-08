@@ -28,7 +28,7 @@ safety.json
 plans/*.state.json
 plans/local/
 
-# Options agent runtime state (per rules file stem, e.g. options-pilot-<swing-account>.yaml)
+# Options agent runtime state (per rules file stem, e.g. options-pilot.yaml)
 rules/agent-state-*.json
 rules/agent-sim-state-*.json
 rules/agent-journal-*.jsonl
@@ -68,10 +68,28 @@ rules/trader-swing-*-baseline.yaml
 rules/p1-sizing-results.json
 rules/measure-frozen.yaml
 
-# Personal agent rules (account-specific hashes — copy from *-example.yaml locally)
-rules/*-<options-account>.yaml
-rules/*-<swing-account>.yaml
+# Personal agent rules (account hashes — copy from *-example.yaml; never commit)
+rules/options-pilot*.yaml
+rules/trader-swing*.yaml
+rules/trader-intraday*.yaml
 rules/options-monthly-income.yaml
+rules/*.bak*
+rules/*stale*
+rules/*.json.bak*
+
+# Local-only operator scripts (kept outside the public repo)
+scripts/schwab-auto-login.py
+scripts/schwab-auto-login.sh
+scripts/*-auth-login.sh
+scripts/*-token-sync.sh
+scripts/*-token-keeper.sh
+deploy/systemd/user/schwab-auto-login.*
+deploy/systemd/user/schwab-token-keeper.*
+deploy/systemd/user/*token-mirror*
+
+# Python
+__pycache__/
+*.pyc
 
 # Personal project notes and launch scripts (not for the public repo)
 reminders.md

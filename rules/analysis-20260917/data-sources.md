@@ -40,17 +40,17 @@ Schwab 1-minute data. Extending the lookback is a config value, not new plumbing
 What $29/mo would buy is **historical depth for intraday backtesting** (5 years of minute bars) — real
 value, but there is no intraday hypothesis defined yet to test, and it is not needed for the live path.
 
-The economics decide it at the current sleeve size:
+The economics at an example $4,000 sleeve:
 
 | | value |
 |---|---|
 | subscription | $348/yr ($278/yr annual) |
-| sleeve | $4,000 |
+| example sleeve | $4,000 |
 | cost as share of capital | **8.7%/yr** (7.0% annual billing) |
 | strategy return at the recommended config | ~+32.6% over 2y ≈ **~15%/yr** |
 | share of the edge consumed | **~57%** |
 
-Buy it when the sleeve reaches ~$20k (then $348/yr = 1.7%), or when a specific intraday hypothesis is
+Buy it when the subscription is a small share of the sleeve, or when a specific intraday hypothesis is
 blocked on multi-year minute history. If buying, Starter is the correct tier — Developer/Advanced only
 add trades/real-time, which a backtest workflow does not need.
 

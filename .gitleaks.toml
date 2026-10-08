@@ -1,0 +1,14 @@
+title = "schwab-api-cli"
+
+[allowlist]
+description = "placeholders and lockfile checksums"
+paths = [
+  '''Cargo\.lock''',
+  '''\.env\.example''',
+  '''safety\.json\.example''',
+]
+regexes = [
+  '''<ACCOUNT_HASH>''',
+  '''SCHWAB_APP_KEY=\s*$''',
+  '''SCHWAB_APP_SECRET=\s*$''',
+]

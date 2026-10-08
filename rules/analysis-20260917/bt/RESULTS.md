@@ -60,8 +60,8 @@ decouples the stop from the R:R gate — not a proportional scale of the existin
 
 ## Reproduce
 ```
-target/debug/schwab-trader backtest run --rules-file rules/trader-swing-p2-base-<swing-account>.yaml \
+target/debug/schwab-trader backtest run --rules-file rules/trader-swing-p2-base.yaml \
   --from 2024-06-30 --to 2026-06-28 --fresh --no-learn --simulate --yes
 ```
-(`*-<swing-account>.yaml` arms and `.backtest-cache-*` are gitignored; copies of the live rules with only the arm
+(`*.yaml` arms and `.backtest-cache-*` are gitignored; copies of the live rules with only the arm
 differences applied.)

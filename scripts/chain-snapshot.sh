@@ -3,7 +3,7 @@
 #
 # Env:
 #   OUT_DIR          Output root (default: rules/chains)
-#   SCHWAB_TOKEN_DIR Token mirror (default: ~/.config/schwabinvestbot/agents)
+#   SCHWAB_TOKEN_DIR Token directory (default: ~/.config/schwabinvestbot)
 #   SCHWAB_REPO      Repo path for schwab CLI (optional)
 
 set -euo pipefail
@@ -17,7 +17,7 @@ if [[ -f "${HOME}/.config/environment.d/schwab-paper.conf" ]]; then
   set +a
 fi
 
-export SCHWAB_TOKEN_DIR="${SCHWAB_TOKEN_DIR:-${HOME}/.config/schwabinvestbot/agents}"
+export SCHWAB_TOKEN_DIR="${SCHWAB_TOKEN_DIR:-${HOME}/.config/schwabinvestbot}"
 export SCHWAB_REPO="${SCHWAB_REPO:-${HOME}/projects/schwabinvestbot}"
 
 SCHWAB="${SCHWAB:-${HOME}/.cargo/bin/schwab}"

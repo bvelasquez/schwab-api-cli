@@ -1,4 +1,3 @@
-use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 
@@ -50,10 +49,7 @@ fn write_journal_line(
         "type": event_type,
         "payload": payload,
     });
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
+    let mut file = schwab_api::open_owner_append(path)
         .with_context(|| format!("open journal {}", path.display()))?;
     writeln!(file, "{line}")?;
     Ok(())

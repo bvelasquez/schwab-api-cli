@@ -1,4 +1,4 @@
-# Options pilot v4 recovery (IRA <options-account>)
+# Options pilot v4 recovery
 
 **Status:** paper / `--simulate` only until all promotion gates pass.
 
@@ -172,17 +172,14 @@ Start with **one** live trade cap unchanged (`max_trades_per_day: 1`).
 - Iron condor: require **both** wings outside 1σ before re-enabling — gate now implemented
   (`iron_condor.require_shorts_outside_1sigma`), condor still disabled in v4.1.
 - Sim slippage model — shipped in v4.1 (`simulation.fill_slippage_pct: 5.0`).
-- Alert if `option-start.sh` pattern not used and live <options-account> agent is running.
+- Alert if a live agent is running without the operator's usual start checklist.
 
 ## Two-sleeve rotation (P2.8, optional)
 
-`rules/options-pilot-<swing-account>.yaml` is a separate, broader universe (12 liquid ETFs, $2-wide
-spreads, margin account) that can run as a second paper sleeve alongside <options-account>. Run it with
-its own rules file and sim state; keep <options-account> as the index sleeve. Do not point both at the
-same account hash with `max_open_positions` that can overlap the same names.
+A second local rules file can describe a broader universe (liquid ETFs, narrower spreads) as its own paper sleeve. Run it with its own rules file and sim state. Do not point both files at the same account hash with `max_open_positions` that can overlap the same names.
 
 ## References
 
 - [OPTIONS_RULES.md](OPTIONS_RULES.md) — `--simulate` vs live
-- Live P/L history: `rules/agent-state-options-pilot.json` → `cumulative_realized_pnl_usd` (~−$212 as of 2026-08-05)
-- Paper P/L: `rules/agent-sim-state-options-pilot.json` → `sim.realized_pnl_usd` (`cumulative_realized_pnl_usd` stays 0 in simulate by design)
+- Live P/L history: `rules/agent-state-<stem>.json` → `cumulative_realized_pnl_usd` (gitignored)
+- Paper P/L: `rules/agent-sim-state-<stem>.json` → `sim.realized_pnl_usd` (`cumulative_realized_pnl_usd` stays 0 in simulate by design)

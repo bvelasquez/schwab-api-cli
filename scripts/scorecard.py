@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Daily paper-trading scorecard for paper-host swing + options sim agents."""
+"""Daily paper-trading scorecard for swing + options sim agents.
+
+State file names follow the rules-file stem. Override with
+SCHWAB_SWING_RULES / SCHWAB_OPTIONS_RULES (filenames only) or the CLI flags.
+Sleeve size comes from the state file; SCHWAB_SWING_STARTING_CASH and
+SCHWAB_OPTIONS_STARTING_BUDGET are optional fallbacks.
+"""
 from __future__ import annotations
 
 import argparse
@@ -7,6 +13,7 @@ import collections
 import datetime as dt
 import json
 import math
+import os
 import random
 import re
 import statistics
@@ -15,12 +22,17 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-SWING_STATE = "trader-state-trader-swing.json"
-SWING_JOURNAL = "trader-journal-trader-swing.jsonl"
-OPTIONS_STATE = "agent-sim-state-options-pilot.json"
-OPTIONS_JOURNAL = "agent-sim-journal-options-pilot.jsonl"
-SWING_STARTING_CASH = 4000.0
-OPTIONS_STARTING_BUDGET = 4000.0
+def _stem(env_name: str, default: str) -> str:
+    return Path(os.environ.get(env_name, default)).stem
+
+_SWING_STEM = _stem("SCHWAB_SWING_RULES", "trader-swing.yaml")
+_OPTIONS_STEM = _stem("SCHWAB_OPTIONS_RULES", "options-pilot.yaml")
+SWING_STATE = f"trader-state-{_SWING_STEM}.json"
+SWING_JOURNAL = f"trader-journal-{_SWING_STEM}.jsonl"
+OPTIONS_STATE = f"agent-sim-state-{_OPTIONS_STEM}.json"
+OPTIONS_JOURNAL = f"agent-sim-journal-{_OPTIONS_STEM}.jsonl"
+SWING_STARTING_CASH = float(os.environ.get("SCHWAB_SWING_STARTING_CASH", "0") or 0)
+OPTIONS_STARTING_BUDGET = float(os.environ.get("SCHWAB_OPTIONS_STARTING_BUDGET", "0") or 0)
 SWING_HALT_PCT = 12.0
 OPTIONS_HALT_PCT = 10.0
 BOOTSTRAP_SEED = 42
@@ -205,7 +217,8 @@ def swing_section(state_path: Path, journal_paths: list[Path]) -> dict:
 
     state = load_json(state_path) or {}
     sim = state.get("sim") if isinstance(state.get("sim"), dict) else {}
-    start_eq = float(sim.get("starting_cash_usd") or SWING_STARTING_CASH)
+    start_eq = float(sim.get("starting_cash_usd") or 0) or SWING_STARTING_CASH
+    cash_base = SWING_STARTING_CASH or start_eq
     snaps = sim.get("equity_snapshots") or []
     if snaps:
         now_eq = float(snaps[-1].get("equity_usd") or start_eq)
@@ -221,9 +234,9 @@ def swing_section(state_path: Path, journal_paths: list[Path]) -> dict:
         spy_return_pct = 100.0 * (spy_last - spy_first) / spy_first
 
     deploy_pcts = [
-        100.0 * float(v["deployed_usd"]) / SWING_STARTING_CASH
+        100.0 * float(v["deployed_usd"]) / cash_base
         for v in tick_by_day.values()
-        if v.get("deployed_usd") is not None
+        if cash_base and v.get("deployed_usd") is not None
     ]
     avg_deploy_pct = statistics.mean(deploy_pcts) if deploy_pcts else None
     exposure_spy_pct = (spy_return_pct * avg_deploy_pct / 100.0) if spy_return_pct is not None and avg_deploy_pct is not None else None
@@ -271,9 +284,9 @@ def swing_section(state_path: Path, journal_paths: list[Path]) -> dict:
 
     last10_sessions = sessions_sorted[-10:]
     last10_deploy = [
-        100.0 * float(tick_by_day[d]["deployed_usd"]) / SWING_STARTING_CASH
+        100.0 * float(tick_by_day[d]["deployed_usd"]) / cash_base
         for d in last10_sessions
-        if tick_by_day[d].get("deployed_usd") is not None
+        if cash_base and tick_by_day[d].get("deployed_usd") is not None
     ]
     avg_deploy_last10 = statistics.mean(last10_deploy) if last10_deploy else None
 
@@ -375,7 +388,7 @@ def options_section(state_path: Path, journal_path: Path) -> dict:
     state = load_json(state_path) or {}
     sim = state.get("sim") if isinstance(state.get("sim"), dict) else {}
     realized = float(sim.get("realized_pnl_usd") or 0.0)
-    start = float(sim.get("starting_budget_usd") or OPTIONS_STARTING_BUDGET)
+    start = float(sim.get("starting_budget_usd") or 0) or OPTIONS_STARTING_BUDGET
 
     exits, entries, rolls = scan_options_journal(journal_path)
     wins = sum(1 for e in exits if float(e.get("pnl_usd") or 0) > 0)

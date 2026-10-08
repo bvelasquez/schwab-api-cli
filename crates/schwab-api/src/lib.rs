@@ -9,7 +9,10 @@ pub mod error;
 pub mod models;
 pub mod query;
 
-pub use atomic::{write_atomic, write_atomic_sync};
+pub use atomic::{
+    open_owner_append, restrict_owner_dir, restrict_owner_file, write_atomic, write_atomic_owner_sync,
+    write_atomic_private, write_atomic_private_sync, write_atomic_sync,
+};
 pub use auth::{OAuthClient, TokenStore, Tokens};
 pub use client::SchwabClient;
 pub use config::ClientConfig;
