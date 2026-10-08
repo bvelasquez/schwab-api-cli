@@ -1,0 +1,12 @@
+# Morning refresh so the swing open uses confirmed dates.
+
+[Unit]
+Description=Refresh the Schwab earnings calendar on weekdays
+
+[Timer]
+OnCalendar=Mon..Fri 08:15 America/New_York
+Persistent=true
+Unit=schwab-earnings-refresh.service
+
+[Install]
+WantedBy=timers.target

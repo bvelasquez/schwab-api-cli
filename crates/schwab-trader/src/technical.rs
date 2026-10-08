@@ -107,30 +107,39 @@ pub async fn fetch_technical_snapshot_with_benchmark(
         rules.is_intraday(),
     )?;
     if candles.len() >= 30 {
-        snap.history_features = Some(compute_history_features(
-            &candles,
-            last,
-            bench_for_features,
-        ));
+        snap.history_features = Some(compute_history_features(&candles, last, bench_for_features));
     }
-    if rules.playbook.filters.no_trade_before_earnings_days > 0 {
-        enrich_earnings_estimate(market, &mut snap).await;
+    if rules.playbook.filters.no_trade_before_earnings_days > 0
+        || rules.earnings.calendar_file.is_some()
+    {
+        enrich_earnings_estimate(market, rules, &mut snap).await;
     }
     Ok(snap)
 }
 
-async fn enrich_earnings_estimate(market: &MarketCtx, snap: &mut TechnicalSnapshot) {
-    let Ok(fundamental) = market.quote_fundamental(&snap.symbol).await else {
-        return;
-    };
-    let Some(last) = crate::earnings::parse_last_earnings_date(&fundamental) else {
-        return;
-    };
+async fn enrich_earnings_estimate(
+    market: &MarketCtx,
+    rules: &TraderRules,
+    snap: &mut TechnicalSnapshot,
+) {
+    let fundamental = market.quote_fundamental(&snap.symbol).await.ok();
+    let last = fundamental
+        .as_ref()
+        .and_then(crate::earnings::parse_last_earnings_date);
     let today = match market {
         MarketCtx::Replay { as_of, .. } => as_of.date_naive(),
         MarketCtx::Live { .. } | MarketCtx::Tape { .. } => crate::earnings::today_et_naive(),
     };
-    let est = crate::earnings::estimate_next_earnings(last, today);
+    let calendar = rules
+        .earnings
+        .calendar_file
+        .as_deref()
+        .and_then(|path| crate::earnings::load_calendar_cached(path).ok());
+    let Some(est) =
+        crate::earnings::resolve_next_earnings(&snap.symbol, last, today, calendar.as_ref())
+    else {
+        return;
+    };
     snap.last_earnings_date = Some(est.last_earnings_date.to_string());
     snap.estimated_next_earnings = Some(est.estimated_next_earnings.to_string());
     snap.days_until_estimated_earnings = Some(est.days_until_estimated);
@@ -258,6 +267,11 @@ pub fn passes_entry_filters(
                     return Some("below SMA 50".into());
                 }
             }
+            200 => match snap.history_features.as_ref().and_then(|h| h.above_sma_200) {
+                Some(false) => return Some("below SMA 200".into()),
+                None => return Some("missing SMA 200".into()),
+                Some(true) => {}
+            },
             _ => {}
         }
     }
@@ -276,6 +290,11 @@ pub fn passes_entry_filters(
             50 => {
                 if snap.above_sma_50 == Some(true) {
                     return Some("above SMA 50 (pullback required)".into());
+                }
+            }
+            200 => {
+                if snap.history_features.as_ref().and_then(|h| h.above_sma_200) == Some(true) {
+                    return Some("above SMA 200 (pullback required)".into());
                 }
             }
             _ => {}
@@ -332,10 +351,8 @@ pub fn passes_entry_filters(
         if stop_pct <= 0.0 {
             return Some("stop_loss_pct must be > 0 for min_reward_risk".into());
         }
-        let range = crate::capital::ExitRangeContext::from_history(
-            rules,
-            snap.history_features.as_ref(),
-        );
+        let range =
+            crate::capital::ExitRangeContext::from_history(rules, snap.history_features.as_ref());
         let target_pct =
             crate::capital::effective_profit_target_pct(snap.last, rules, snap.atr_14, range);
         let rr = target_pct / stop_pct;
@@ -414,9 +431,7 @@ pub fn near_52w_high_size_scalar(rules: &TraderRules, snap: &TechnicalSnapshot) 
     let Some(soft_zone) = filters.near_52w_high_soft_zone_pct else {
         return 1.0;
     };
-    let min_dist = filters
-        .min_distance_from_52w_high_pct
-        .unwrap_or(soft_zone);
+    let min_dist = filters.min_distance_from_52w_high_pct.unwrap_or(soft_zone);
     let Some(pct) = snap
         .history_features
         .as_ref()
@@ -515,6 +530,10 @@ pub fn reason_code(reason: &str) -> &'static str {
         "low_price"
     } else if reason.contains("not fetched by production tick") {
         "not_in_production_tape"
+    } else if reason.starts_with("API error") || reason.contains("API error ") {
+        // A data outage is not a gate decision. Callers must not treat this
+        // code as evidence about the symbol.
+        "api_error"
     } else {
         "other"
     }
@@ -587,8 +606,8 @@ mod tests {
                 volume: 1_000_000.0,
             })
             .collect();
-        let snap = build_technical_snapshot("TEST", 159.0, None, None, None, &candles, false)
-            .unwrap();
+        let snap =
+            build_technical_snapshot("TEST", 159.0, None, None, None, &candles, false).unwrap();
         assert!(snap.sma_20.is_some());
         assert!(snap.rsi_14.is_some());
     }
@@ -746,7 +765,9 @@ mod tests {
         let snap = base_snap(); // above_sma_9 = Some(true) → extended, not a pullback
         let reason = passes_entry_filters(&snap, &rules.playbook.entry, &rules.technical, &rules);
         assert!(
-            reason.as_deref().is_some_and(|r| r.contains("pullback required")),
+            reason
+                .as_deref()
+                .is_some_and(|r| r.contains("pullback required")),
             "got {reason:?}"
         );
     }
@@ -761,6 +782,7 @@ mod tests {
             ("RSI 74.4 outside range", "rsi_out_of_range"),
             ("RSI 30.0 below momentum floor 40.0", "rsi_out_of_range"),
             ("below SMA 20", "below_sma"),
+            ("API error 401: unauthorized", "api_error"),
             ("intraday: below SMA 9", "below_sma"),
             ("above SMA 9 (pullback required)", "above_sma"),
             (

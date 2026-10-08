@@ -3,7 +3,8 @@
 //! Arms only ever see a `MarketCtx::Tape` (no API client) and a paper
 //! `TraderState`; nothing here takes a `TraderApi`, `TraderRuntime`, or
 //! notifier, so no order, Telegram, or audio path is reachable. The LLM is
-//! never consulted (equivalent to `llm.enabled: false`).
+//! never called from this path. An arm may read a journaled decision
+//! (`llm_signal`) that a separate batch wrote earlier the same day.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -55,11 +56,17 @@ impl LedgerSink for ShadowSink<'_> {
 impl ShadowArms {
     /// Evaluate every arm against the data production fetched this tick.
     /// Per-arm failures are logged and never propagate.
-    pub async fn run_tick(&mut self, rules_path: &Path, production: &TraderState, tape: Arc<TickTape>) {
+    pub async fn run_tick(
+        &mut self,
+        rules_path: &Path,
+        production: &TraderState,
+        tape: Arc<TickTape>,
+    ) {
         let market = MarketCtx::from_tape(tape);
         let prod_equity = compute_sleeve_equity(production);
         for arm in &mut self.arms {
-            if let Err(err) = run_arm_tick(arm, rules_path, &market, production, prod_equity).await {
+            if let Err(err) = run_arm_tick(arm, rules_path, &market, production, prod_equity).await
+            {
                 shadow_warn(rules_path, &arm.id, &format!("tick failed: {err:#}"));
             }
             if let Err(err) = arm.state.save(&arm.state_path) {
@@ -103,7 +110,10 @@ async fn run_arm_tick(
         .iter()
         .filter(|e| e.get("exit_reason").is_some())
         .fold((0u32, 0.0f64), |(n, pnl), e| {
-            (n + 1, pnl + e.get("pnl_usd").and_then(|v| v.as_f64()).unwrap_or(0.0))
+            (
+                n + 1,
+                pnl + e.get("pnl_usd").and_then(|v| v.as_f64()).unwrap_or(0.0),
+            )
         });
 
     let mut scan = run_scan_inner(market, &tick_rules, st, None).await?;
@@ -118,8 +128,14 @@ async fn run_arm_tick(
     }
 
     let mut entered = 0u32;
-    let capital = compute_sim_capital_check(&tick_rules, st, None, None, Some(rules_path));
-    if capital.passed && st.entry_block_reason(&tick_rules).is_none() {
+    let mut capital = compute_sim_capital_check(&tick_rules, st, None, None, Some(rules_path));
+    crate::capital::relax_unconstrained_budget(&tick_rules, &mut capital);
+    let blocked = if tick_rules.capital.unconstrained {
+        st.entry_block_reason_unconstrained(&tick_rules)
+    } else {
+        st.entry_block_reason(&tick_rules)
+    };
+    if capital.passed && blocked.is_none() {
         let symbols: Vec<String> = scan
             .get("candidates")
             .and_then(|v| v.as_array())
@@ -139,8 +155,16 @@ async fn run_arm_tick(
                 rejections.push(reason_code(&reason).to_string());
                 continue;
             }
-            match shadow_entry(&tick_rules, st, market, &account_hash, &symbol, rules_path, journal)
-                .await?
+            match shadow_entry(
+                &tick_rules,
+                st,
+                market,
+                &account_hash,
+                &symbol,
+                rules_path,
+                journal,
+            )
+            .await?
             {
                 Ok(()) => {
                     entered += 1;
@@ -220,24 +244,34 @@ async fn shadow_entry(
         return Ok(Err("could not resolve limit price".into()));
     }
 
-    let preview = compute_sim_capital_check(rules, state, None, None, Some(rules_path));
+    let mut preview = compute_sim_capital_check(rules, state, None, None, Some(rules_path));
+    crate::capital::relax_unconstrained_budget(rules, &mut preview);
     let plan = plan_entry(rules, &snap, limit_price, preview.tradable_budget_usd);
+    let (adjust, adjust_code) = crate::agent::llm_signal::adjust_entry(rules, &symbol);
+    if matches!(adjust, crate::agent::llm_signal::EntryAdjust::Skip) {
+        return Ok(Err(adjust_code.unwrap_or_else(|| "llm_signal_skip".into())));
+    }
+    let quantity = crate::agent::llm_signal::size_from_adjust(plan.quantity, adjust);
     if let Some(reason) =
-        quantity_below_min_reason(rules, plan.quantity, preview.tradable_budget_usd, limit_price)
+        quantity_below_min_reason(rules, quantity, preview.tradable_budget_usd, limit_price)
     {
         return Ok(Err(reason));
     }
-    let quantity = plan.quantity;
-    let estimated_cost =
-        schwab_cli::portfolio::estimate_equity_buy_cost(quantity, "LIMIT", Some(limit_price), None)?;
+    let estimated_cost = schwab_cli::portfolio::estimate_equity_buy_cost(
+        quantity,
+        "LIMIT",
+        Some(limit_price),
+        None,
+    )?;
     let stop_risk = quantity * (limit_price - plan.stop_price).max(0.0);
-    let capital = compute_sim_capital_check(
+    let mut capital = compute_sim_capital_check(
         rules,
         state,
         Some(estimated_cost),
         Some(stop_risk),
         Some(rules_path),
     );
+    crate::capital::relax_unconstrained_budget(rules, &mut capital);
     if !capital.passed {
         return Ok(Err(capital
             .reject_reason

@@ -157,6 +157,36 @@ impl OpenRouterClient {
         let content = extract_message_content(&payload)?;
         parse_llm_json_content(&content)
     }
+
+    /// Raw chat completion payload (`choices[0].message`). Used by the signal
+    /// batch and the bounded tool loop. Does not grant order authority.
+    pub async fn post_chat(&self, body: Value) -> Result<Value> {
+        let resp = self
+            .http
+            .post(OPENROUTER_URL)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .header("HTTP-Referer", "https://github.com/schwabinvestbot")
+            .header("X-Title", "schwab-trader")
+            .json(&body)
+            .send()
+            .await
+            .context("OpenRouter request failed")?;
+        let status = resp.status();
+        let payload: Value = resp.json().await?;
+        if !status.is_success() {
+            let fallback = payload.to_string();
+            let message = payload
+                .pointer("/error/message")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&fallback);
+            anyhow::bail!("OpenRouter error {status}: {message}");
+        }
+        payload
+            .pointer("/choices/0/message")
+            .cloned()
+            .context("OpenRouter response missing choices[0].message")
+    }
 }
 
 fn build_system_prompt(
@@ -527,8 +557,7 @@ fn parse_review(phase: &str, model: &str, raw: Value) -> TraderLlmReview {
             })
             .unwrap_or_default(),
         rule_patches: crate::learn::valid_rule_patches(
-            &raw
-                .get("rule_patches")
+            &raw.get("rule_patches")
                 .and_then(|v| v.as_array())
                 .map(|a| a.as_slice())
                 .unwrap_or(&[]),

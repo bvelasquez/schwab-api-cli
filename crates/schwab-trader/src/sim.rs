@@ -268,14 +268,7 @@ pub async fn process_sim_exits(
     ensure_ledger(state, rules);
 
     let mut exits = crate::closure::process_exit_plan_tightens(
-        None,
-        sink,
-        rules,
-        state,
-        None,
-        market,
-        "",
-        true,
+        None, sink, rules, state, None, market, "", true,
     )
     .await?;
 
@@ -294,9 +287,7 @@ pub async fn process_sim_exits(
         .map(|p| p.symbol.clone())
         .collect();
     for symbol in symbols {
-        let quote_raw = market
-            .quote_last_bid_ask(&symbol)
-            .await?;
+        let quote_raw = market.quote_last_bid_ask(&symbol).await?;
         let last = quote_raw.0;
         if last <= 0.0 {
             continue;
@@ -323,15 +314,18 @@ pub async fn process_sim_exits(
 
         let snap = crate::technical::fetch_technical_snapshot(market, rules, &symbol).await?;
         let pos = state.open_positions.get(&pos_id).cloned().unwrap_or(pos);
-        let exit_reason = crate::thesis_exit::thesis_exit_reason(
-            rules,
-            &pos,
-            last,
-            &snap,
-            regime_class.as_deref(),
-        )
-        .map(str::to_string)
-        .or_else(|| exit_reason_for_position(rules, &pos, last).map(str::to_string));
+        let exit_reason =
+            crate::agent::llm_signal::forced_exit_reason(rules, &symbol).or_else(|| {
+                crate::thesis_exit::thesis_exit_reason(
+                    rules,
+                    &pos,
+                    last,
+                    &snap,
+                    regime_class.as_deref(),
+                )
+                .map(str::to_string)
+                .or_else(|| exit_reason_for_position(rules, &pos, last).map(str::to_string))
+            });
 
         let Some(reason) = exit_reason else {
             continue;
@@ -348,7 +342,7 @@ pub async fn process_sim_exits(
         let hold_minutes = (Utc::now() - pos.opened_at).num_minutes().max(0) as u32;
         let hold_days = (Utc::now() - pos.opened_at).num_days().max(0) as u32;
 
-        let exit_price = sim_fill_price(&reason, &pos, last);
+        let exit_price = sim_fill_price_for_rules(rules, &reason, &pos, last);
         let proceeds = pos.quantity * exit_price;
         let pnl = proceeds - (pos.quantity * pos.entry_price);
         let pnl_pct = if pos.entry_price > 0.0 {
@@ -428,8 +422,29 @@ pub async fn process_sim_exits(
 
 /// Stop fills at stop price; target at limit; discretionary exits at last.
 pub fn sim_fill_price(reason: &str, pos: &SwingPosition, last: f64) -> f64 {
+    sim_fill_price_for_rules_default(reason, pos, last, true)
+}
+
+/// `fill_stop_through_gap` false fills a stop at the trigger even when `last`
+/// gapped through it. That is the optimistic counterfactual, not the default.
+pub fn sim_fill_price_for_rules(
+    rules: &crate::rules::TraderRules,
+    reason: &str,
+    pos: &SwingPosition,
+    last: f64,
+) -> f64 {
+    sim_fill_price_for_rules_default(reason, pos, last, rules.playbook.exit.fill_stop_through_gap)
+}
+
+fn sim_fill_price_for_rules_default(
+    reason: &str,
+    pos: &SwingPosition,
+    last: f64,
+    fill_stop_through_gap: bool,
+) -> f64 {
     match reason {
-        "stop_loss" => pos.stop_price.min(last),
+        "stop_loss" if fill_stop_through_gap => pos.stop_price.min(last),
+        "stop_loss" => pos.stop_price,
         "profit_target" => pos.profit_limit.max(last),
         _ => last,
     }

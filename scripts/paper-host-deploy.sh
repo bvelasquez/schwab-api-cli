@@ -52,12 +52,21 @@ cp -f deploy/systemd/user/schwab-scorecard.service "$unit_dir/"
 cp -f deploy/systemd/user/schwab-scorecard.timer "$unit_dir/"
 cp -f deploy/systemd/user/schwab-chain-snapshot.service "$unit_dir/"
 cp -f deploy/systemd/user/schwab-chain-snapshot.timer "$unit_dir/"
+cp -f deploy/systemd/user/schwab-research.service "$unit_dir/"
+cp -f deploy/systemd/user/schwab-research.timer "$unit_dir/"
+cp -f deploy/systemd/user/schwab-llm-signal.service "$unit_dir/"
+cp -f deploy/systemd/user/schwab-llm-signal.timer "$unit_dir/"
+cp -f deploy/systemd/user/schwab-earnings-refresh.service "$unit_dir/"
+cp -f deploy/systemd/user/schwab-earnings-refresh.timer "$unit_dir/"
 
-chmod +x scripts/paper-host-watchdog.sh
+chmod +x scripts/paper-host-watchdog.sh \
+  scripts/jarvis-research.sh scripts/jarvis-llm-signal.sh scripts/jarvis-earnings-refresh.sh \
+  scripts/candidate_outcomes.py scripts/llm_ic_eval.py scripts/research_agent.py scripts/promotion_gate.py
 
 systemctl --user daemon-reload
 systemctl --user enable schwab-options.service schwab-swing.service
-systemctl --user enable --now schwab-bot-watchdog.timer schwab-scorecard.timer schwab-chain-snapshot.timer
+systemctl --user enable --now schwab-bot-watchdog.timer schwab-scorecard.timer schwab-chain-snapshot.timer \
+  schwab-research.timer schwab-llm-signal.timer schwab-earnings-refresh.timer
 systemctl --user restart schwab-options.service schwab-swing.service
 
 echo "==> versions"

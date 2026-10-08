@@ -1,5 +1,7 @@
 pub mod daemon;
 pub mod llm;
+pub mod llm_agent;
+pub mod llm_signal;
 pub mod paths;
 pub mod resilience;
 pub mod runner;

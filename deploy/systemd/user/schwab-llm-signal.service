@@ -1,0 +1,17 @@
+# Premarket scorer. Writes rules/llm-signal-journal.jsonl.
+# Shadow arms read that journal. This unit never places an order.
+# Skips cleanly when OPENROUTER_API_KEY is unset.
+
+[Unit]
+Description=Schwab swing premarket LLM scorer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/schwabinvestbot
+EnvironmentFile=-%h/.config/environment.d/schwab-paper.conf
+ExecStart=%h/projects/schwabinvestbot/scripts/jarvis-llm-signal.sh
+
+[Install]
+WantedBy=default.target

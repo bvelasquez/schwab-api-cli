@@ -45,9 +45,7 @@ async fn run() -> Result<()> {
         Some(Commands::Watch {
             rules_file,
             monitor_only,
-        }) => {
-            schwab_trader::commands::watch_cmd::run(&runtime, &rules_file, monitor_only).await
-        }
+        }) => schwab_trader::commands::watch_cmd::run(&runtime, &rules_file, monitor_only).await,
         Some(Commands::Sim { command }) => {
             schwab_trader::commands::sim_cmd::run(&runtime, command).await
         }
@@ -62,6 +60,9 @@ async fn run() -> Result<()> {
         }
         Some(Commands::Watchlist { command }) => {
             schwab_trader::commands::watchlist_cmd::run(&runtime, command).await
+        }
+        Some(Commands::Research { command }) => {
+            schwab_trader::commands::research_cmd::run(&runtime, command).await
         }
         None => {
             eprintln!("schwab-trader — equity swing agent. Run with --help.");

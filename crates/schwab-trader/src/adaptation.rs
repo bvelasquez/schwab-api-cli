@@ -12,8 +12,8 @@ use crate::agent::llm::TraderLlmReview;
 use crate::agent::state::{save_state, TraderState};
 use crate::capital::exit_prices;
 use crate::config::TraderRuntime;
-use crate::market_ctx::MarketCtx;
 use crate::journal;
+use crate::market_ctx::MarketCtx;
 use crate::orders::replace_oco_bracket;
 use crate::regime::RegimeSnapshot;
 use crate::rules::{IntradayConfig, PlaybookConfig, PositionSizeConfig, TraderRules};
@@ -56,6 +56,12 @@ pub struct ProfileTrailingOverrides {
 pub struct ProfileEntryOverrides {
     pub rsi_14_range: Option<[f64; 2]>,
     pub max_new_entries_per_day: Option<u32>,
+    /// Replace the trend gate for this profile. None leaves the base list.
+    #[serde(default)]
+    pub require_above_sma: Option<Vec<u32>>,
+    /// Replace the pullback gate for this profile. None leaves the base list.
+    #[serde(default)]
+    pub require_below_sma: Option<Vec<u32>>,
     #[serde(default)]
     pub position_size: Option<ProfilePositionSizeOverrides>,
 }
@@ -124,6 +130,12 @@ pub fn apply_profile_overrides(
         if let Some(v) = entry.max_new_entries_per_day {
             pb.entry.max_new_entries_per_day = v;
         }
+        if let Some(v) = &entry.require_above_sma {
+            pb.entry.require_above_sma = v.clone();
+        }
+        if let Some(v) = &entry.require_below_sma {
+            pb.entry.require_below_sma = v.clone();
+        }
         if let Some(ps) = &entry.position_size {
             merge_position_size(&mut pb.entry.position_size, ps);
         }
@@ -159,7 +171,11 @@ pub fn apply_regime_profile(state: &mut TraderState, rules: &TraderRules, regime
     if !rules.adaptation.enabled || !rules.adaptation.regime_auto_select {
         return;
     }
-    if !rules.adaptation.profiles.contains_key(&regime.recommended_profile) {
+    if !rules
+        .adaptation
+        .profiles
+        .contains_key(&regime.recommended_profile)
+    {
         return;
     }
     state.last_regime = Some(regime.to_json());
@@ -194,11 +210,10 @@ pub fn apply_regime_profile(state: &mut TraderState, rules: &TraderRules, regime
                 p.consecutive_ticks
             }
             _ => {
-                state.regime_profile_pending =
-                    Some(crate::agent::state::PendingProfileSwitch {
-                        profile: recommended.to_string(),
-                        consecutive_ticks: 1,
-                    });
+                state.regime_profile_pending = Some(crate::agent::state::PendingProfileSwitch {
+                    profile: recommended.to_string(),
+                    consecutive_ticks: 1,
+                });
                 1
             }
         };
@@ -296,8 +311,12 @@ pub async fn apply_monitor_exit_adjustments(
             continue;
         }
 
-        let (_, base_stop, _) =
-            exit_prices(pos.entry_price, rules, None, crate::capital::ExitRangeContext::none());
+        let (_, base_stop, _) = exit_prices(
+            pos.entry_price,
+            rules,
+            None,
+            crate::capital::ExitRangeContext::none(),
+        );
         let stop_range = (pos.entry_price - base_stop).max(0.01);
         let delta_pct = if action == "tighten_exits" {
             cfg.max_tighten_pct
@@ -434,13 +453,13 @@ mod tests {
         let mut rules = sample_rules();
         rules.adaptation.regime_auto_select = true;
         rules.adaptation.regime.profile_switch_min_dwell_ticks = 3;
-        rules
-            .adaptation
-            .profiles
-            .insert("elevated_vol".into(), TradingProfile {
+        rules.adaptation.profiles.insert(
+            "elevated_vol".into(),
+            TradingProfile {
                 description: "t".into(),
                 overrides: Default::default(),
-            });
+            },
+        );
 
         let mut state = TraderState::default();
         state.active_profile = Some("baseline".into());
@@ -458,7 +477,10 @@ mod tests {
         apply_regime_profile(&mut state, &rules, &regime_snapshot("baseline"));
         assert_eq!(state.active_profile.as_deref(), Some("elevated_vol"));
         assert_eq!(
-            state.regime_profile_pending.as_ref().map(|p| p.consecutive_ticks),
+            state
+                .regime_profile_pending
+                .as_ref()
+                .map(|p| p.consecutive_ticks),
             Some(1)
         );
         // Recommending the already-active profile clears the pending switch.
@@ -473,13 +495,13 @@ mod tests {
         rules.adaptation.regime_auto_select = true;
         rules.adaptation.llm_profile_select = false;
         rules.adaptation.regime.profile_switch_min_dwell_ticks = 0;
-        rules
-            .adaptation
-            .profiles
-            .insert("elevated_vol".into(), TradingProfile {
+        rules.adaptation.profiles.insert(
+            "elevated_vol".into(),
+            TradingProfile {
                 description: "t".into(),
                 overrides: Default::default(),
-            });
+            },
+        );
 
         let mut state = TraderState::default();
         // Simulate a prior LLM selection that happens to match the regime's
@@ -506,18 +528,19 @@ mod tests {
         rules.adaptation.regime_auto_select = true;
         rules.adaptation.llm_profile_select = false;
         rules.adaptation.regime.profile_switch_min_dwell_ticks = 0;
-        rules
-            .adaptation
-            .profiles
-            .insert("elevated_vol".into(), TradingProfile {
+        rules.adaptation.profiles.insert(
+            "elevated_vol".into(),
+            TradingProfile {
                 description: "t".into(),
                 overrides: Default::default(),
-            });
+            },
+        );
 
         let mut state = TraderState::default();
         state.active_profile = Some("elevated_vol".into());
         state.active_profile_source = Some("regime".into());
-        state.active_profile_reason = Some("regime=elevated_vol vix=Some(20.0) rv_pctile=50".into());
+        state.active_profile_reason =
+            Some("regime=elevated_vol vix=Some(20.0) rv_pctile=50".into());
 
         apply_regime_profile(&mut state, &rules, &regime_snapshot("elevated_vol"));
 
@@ -529,13 +552,13 @@ mod tests {
         let mut rules = sample_rules();
         rules.adaptation.regime_auto_select = true;
         rules.adaptation.regime.profile_switch_min_dwell_ticks = 0;
-        rules
-            .adaptation
-            .profiles
-            .insert("elevated_vol".into(), TradingProfile {
+        rules.adaptation.profiles.insert(
+            "elevated_vol".into(),
+            TradingProfile {
                 description: "t".into(),
                 overrides: Default::default(),
-            });
+            },
+        );
         let mut state = TraderState::default();
         state.active_profile = Some("baseline".into());
         apply_regime_profile(&mut state, &rules, &regime_snapshot("elevated_vol"));

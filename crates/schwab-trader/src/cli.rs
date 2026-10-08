@@ -113,16 +113,17 @@ pub enum Commands {
         #[command(subcommand)]
         command: WatchlistCommands,
     },
+    /// Paper research: outcomes, LLM scores, bounded agent. Never places orders.
+    Research {
+        #[command(subcommand)]
+        command: ResearchCommands,
+    },
 }
 
 #[derive(Debug, Subcommand)]
 pub enum RulesCommands {
-    Validate {
-        rules_file: PathBuf,
-    },
-    Show {
-        rules_file: PathBuf,
-    },
+    Validate { rules_file: PathBuf },
+    Show { rules_file: PathBuf },
 }
 
 #[derive(Debug, Subcommand)]
@@ -209,9 +210,7 @@ pub enum SimCommands {
 #[derive(Debug, Subcommand)]
 pub enum ShadowCommands {
     /// Per-arm closed-trade stats and day-paired comparison vs production
-    Report {
-        rules_file: PathBuf,
-    },
+    Report { rules_file: PathBuf },
 }
 
 #[derive(Debug, Subcommand)]
@@ -353,9 +352,47 @@ pub enum WatchlistCommands {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum ResearchCommands {
+    /// Hypothetical trade for every cached symbol-day (no sleeve, no slots).
+    Outcomes {
+        #[arg(long)]
+        rules_file: PathBuf,
+        #[arg(long)]
+        cache: Option<PathBuf>,
+        #[arg(long)]
+        output: Option<PathBuf>,
+        #[arg(long)]
+        max_symbols: Option<usize>,
+    },
+    /// Premarket scorer. `--dry-run` writes stub rows and does not call a model.
+    Signal {
+        #[arg(long)]
+        rules_file: PathBuf,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        symbol: Option<String>,
+    },
+    /// Bounded multi-turn analyst for one already-admitted symbol.
+    Agent {
+        #[arg(long)]
+        rules_file: PathBuf,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        symbol: Option<String>,
+    },
+    /// Replace the 91-day earnings heuristic file with FMP confirmed dates.
+    EarningsRefresh {
+        #[arg(long)]
+        rules_file: PathBuf,
+        #[arg(long, default_value_t = 120)]
+        days: u32,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum WatchlistPoolCommands {
     /// Quote-check every symbol in a pool file
-    Validate {
-        pool: PathBuf,
-    },
+    Validate { pool: PathBuf },
 }

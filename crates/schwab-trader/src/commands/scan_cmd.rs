@@ -53,7 +53,12 @@ pub async fn run_scan_inner(
     let mut candidates = Vec::new();
     let mut rejected = Vec::new();
 
-    let bench_sym = rules.adaptation.regime.benchmark_symbol.trim().to_uppercase();
+    let bench_sym = rules
+        .adaptation
+        .regime
+        .benchmark_symbol
+        .trim()
+        .to_uppercase();
     let benchmark_candles = if bench_sym.is_empty() {
         Vec::new()
     } else {
@@ -104,21 +109,18 @@ pub async fn run_scan_inner(
             }));
             continue;
         }
-        let snap = match fetch_technical_snapshot_with_benchmark(
-            market,
-            rules,
-            &symbol,
-            bench_ref,
-        )
-        .await
+        let snap = match fetch_technical_snapshot_with_benchmark(market, rules, &symbol, bench_ref)
+            .await
         {
             Ok(s) => s,
             Err(err) => {
                 let reason = err.to_string();
+                let code = reason_code(&reason);
                 rejected.push(json!({
                     "symbol": symbol,
                     "reason": reason,
-                    "reason_code": reason_code(&reason),
+                    "reason_code": code,
+                    "counts_as_decision": code != "api_error",
                 }));
                 continue;
             }
@@ -181,11 +183,7 @@ pub fn candidate_score(snap: &TechnicalSnapshot) -> f64 {
         .map(|r| 1.0 - (r - 55.0).abs() / 45.0)
         .unwrap_or(0.0)
         .max(0.0);
-    let vol_score = snap
-        .relative_volume
-        .unwrap_or(1.0)
-        .min(3.0)
-        / 3.0;
+    let vol_score = snap.relative_volume.unwrap_or(1.0).min(3.0) / 3.0;
     let spread_score = snap
         .spread_pct
         .map(|s| (1.0 - s / 2.0).max(0.0))

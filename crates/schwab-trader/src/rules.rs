@@ -3,12 +3,22 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::adaptation::PlaybookProfileOverrides;
 use crate::market_cache::MarketCacheConfig;
 
 pub const RULES_VERSION: u32 = 1;
+
+/// Parse YAML, then expand `<<` merge keys. serde_yaml leaves those keys in
+/// place unless `Value::apply_merge` runs, which would drop anchor overlays
+/// such as the research arms.
+pub fn parse_yaml_merged<T: DeserializeOwned>(raw: &str) -> Result<T> {
+    let mut value: serde_yaml::Value = serde_yaml::from_str(raw).context("parse YAML")?;
+    value.apply_merge().context("apply YAML merge keys")?;
+    serde_yaml::from_value(value).context("deserialize YAML")
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraderRules {
@@ -34,6 +44,13 @@ pub struct TraderRules {
     pub execution: ExecutionConfig,
     #[serde(default)]
     pub llm: LlmConfig,
+    /// Point-in-time LLM scores and bounded agent decisions. Default off.
+    /// Shadow arms read the journal; they never call a model.
+    #[serde(default)]
+    pub llm_signal: LlmSignalConfig,
+    /// Optional confirmed earnings dates. Heuristic remains the fallback.
+    #[serde(default)]
+    pub earnings: EarningsCalendarConfig,
     #[serde(default)]
     pub notify: NotifyConfig,
     #[serde(default)]
@@ -174,6 +191,12 @@ pub struct CapitalConfig {
     pub fixed_sleeve_cap_usd: f64,
     pub max_pct_of_free_cash: f64,
     pub min_cash_floor_usd: f64,
+    /// Shadow-arm only. When true, that arm skips slot and capital gates so
+    /// every setup the entry rules admit becomes a paper trade. Production
+    /// `validate()` rejects this flag. Liquidity caps (`max_pct_of_adv`) still
+    /// apply.
+    #[serde(default)]
+    pub unconstrained: bool,
     pub options_risk: OptionsRiskConfig,
     pub core_holdings: Vec<String>,
 }
@@ -202,11 +225,7 @@ impl OptionsRiskConfig {
             .filter(|s| !s.is_empty())
             .collect();
         let singular = self.rules_file.trim();
-        if !singular.is_empty()
-            && !out
-                .iter()
-                .any(|p| p.eq_ignore_ascii_case(singular))
-        {
+        if !singular.is_empty() && !out.iter().any(|p| p.eq_ignore_ascii_case(singular)) {
             out.push(singular.to_string());
         }
         out
@@ -307,6 +326,11 @@ pub struct PositionSizeConfig {
     pub atr_baseline_pct: f64,
     pub atr_vol_scalar_min: f64,
     pub atr_vol_scalar_max: f64,
+    /// Cap position notional at this percent of 20-day dollar volume.
+    /// None disables the cap. Research arms set 1.0 so a large sleeve cannot
+    /// pretend to trade more than the name actually trades.
+    #[serde(default)]
+    pub max_pct_of_adv: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -379,6 +403,11 @@ pub struct ExitConfig {
     pub time_stop_minutes: u32,
     pub tighten_on_earnings_within_days: u32,
     pub thesis: ThesisExitConfig,
+    /// Stop fills at `min(stop, last)` when true (default): a gap through the
+    /// stop is slippage, not a fill at the trigger. Set false only on a
+    /// counterfactual arm that wants the optimistic stop-price fill.
+    #[serde(default = "default_true")]
+    pub fill_stop_through_gap: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -408,6 +437,11 @@ pub struct ProfitTargetRecentRangeCapConfig {
     pub lookback_days: u32,
     /// Allow target this far above the recent high (e.g. 1.0 = 1% breakout room).
     pub max_extension_above_high_pct: f64,
+    /// When false (default), a price at or above the recent high clamps the
+    /// ceiling to 0%, which rejects the name on reward/risk. When true, a
+    /// non-positive ceiling is ignored and ATR/horizon caps bind instead.
+    #[serde(default)]
+    pub skip_nonpositive_ceiling: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -724,6 +758,50 @@ pub struct LlmConfig {
     pub prompts: LlmPrompts,
 }
 
+/// How a shadow arm consumes the journaled LLM decision. Production leaves
+/// `mode: off`, so a missing or present score never changes a live order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LlmSignalPolicy {
+    /// `off` | `veto` | `downsize` | `event_skip` | `event_downsize` | `event_exit` | `agent`
+    pub mode: String,
+    /// Veto or downsize when the median named score is below this.
+    pub min_score: i32,
+    /// Size multiplier applied by downsize modes. Clamped to [0.5, 1.0].
+    pub size_multiplier: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LlmSignalConfig {
+    /// Batch job calls models only when true. Shadow arms do not need this.
+    pub enabled: bool,
+    pub models: Vec<String>,
+    /// Model id → knowledge-cutoff date (YYYY-MM-DD). Evidence before this
+    /// date is excluded by the IC eval.
+    pub knowledge_cutoffs: HashMap<String, String>,
+    pub samples: u32,
+    pub temperature: f64,
+    pub max_tokens: u32,
+    pub blinded: bool,
+    /// Stronger model used as the second comparison arm (also listed in `models`).
+    pub comparison_model: String,
+    pub policy: LlmSignalPolicy,
+    /// Multi-turn analyst. Still journal-only; never originates a trade.
+    pub agent_max_turns: u32,
+    pub agent_dollar_budget: f64,
+    /// JSONL the batch writes and shadow arms read. Relative paths are from
+    /// the process working directory (the repo root on jarvis).
+    pub journal_file: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EarningsCalendarConfig {
+    /// YAML map of symbol → list of confirmed dates. Empty = heuristic only.
+    pub calendar_file: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LlmPrompts {
     #[serde(default)]
@@ -768,6 +846,7 @@ impl Default for CapitalConfig {
             fixed_sleeve_cap_usd: 3000.0,
             max_pct_of_free_cash: 80.0,
             min_cash_floor_usd: 500.0,
+            unconstrained: false,
             options_risk: OptionsRiskConfig::default(),
             core_holdings: vec![],
         }
@@ -882,6 +961,7 @@ impl Default for PositionSizeConfig {
             atr_baseline_pct: 2.0,
             atr_vol_scalar_min: 0.5,
             atr_vol_scalar_max: 1.5,
+            max_pct_of_adv: None,
         }
     }
 }
@@ -910,6 +990,7 @@ impl Default for ProfitTargetRecentRangeCapConfig {
             enabled: false,
             lookback_days: 60,
             max_extension_above_high_pct: 1.0,
+            skip_nonpositive_ceiling: false,
         }
     }
 }
@@ -938,6 +1019,7 @@ impl Default for ExitConfig {
             time_stop_minutes: 0,
             tighten_on_earnings_within_days: 3,
             thesis: ThesisExitConfig::default(),
+            fill_stop_through_gap: true,
         }
     }
 }
@@ -1162,6 +1244,53 @@ impl Default for LlmConfig {
     }
 }
 
+impl Default for LlmSignalPolicy {
+    fn default() -> Self {
+        Self {
+            mode: "off".into(),
+            min_score: 0,
+            size_multiplier: 0.5,
+        }
+    }
+}
+
+impl Default for LlmSignalConfig {
+    fn default() -> Self {
+        let mut knowledge_cutoffs = HashMap::new();
+        // Approximate public cutoffs. The IC eval drops any decision whose
+        // trading day is on or before the cutoff. Update these when a model
+        // card changes; a stale cutoff fails closed (drops rows), it does not
+        // invent post-cutoff evidence.
+        knowledge_cutoffs.insert("google/gemini-2.5-flash".into(), "2025-01-01".into());
+        knowledge_cutoffs.insert("anthropic/claude-sonnet-4".into(), "2025-03-01".into());
+        Self {
+            enabled: false,
+            models: vec![
+                "google/gemini-2.5-flash".into(),
+                "anthropic/claude-sonnet-4".into(),
+            ],
+            knowledge_cutoffs,
+            samples: 3,
+            temperature: 0.0,
+            max_tokens: 600,
+            blinded: true,
+            comparison_model: "anthropic/claude-sonnet-4".into(),
+            policy: LlmSignalPolicy::default(),
+            agent_max_turns: 6,
+            agent_dollar_budget: 0.25,
+            journal_file: "rules/llm-signal-journal.jsonl".into(),
+        }
+    }
+}
+
+impl Default for EarningsCalendarConfig {
+    fn default() -> Self {
+        Self {
+            calendar_file: None,
+        }
+    }
+}
+
 impl Default for NotifyConfig {
     fn default() -> Self {
         Self {
@@ -1335,11 +1464,7 @@ impl DataFeedSource {
         if self.phases.is_empty() {
             return matches!(
                 phase,
-                "selection"
-                    | "web"
-                    | "premarket_digest"
-                    | "overnight_digest"
-                    | "monitor"
+                "selection" | "web" | "premarket_digest" | "overnight_digest" | "monitor"
             );
         }
         self.phases.iter().any(|p| {
@@ -1353,7 +1478,7 @@ impl TraderRules {
     pub fn load(path: &Path) -> Result<Self> {
         let raw = fs::read_to_string(path)
             .with_context(|| format!("Failed to read rules file {}", path.display()))?;
-        let mut rules: TraderRules = serde_yaml::from_str(&raw)
+        let mut rules: TraderRules = parse_yaml_merged(&raw)
             .with_context(|| format!("Failed to parse rules YAML {}", path.display()))?;
         rules.normalize_adaptation();
         rules.validate()?;
@@ -1404,6 +1529,7 @@ impl TraderRules {
             self.capital.fixed_sleeve_cap_usd > 0.0,
             "capital.fixed_sleeve_cap_usd must be positive"
         );
+        self.validate_authority(false)?;
         anyhow::ensure!(
             self.execution.bracket_mode == "post_fill_oco",
             "Only bracket_mode post_fill_oco is supported in v1"
@@ -1425,6 +1551,44 @@ impl TraderRules {
             self.schedule.timezone
         );
         self.validate_feeds()?;
+        Ok(())
+    }
+
+    /// Shadow arms may set `capital.unconstrained` and a non-off LLM policy.
+    /// Everything else is the production validator.
+    pub fn validate_shadow_arm(&self) -> Result<()> {
+        let mode = self.llm_signal.policy.mode.trim();
+        anyhow::ensure!(
+            matches!(
+                mode,
+                "off"
+                    | "veto"
+                    | "downsize"
+                    | "event_skip"
+                    | "event_downsize"
+                    | "event_exit"
+                    | "agent"
+            ),
+            "llm_signal.policy.mode `{mode}` is not a known shadow policy"
+        );
+        let mut stripped = self.clone();
+        stripped.capital.unconstrained = false;
+        stripped.llm_signal.policy.mode = "off".into();
+        stripped.validate()
+    }
+
+    fn validate_authority(&self, shadow_arm: bool) -> Result<()> {
+        if !shadow_arm && self.capital.unconstrained {
+            anyhow::bail!(
+                "capital.unconstrained is shadow-arm only and cannot be set on production rules"
+            );
+        }
+        let mode = self.llm_signal.policy.mode.trim();
+        if !shadow_arm && mode != "off" && !mode.is_empty() {
+            anyhow::bail!(
+                "llm_signal.policy.mode `{mode}` is shadow-arm only; production must stay `off`"
+            );
+        }
         Ok(())
     }
 
@@ -1468,7 +1632,9 @@ impl TraderRules {
                 );
                 if ak == "header" {
                     anyhow::ensure!(
-                        auth.header_name.as_ref().is_some_and(|h| !h.trim().is_empty()),
+                        auth.header_name
+                            .as_ref()
+                            .is_some_and(|h| !h.trim().is_empty()),
                         "sources.feeds[{}].auth.header_name required for header auth",
                         feed.id
                     );
@@ -1596,10 +1762,8 @@ impl TraderRules {
 
     /// Pool symbols eligible for mechanical screening (excludes core, blocked, core holdings).
     pub fn symbols_for_screening(&self, rules_path: &Path) -> Result<Vec<String>> {
-        let core: std::collections::HashSet<String> = self
-            .all_watchlist_symbols()
-            .into_iter()
-            .collect();
+        let core: std::collections::HashSet<String> =
+            self.all_watchlist_symbols().into_iter().collect();
         let mut out = Vec::new();
         for sym in self.candidate_pool_symbols(rules_path)? {
             if core.contains(&sym) {
@@ -1636,11 +1800,7 @@ impl TraderRules {
     pub fn symbol_group_name(&self, symbol: &str) -> Option<&str> {
         let sym = symbol.trim().to_uppercase();
         for group in &self.playbook.filters.symbol_groups {
-            if group
-                .symbols
-                .iter()
-                .any(|s| s.eq_ignore_ascii_case(&sym))
-            {
+            if group.symbols.iter().any(|s| s.eq_ignore_ascii_case(&sym)) {
                 return Some(group.name.as_str());
             }
         }
@@ -1674,6 +1834,8 @@ impl Default for TraderRules {
             risk: RiskConfig::default(),
             execution: ExecutionConfig::default(),
             llm: LlmConfig::default(),
+            llm_signal: LlmSignalConfig::default(),
+            earnings: EarningsCalendarConfig::default(),
             notify: NotifyConfig::default(),
             simulation: None,
             adaptation: AdaptationConfig::default(),

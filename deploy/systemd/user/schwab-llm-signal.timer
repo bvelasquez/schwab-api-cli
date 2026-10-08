@@ -1,0 +1,12 @@
+# Before the 9:30 open so the journal exists for the first swing tick.
+
+[Unit]
+Description=Run the Schwab swing premarket LLM scorer on weekdays
+
+[Timer]
+OnCalendar=Mon..Fri 09:00 America/New_York
+Persistent=true
+Unit=schwab-llm-signal.service
+
+[Install]
+WantedBy=timers.target
