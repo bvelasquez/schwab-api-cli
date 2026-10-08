@@ -441,9 +441,7 @@ One live agent per account per strategy unless you intend overlapping logic.
 
 | File | Purpose |
 |------|---------|
-| [rules/options-rules.example.yaml](../rules/options-rules.example.yaml) | All fields, commented |
-| [rules/options-rules.example.yaml](../rules/options-rules.example.yaml) | Public template — copy locally and set account hash |
-| [rules/options-monthly-income.yaml](../rules/options-monthly-income.yaml) | Monthly income PDF-aligned |
+| [rules/options-rules.example.yaml](../rules/options-rules.example.yaml) | Public template — copy locally and set the account hash |
 
 ### LLM rules for options rules files
 

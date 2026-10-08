@@ -37,6 +37,7 @@ Run `schwab plan prompt --json` for the full machine-readable prompt, rules, and
 |------|---------|
 | `TRADE_PLAN.md` | Human + LLM reference (field definitions, examples) |
 | `example-sgov-to-jpst-rebalance.yaml` | Example staged SGOV → JPST rotation (placeholders) |
+| `example-sgov-income-barbell.yaml` | Example income barbell (placeholders) |
 
 ## Design principles
 

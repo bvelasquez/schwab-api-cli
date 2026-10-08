@@ -685,7 +685,7 @@ capital:
   options_risk:
     rules_files:
       - rules/options-pilot.yaml
-      - rules/options-monthly-income.yaml
+      - rules/my-second-options.yaml
     fallback_reserve_usd: 500
     buffer_pct: 10
 ```

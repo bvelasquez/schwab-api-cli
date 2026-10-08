@@ -510,7 +510,7 @@ Get your chat ID: message your bot, then `curl "https://api.telegram.org/bot<TOK
 
 ### Monthly income strategy (PDF → rules)
 
-[rules/options-monthly-income.yaml](rules/options-monthly-income.yaml) encodes **“Selling Puts for Monthly Income”** as **put credit spreads** (the PDF’s recommended risk-reduced approach, not naked puts):
+The monthly-income illustration below encodes **“Selling Puts for Monthly Income”** as **put credit spreads** (defined risk, not naked puts). Copy [rules/options-rules.example.yaml](rules/options-rules.example.yaml) and tune these fields locally:
 
 | PDF concept | Rules encoding |
 |-------------|----------------|
