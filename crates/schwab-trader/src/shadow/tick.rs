@@ -3,7 +3,8 @@
 //! Arms only ever see a `MarketCtx::Tape` (no API client) and a paper
 //! `TraderState`; nothing here takes a `TraderApi`, `TraderRuntime`, or
 //! notifier, so no order, Telegram, or audio path is reachable. The LLM is
-//! never consulted (equivalent to `llm.enabled: false`).
+//! never called from this path. Arms may read a premarket decision cache
+//! (`llm_signal.mode`) that was journaled earlier.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -106,7 +107,11 @@ async fn run_arm_tick(
             (n + 1, pnl + e.get("pnl_usd").and_then(|v| v.as_f64()).unwrap_or(0.0))
         });
 
-    let mut scan = run_scan_inner(market, &tick_rules, st, None).await?;
+    let mut scan = run_scan_inner(market, &tick_rules, st, Some(rules_path)).await?;
+    crate::agent::llm_signal::apply_cached_decisions(rules_path, &tick_rules, &mut scan);
+    if tick_rules.llm_signal.mode == "exit_event" {
+        journal_event_reviews(rules_path, &tick_rules, st, journal)?;
+    }
     prioritise_scan_for_redeploy(&mut scan, st.redeploy_signal.as_ref());
     if let Some(rejected) = scan.get("rejected").and_then(|v| v.as_array()) {
         rejections.extend(
@@ -139,8 +144,18 @@ async fn run_arm_tick(
                 rejections.push(reason_code(&reason).to_string());
                 continue;
             }
-            match shadow_entry(&tick_rules, st, market, &account_hash, &symbol, rules_path, journal)
-                .await?
+            let mult = crate::agent::llm_signal::candidate_size_multiplier(&scan, &symbol);
+            match shadow_entry(
+                &tick_rules,
+                st,
+                market,
+                &account_hash,
+                &symbol,
+                rules_path,
+                journal,
+                mult,
+            )
+            .await?
             {
                 Ok(()) => {
                     entered += 1;
@@ -168,6 +183,44 @@ async fn run_arm_tick(
 /// Flush the previous day's `shadow_day_summary` when the trading day changes.
 /// A new day starts from the previous day's closing equities so daily changes
 /// (including overnight gaps) telescope to the total.
+/// Recommendation only: does not close the position. The operator (or a
+/// later promotion) decides whether to act.
+fn journal_event_reviews(
+    rules_path: &Path,
+    rules: &TraderRules,
+    state: &TraderState,
+    journal: &Path,
+) -> Result<()> {
+    let path = crate::agent::llm_signal::cache_path(rules_path, &rules.trader_id);
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return Ok(());
+    };
+    let Ok(cache) = serde_json::from_str::<Value>(&raw) else {
+        return Ok(());
+    };
+    let Some(symbols) = cache.get("symbols").and_then(|v| v.as_object()) else {
+        return Ok(());
+    };
+    for pos in state.open_positions.values() {
+        let Some(d) = symbols.get(&pos.symbol.to_uppercase()) else {
+            continue;
+        };
+        if d.get("event_risk").and_then(|v| v.as_bool()).unwrap_or(false) {
+            append_event_to_path(
+                journal,
+                Utc::now(),
+                "shadow_event_review",
+                serde_json::json!({
+                    "symbol": pos.symbol,
+                    "recommendation": "exit_before_event",
+                    "event_type": d.get("event_type").cloned().unwrap_or(serde_json::json!("none")),
+                }),
+            )?;
+        }
+    }
+    Ok(())
+}
+
 fn roll_day(
     state: &mut ShadowArmState,
     rules: &TraderRules,
@@ -206,6 +259,7 @@ async fn shadow_entry(
     symbol: &str,
     rules_path: &Path,
     journal: &Path,
+    size_multiplier: f64,
 ) -> Result<std::result::Result<(), String>> {
     let symbol = symbol.trim().to_uppercase();
     if let Some(reason) = entry_gate_reason(rules, state, &symbol, None, false) {
@@ -227,7 +281,7 @@ async fn shadow_entry(
     {
         return Ok(Err(reason));
     }
-    let quantity = plan.quantity;
+    let quantity = plan.quantity * size_multiplier.clamp(0.5, 1.0);
     let estimated_cost =
         schwab_cli::portfolio::estimate_equity_buy_cost(quantity, "LIMIT", Some(limit_price), None)?;
     let stop_risk = quantity * (limit_price - plan.stop_price).max(0.0);

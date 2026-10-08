@@ -765,7 +765,16 @@ pub(crate) fn plan_entry(
         exit_prices(limit_price, rules, snap.atr_14, range);
     let sizing =
         compute_position_sizing(rules, limit_price, stop_price, tradable_budget, snap.atr_14);
-    let quantity = sizing.quantity * near_52w_high_size_scalar(rules, snap);
+    let mut quantity = sizing.quantity * near_52w_high_size_scalar(rules, snap);
+    if let Some(pct) = rules.playbook.entry.position_size.max_pct_of_adv {
+        if pct > 0.0 {
+            if let Some(vol) = snap.volume_sma_20.filter(|v| *v > 0.0 && limit_price > 0.0) {
+                let adv_notional = limit_price * vol;
+                let cap_qty = (adv_notional * pct / 100.0) / limit_price;
+                quantity = quantity.min(cap_qty);
+            }
+        }
+    }
     EntryPlan {
         profit_limit,
         stop_price,

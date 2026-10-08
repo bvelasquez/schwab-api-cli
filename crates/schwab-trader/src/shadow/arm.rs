@@ -82,7 +82,9 @@ pub fn build_arm_rules(
         serde_json::from_value(base).context("arm rules do not deserialize as TraderRules")?;
     rules.shadow = ShadowConfig::default();
     rules.normalize_adaptation();
-    rules.validate().context("arm rules failed validation")?;
+    rules
+        .validate_shadow_arm()
+        .context("arm rules failed validation")?;
     Ok(rules)
 }
 
@@ -338,6 +340,21 @@ mod tests {
         assert_eq!(rules.playbook.filters.blocked_symbols, vec!["JPM".to_string()]);
         assert!(rules.shadow.is_empty());
         assert_eq!(rules.trader_id, "swing");
+    }
+
+    #[test]
+    fn unconstrained_overlay_validates_as_a_shadow_arm() {
+        let prod = production();
+        let arm = ShadowArmConfig {
+            id: "research-base".into(),
+            rules_file: None,
+            overrides: json!({
+                "capital": {"unconstrained": true, "fixed_sleeve_cap_usd": 1000000.0}
+            }),
+        };
+        let rules = build_arm_rules(&prod, Path::new("/tmp/rules/t.yaml"), &arm).unwrap();
+        assert!(rules.capital.unconstrained);
+        assert!(rules.validate().is_err());
     }
 
     #[test]

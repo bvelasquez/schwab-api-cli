@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the swing candidate outcome labeler on weekdays
+
+[Timer]
+OnCalendar=Mon..Fri 16:40 America/New_York
+Persistent=true
+Unit=schwab-outcomes.service
+
+[Install]
+WantedBy=timers.target

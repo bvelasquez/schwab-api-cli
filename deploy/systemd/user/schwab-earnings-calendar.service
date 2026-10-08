@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh the FMP earnings calendar used by shadow arms
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/schwabinvestbot
+EnvironmentFile=-%h/.config/environment.d/schwab-paper.conf
+ExecStart=/usr/bin/python3 %h/projects/schwabinvestbot/scripts/refresh_earnings_calendar.py
+
+[Install]
+WantedBy=default.target

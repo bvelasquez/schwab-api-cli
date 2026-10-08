@@ -157,6 +157,141 @@ impl OpenRouterClient {
         let content = extract_message_content(&payload)?;
         parse_llm_json_content(&content)
     }
+
+    /// One chat completion. Returns the assistant message object (content and
+    /// optional tool_calls) plus token usage when the provider reports it.
+    pub async fn chat(
+        &self,
+        model: &str,
+        messages: &[Value],
+        tools: Option<&Value>,
+        max_tokens: u32,
+        temperature: f64,
+    ) -> Result<ChatTurn> {
+        let mut body = json!({
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        });
+        if let Some(tools) = tools {
+            body["tools"] = tools.clone();
+        }
+        let resp = self
+            .http
+            .post(OPENROUTER_URL)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .header("HTTP-Referer", "https://github.com/schwabinvestbot")
+            .header("X-Title", "schwab-trader")
+            .json(&body)
+            .send()
+            .await
+            .context("OpenRouter request failed")?;
+        let status = resp.status();
+        let payload: Value = resp.json().await?;
+        if !status.is_success() {
+            let fallback = payload.to_string();
+            let message = payload
+                .pointer("/error/message")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&fallback);
+            anyhow::bail!("OpenRouter error {status}: {message}");
+        }
+        let message = payload
+            .pointer("/choices/0/message")
+            .cloned()
+            .context("OpenRouter response missing choices[0].message")?;
+        let prompt_tokens = payload
+            .pointer("/usage/prompt_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        let completion_tokens = payload
+            .pointer("/usage/completion_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        Ok(ChatTurn {
+            message,
+            prompt_tokens,
+            completion_tokens,
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ChatTurn {
+    pub message: Value,
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolBudget {
+    pub max_turns: u32,
+    pub max_tokens: u32,
+    pub max_usd: f64,
+    pub tokens_used: u32,
+    pub usd_used: f64,
+    pub turns: u32,
+}
+
+impl ToolBudget {
+    pub fn exhausted(&self) -> bool {
+        self.turns >= self.max_turns
+            || self.tokens_used >= self.max_tokens
+            || self.usd_used >= self.max_usd
+    }
+}
+
+/// Rough OpenRouter flash price used only as a budget ceiling, not billing.
+const USD_PER_MILLION_TOKENS: f64 = 0.50;
+
+pub fn tokens_to_usd(tokens: u32) -> f64 {
+    tokens as f64 / 1_000_000.0 * USD_PER_MILLION_TOKENS
+}
+
+/// Append an assistant turn and tool results. Pure so the loop is testable
+/// without HTTP.
+pub fn push_tool_round(messages: &mut Vec<Value>, assistant: &Value, results: &[(String, Value)]) {
+    messages.push(assistant.clone());
+    for (id, result) in results {
+        messages.push(json!({
+            "role": "tool",
+            "tool_call_id": id,
+            "content": result.to_string(),
+        }));
+    }
+}
+
+pub fn tool_calls_of(message: &Value) -> Vec<(String, String, Value)> {
+    let Some(calls) = message.get("tool_calls").and_then(|v| v.as_array()) else {
+        return vec![];
+    };
+    calls
+        .iter()
+        .filter_map(|c| {
+            let id = c.get("id").and_then(|v| v.as_str()).unwrap_or("call").to_string();
+            let name = c.pointer("/function/name").and_then(|v| v.as_str())?;
+            let raw = c
+                .pointer("/function/arguments")
+                .and_then(|v| v.as_str())
+                .unwrap_or("{}");
+            let args = serde_json::from_str(raw).unwrap_or(json!({}));
+            Some((id, name.to_string(), args))
+        })
+        .collect()
+}
+
+/// Analyst tools. Hard risk limits stay in the engine; these only read.
+pub fn analyst_tools() -> Value {
+    json!([
+        {"type":"function","function":{"name":"get_snapshot","description":"Point-in-time technical snapshot for a symbol.","parameters":{"type":"object","properties":{"symbol":{"type":"string"}},"required":["symbol"]}}},
+        {"type":"function","function":{"name":"get_headlines","description":"Recent headlines already fetched for a symbol.","parameters":{"type":"object","properties":{"symbol":{"type":"string"}},"required":["symbol"]}}},
+        {"type":"function","function":{"name":"get_filings_summary","description":"Short filing/headline summary. Empty when no filing text was fetched.","parameters":{"type":"object","properties":{"symbol":{"type":"string"}},"required":["symbol"]}}},
+        {"type":"function","function":{"name":"get_peer_rs","description":"Relative strength versus the benchmark from the snapshot.","parameters":{"type":"object","properties":{"symbol":{"type":"string"}},"required":["symbol"]}}},
+        {"type":"function","function":{"name":"get_base_rates","description":"Code-computed historical outcomes for similar setups. Refuses below 50 samples.","parameters":{"type":"object","properties":{"symbol":{"type":"string"}},"required":["symbol"]}}},
+        {"type":"function","function":{"name":"get_position_state","description":"Open paper position for a symbol, if any.","parameters":{"type":"object","properties":{"symbol":{"type":"string"}},"required":["symbol"]}}}
+    ])
 }
 
 fn build_system_prompt(

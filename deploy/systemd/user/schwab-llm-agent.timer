@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the bounded LLM analyst after the signal batch
+
+[Timer]
+OnCalendar=Mon..Fri 08:25 America/New_York
+Persistent=true
+Unit=schwab-llm-agent.service
+
+[Install]
+WantedBy=timers.target

@@ -101,6 +101,32 @@ impl FmpClient {
         Ok((status, value))
     }
 
+    /// Best-effort recent headlines. Callers treat errors as "no headlines".
+    pub async fn stock_headlines(&self, symbol: &str) -> Result<Vec<Value>> {
+        let (status, value) = self
+            .get_json(&format!(
+                "stable/news/stock-latest?tickers={symbol}&limit=5"
+            ))
+            .await?;
+        if !(200..300).contains(&status) {
+            bail!("FMP headlines HTTP {status}");
+        }
+        let rows = value.as_array().cloned().unwrap_or_default();
+        let mut out = Vec::new();
+        for (i, row) in rows.into_iter().take(5).enumerate() {
+            let title = row.get("title").and_then(|v| v.as_str()).unwrap_or("");
+            if title.is_empty() {
+                continue;
+            }
+            out.push(json!({
+                "id": format!("{symbol}-{i}"),
+                "title": title,
+                "published": row.get("publishedDate").cloned().unwrap_or(json!(null)),
+            }));
+        }
+        Ok(out)
+    }
+
     pub async fn most_actives(&self) -> Result<Vec<FmpMover>> {
         self.fetch_movers("stable/most-actives", "most-actives")
             .await

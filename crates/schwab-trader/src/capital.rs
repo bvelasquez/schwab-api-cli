@@ -182,6 +182,10 @@ fn build_capital_check(
         reject_reason: None,
     };
 
+    if rules.capital.unconstrained {
+        return check;
+    }
+
     if tradable_budget <= 0.0 {
         check.passed = false;
         check.reject_reason = Some("tradable_budget is zero".into());
@@ -362,7 +366,7 @@ pub fn exit_geometry(
                     let ceil = high * (1.0 + range_cfg.max_extension_above_high_pct / 100.0);
                     ((ceil / entry_price) - 1.0) * 100.0
                 })
-                .map(|pct| pct.max(0.0));
+                .map(|pct| pct.max(range_cfg.floor_pct.unwrap_or(0.0)));
             let width = match (range.recent_high, range.recent_low) {
                 (Some(h), Some(l)) if h > 0.0 && l > 0.0 && h >= l => {
                     Some(((h - l) / entry_price) * 100.0)
@@ -670,6 +674,39 @@ mod tests {
         assert!((g.effective_target_pct - 4.03).abs() < 0.02);
         assert_eq!(g.target_binding, "recent_range");
         assert!(g.range_ceiling_cap_pct.is_some());
+    }
+
+    #[test]
+    fn range_cap_floor_stops_a_zero_target_at_the_high() {
+        let mut rules = TraderRules {
+            version: 1,
+            trader_id: "t".into(),
+            accounts: vec![],
+            ..TraderRules::default()
+        };
+        rules.playbook.exit.profit_target_pct = 8.0;
+        rules.playbook.exit.profit_target_atr_cap.enabled = false;
+        rules.playbook.exit.profit_target_horizon_cap.enabled = false;
+        rules.playbook.exit.profit_target_recent_range_cap.enabled = true;
+        rules.playbook.exit.profit_target_recent_range_cap.floor_pct = Some(2.0);
+        // Entry equals the lookback high, so the raw ceiling is ~1% extension
+        // minus being at the high: high 100, entry 100, extension 1% → +1%.
+        // A name above the high (entry 105, high 100, extension 1% → negative)
+        // floors at 2% instead of 0%.
+        let g = exit_geometry(
+            105.0,
+            &rules,
+            None,
+            ExitRangeContext {
+                recent_high: Some(100.0),
+                recent_low: None,
+            },
+        );
+        assert!(
+            (g.range_ceiling_cap_pct.unwrap() - 2.0).abs() < 0.05,
+            "ceiling {}",
+            g.range_ceiling_cap_pct.unwrap()
+        );
     }
 
     #[test]

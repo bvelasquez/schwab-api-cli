@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh the earnings calendar on weekday mornings
+
+[Timer]
+OnCalendar=Mon..Fri 07:30 America/New_York
+Persistent=true
+Unit=schwab-earnings-calendar.service
+
+[Install]
+WantedBy=timers.target

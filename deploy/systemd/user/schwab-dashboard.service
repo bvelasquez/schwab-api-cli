@@ -1,0 +1,15 @@
+# Read-only paper dashboard. Localhost plus the Tailscale address, not the LAN.
+
+[Unit]
+Description=Schwab paper HTML dashboard
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/schwabinvestbot
+ExecStart=/bin/sh -c 'ts=$(/usr/bin/tailscale ip -4) && exec %h/.cargo/bin/schwab-trader dashboard --bind 127.0.0.1:8791 --bind "$$ts:8791"'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

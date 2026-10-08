@@ -292,14 +292,20 @@ impl TraderState {
         if let Some(reason) = &self.trading_halted_reason {
             return Some(reason.clone());
         }
-        if let Some(reason) = crate::risk::drawdown_halt_reason(self, rules) {
-            return Some(reason);
+        if !rules.capital.unconstrained {
+            if let Some(reason) = crate::risk::drawdown_halt_reason(self, rules) {
+                return Some(reason);
+            }
         }
         if check_session {
             if let Some(reason) = crate::closure::entry_block_reason(rules) {
                 return Some(reason);
             }
         }
+        if rules.capital.unconstrained {
+            return None;
+        }
+        // slot and trade-count gates. Skipped above when unconstrained.
         if self.trades_today >= rules.risk.max_trades_per_day {
             return Some(format!(
                 "max_trades_per_day reached ({}/{})",

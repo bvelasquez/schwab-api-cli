@@ -1,0 +1,15 @@
+# Premarket LLM signal. Exits 0 when llm_signal.enabled is false.
+# Does not place orders.
+
+[Unit]
+Description=Schwab premarket LLM signal batch
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/schwabinvestbot
+EnvironmentFile=-%h/.config/environment.d/schwab-paper.conf
+ExecStart=%h/.cargo/bin/schwab-trader llm-signal rules/trader-swing-9947.yaml
+
+[Install]
+WantedBy=default.target

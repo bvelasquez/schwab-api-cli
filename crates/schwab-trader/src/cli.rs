@@ -80,6 +80,19 @@ pub enum Commands {
         #[command(subcommand)]
         command: AgentCommands,
     },
+    /// Read-only HTML dashboard for paper books (no orders)
+    Dashboard {
+        /// Swing rules YAML. Repeatable. Defaults to rules/trader-swing-9947.yaml when present.
+        #[arg(long)]
+        rules_file: Vec<PathBuf>,
+        /// Options rules YAML. Repeatable. Defaults to rules/options-pilot-8709.yaml when present.
+        #[arg(long)]
+        options_rules: Vec<PathBuf>,
+        /// Listen address. Repeat to listen on more than one interface.
+        /// Default is localhost. Pass the Tailscale address as well to open it on the tailnet only.
+        #[arg(long, default_value = "127.0.0.1:8791")]
+        bind: Vec<String>,
+    },
     /// Live TUI + embedded agent (q to quit)
     Watch {
         #[arg(long)]
@@ -97,6 +110,14 @@ pub enum Commands {
     Shadow {
         #[command(subcommand)]
         command: ShadowCommands,
+    },
+    /// Premarket LLM signal batch. No orders. No-ops when llm_signal.enabled is false.
+    LlmSignal {
+        rules_file: PathBuf,
+    },
+    /// Bounded multi-turn analyst over names the rules already admitted. No orders.
+    LlmAgent {
+        rules_file: PathBuf,
     },
     /// Historical swing backtest (Schwab daily bars)
     Backtest {

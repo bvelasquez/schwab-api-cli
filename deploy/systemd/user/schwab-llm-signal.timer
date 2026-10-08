@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the premarket LLM signal batch on weekdays
+
+[Timer]
+OnCalendar=Mon..Fri 08:05 America/New_York
+Persistent=true
+Unit=schwab-llm-signal.service
+
+[Install]
+WantedBy=timers.target

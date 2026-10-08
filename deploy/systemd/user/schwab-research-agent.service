@@ -1,0 +1,14 @@
+[Unit]
+Description=Schwab nightly research agent (proposes arms, does not apply them)
+After=schwab-outcomes.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/schwabinvestbot
+ExecStart=/usr/bin/python3 %h/projects/schwabinvestbot/scripts/candidate_outcomes.py
+ExecStart=/usr/bin/python3 %h/projects/schwabinvestbot/scripts/llm_ic_eval.py
+ExecStart=/usr/bin/python3 %h/projects/schwabinvestbot/scripts/research_agent.py
+ExecStart=/usr/bin/python3 %h/projects/schwabinvestbot/scripts/promotion_gate.py
+
+[Install]
+WantedBy=default.target

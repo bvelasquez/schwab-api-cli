@@ -34,6 +34,10 @@ pub struct TraderRules {
     pub execution: ExecutionConfig,
     #[serde(default)]
     pub llm: LlmConfig,
+    /// Premarket scorer. Independent of `llm.enabled` (the old per-tick veto).
+    /// Production entries never read this cache. Shadow arms opt in via `mode`.
+    #[serde(default)]
+    pub llm_signal: LlmSignalConfig,
     #[serde(default)]
     pub notify: NotifyConfig,
     #[serde(default)]
@@ -176,6 +180,10 @@ pub struct CapitalConfig {
     pub min_cash_floor_usd: f64,
     pub options_risk: OptionsRiskConfig,
     pub core_holdings: Vec<String>,
+    /// Shadow-arm research mode. Skips sleeve, cash, heat, and slot gates.
+    /// `validate()` rejects this on production rules. Only `validate_shadow_arm` allows it.
+    #[serde(default)]
+    pub unconstrained: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -307,6 +315,11 @@ pub struct PositionSizeConfig {
     pub atr_baseline_pct: f64,
     pub atr_vol_scalar_min: f64,
     pub atr_vol_scalar_max: f64,
+    /// Cap position notional at this percent of 20-day average dollar volume.
+    /// None = off. Research arms use 1.0 so a $1M sleeve cannot pretend to
+    /// trade more than about 1% of ADV.
+    #[serde(default)]
+    pub max_pct_of_adv: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -408,6 +421,12 @@ pub struct ProfitTargetRecentRangeCapConfig {
     pub lookback_days: u32,
     /// Allow target this far above the recent high (e.g. 1.0 = 1% breakout room).
     pub max_extension_above_high_pct: f64,
+    /// Floor for the lookback-high ceiling. None keeps the historical clamp
+    /// (`max(pct, 0)`), which turns a name at/above its high into a 0% target
+    /// and a reward/risk rejection. Set (for example) `2.0` on a research arm
+    /// so the ceiling cannot collapse the target to zero.
+    #[serde(default)]
+    pub floor_pct: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -498,6 +517,17 @@ pub struct FilterConfig {
     pub symbol_groups: Vec<SymbolGroupConfig>,
     #[serde(default)]
     pub shuffle: EntryShuffleConfig,
+    /// `heuristic` (91-day estimate from last earnings) or `calendar`
+    /// (rules/earnings-calendar.json, heuristic fallback per symbol).
+    #[serde(default = "default_earnings_source")]
+    pub earnings_source: String,
+    /// Path relative to the rules file. Used when `earnings_source` is `calendar`.
+    #[serde(default)]
+    pub earnings_calendar_file: Option<String>,
+}
+
+fn default_earnings_source() -> String {
+    "heuristic".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -520,6 +550,10 @@ pub struct WatchlistsConfig {
     pub screened: WatchlistScreenedConfig,
     pub dynamic: bool,
     pub max_dynamic_symbols: u32,
+    /// When true, shadow scans union `candidate_pool_file` into the symbol list.
+    /// Production scans ignore this. Names absent from the tick tape are skipped.
+    #[serde(default)]
+    pub research_scan_pool: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -724,6 +758,29 @@ pub struct LlmConfig {
     pub prompts: LlmPrompts,
 }
 
+/// Premarket LLM signal. `mode` is consumed by shadow arms only.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LlmSignalConfig {
+    pub enabled: bool,
+    /// Pinned model id sent to OpenRouter.
+    pub model: String,
+    /// Second model, one sample, for a capability comparison. Empty = off.
+    pub compare_model: String,
+    /// Documented knowledge cutoff (YYYY-MM-DD). Logged on every decision.
+    /// Rows before this date are excluded by the IC evaluator.
+    pub knowledge_cutoff: String,
+    /// Named-bundle samples; the stored score is the median.
+    pub samples: u32,
+    pub max_symbols_per_day: u32,
+    pub temperature: f64,
+    /// Also score a ticker/date-blinded copy of each bundle.
+    pub blinded: bool,
+    /// off | log | skip_event | downsize_event | agent_veto | exit_event
+    /// Production never applies this. Shadow arms override it.
+    pub mode: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct LlmPrompts {
     #[serde(default)]
@@ -770,6 +827,7 @@ impl Default for CapitalConfig {
             min_cash_floor_usd: 500.0,
             options_risk: OptionsRiskConfig::default(),
             core_holdings: vec![],
+            unconstrained: false,
         }
     }
 }
@@ -882,6 +940,7 @@ impl Default for PositionSizeConfig {
             atr_baseline_pct: 2.0,
             atr_vol_scalar_min: 0.5,
             atr_vol_scalar_max: 1.5,
+            max_pct_of_adv: None,
         }
     }
 }
@@ -910,6 +969,7 @@ impl Default for ProfitTargetRecentRangeCapConfig {
             enabled: false,
             lookback_days: 60,
             max_extension_above_high_pct: 1.0,
+            floor_pct: None,
         }
     }
 }
@@ -994,6 +1054,8 @@ impl Default for FilterConfig {
             min_stop_atr_multiple: None,
             symbol_groups: vec![],
             shuffle: EntryShuffleConfig::default(),
+            earnings_source: default_earnings_source(),
+            earnings_calendar_file: None,
         }
     }
 }
@@ -1033,6 +1095,7 @@ impl Default for WatchlistsConfig {
             screened: WatchlistScreenedConfig::default(),
             dynamic: false,
             max_dynamic_symbols: 5,
+            research_scan_pool: false,
         }
     }
 }
@@ -1158,6 +1221,22 @@ impl Default for LlmConfig {
             adaptation_bounds: serde_json::json!({}),
             immutable_fields: vec![],
             prompts: LlmPrompts::default(),
+        }
+    }
+}
+
+impl Default for LlmSignalConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            model: "google/gemini-2.5-flash".into(),
+            compare_model: String::new(),
+            knowledge_cutoff: "2025-01-01".into(),
+            samples: 3,
+            max_symbols_per_day: 80,
+            temperature: 0.0,
+            blinded: true,
+            mode: "off".into(),
         }
     }
 }
@@ -1390,6 +1469,20 @@ impl TraderRules {
     }
 
     pub fn validate(&self) -> Result<()> {
+        self.validate_inner(false)
+    }
+
+    /// Shadow arms may set `capital.unconstrained`. Production rules may not.
+    pub fn validate_shadow_arm(&self) -> Result<()> {
+        self.validate_inner(true)
+    }
+
+    fn validate_inner(&self, shadow_arm: bool) -> Result<()> {
+        if self.capital.unconstrained && !shadow_arm {
+            anyhow::bail!(
+                "capital.unconstrained is shadow-arm only and is rejected on production rules"
+            );
+        }
         anyhow::ensure!(
             self.version == RULES_VERSION,
             "Unsupported rules version {} (expected {RULES_VERSION})",
@@ -1674,6 +1767,7 @@ impl Default for TraderRules {
             risk: RiskConfig::default(),
             execution: ExecutionConfig::default(),
             llm: LlmConfig::default(),
+            llm_signal: LlmSignalConfig::default(),
             notify: NotifyConfig::default(),
             simulation: None,
             adaptation: AdaptationConfig::default(),
@@ -1698,6 +1792,27 @@ pub fn validate_rules_file(path: &Path) -> Result<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn valid_shell() -> TraderRules {
+        let mut rules = TraderRules::default();
+        rules.version = RULES_VERSION;
+        rules.trader_id = "t".into();
+        rules.accounts = vec![TraderAccount {
+            hash: "abc".into(),
+            label: None,
+            r#type: AccountType::Margin,
+            enabled: true,
+        }];
+        rules
+    }
+
+    #[test]
+    fn production_rejects_unconstrained_shadow_allows_it() {
+        let mut rules = valid_shell();
+        rules.capital.unconstrained = true;
+        assert!(rules.validate().is_err());
+        assert!(rules.validate_shadow_arm().is_ok());
+    }
 
     #[test]
     fn flatten_hint_when_overnight_holds_allowed() {

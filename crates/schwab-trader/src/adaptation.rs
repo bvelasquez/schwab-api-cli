@@ -55,6 +55,12 @@ pub struct ProfileTrailingOverrides {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProfileEntryOverrides {
     pub rsi_14_range: Option<[f64; 2]>,
+    /// Replaces `require_above_sma` for this profile. None leaves the base gate.
+    #[serde(default)]
+    pub require_above_sma: Option<Vec<u32>>,
+    /// Replaces `require_below_sma` for this profile. None leaves the base gate.
+    #[serde(default)]
+    pub require_below_sma: Option<Vec<u32>>,
     pub max_new_entries_per_day: Option<u32>,
     #[serde(default)]
     pub position_size: Option<ProfilePositionSizeOverrides>,
@@ -120,6 +126,12 @@ pub fn apply_profile_overrides(
     if let Some(entry) = &overrides.entry {
         if let Some(v) = entry.rsi_14_range {
             pb.entry.rsi_14_range = v;
+        }
+        if let Some(v) = &entry.require_above_sma {
+            pb.entry.require_above_sma = v.clone();
+        }
+        if let Some(v) = &entry.require_below_sma {
+            pb.entry.require_below_sma = v.clone();
         }
         if let Some(v) = entry.max_new_entries_per_day {
             pb.entry.max_new_entries_per_day = v;

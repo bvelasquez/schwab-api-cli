@@ -42,6 +42,20 @@ async fn run() -> Result<()> {
         Some(Commands::Agent { command }) => {
             schwab_trader::commands::agent_cmd::run(&runtime, command).await
         }
+        Some(Commands::Dashboard {
+            rules_file,
+            options_rules,
+            bind,
+        }) => {
+            let paths = schwab_trader::dashboard::DashboardPaths {
+                swing: resolve_rules(rules_file, "rules/trader-swing-9947.yaml"),
+                options: resolve_rules(options_rules, "rules/options-pilot-8709.yaml"),
+            };
+            if paths.swing.is_empty() && paths.options.is_empty() {
+                anyhow::bail!("no rules files found; pass --rules-file and/or --options-rules");
+            }
+            schwab_trader::dashboard::serve(&bind, paths)
+        }
         Some(Commands::Watch {
             rules_file,
             monitor_only,
@@ -53,6 +67,16 @@ async fn run() -> Result<()> {
         }
         Some(Commands::Shadow { command }) => {
             schwab_trader::commands::shadow_cmd::run(&runtime, command).await
+        }
+        Some(Commands::LlmSignal { rules_file }) => {
+            let summary = schwab_trader::agent::llm_signal::run_signal_batch(&rules_file).await?;
+            println!("{summary}");
+            Ok(())
+        }
+        Some(Commands::LlmAgent { rules_file }) => {
+            let summary = schwab_trader::agent::llm_signal::run_agent_batch(&rules_file).await?;
+            println!("{summary}");
+            Ok(())
         }
         Some(Commands::Backtest { command }) => {
             schwab_trader::commands::backtest_cmd::run(&runtime, command).await
@@ -67,6 +91,18 @@ async fn run() -> Result<()> {
             eprintln!("schwab-trader — equity swing agent. Run with --help.");
             Ok(())
         }
+    }
+}
+
+fn resolve_rules(given: Vec<std::path::PathBuf>, default_rel: &str) -> Vec<std::path::PathBuf> {
+    if !given.is_empty() {
+        return given;
+    }
+    let path = std::path::PathBuf::from(default_rel);
+    if path.is_file() {
+        vec![path]
+    } else {
+        Vec::new()
     }
 }
 

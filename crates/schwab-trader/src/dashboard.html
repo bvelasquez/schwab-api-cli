@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paper books</title>
+<style>
+  :root {
+    --bg: #12140f;
+    --card: #1b1e16;
+    --line: #313628;
+    --text: #e7e4d8;
+    --muted: #9a9586;
+    --amber: #e2b15a;
+    --up: #8fceab;
+    --down: #e08b7a;
+    --stale: #e2b15a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.45 ui-sans-serif, system-ui, sans-serif;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: baseline;
+    padding: 18px 22px 8px;
+  }
+  h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: 0.01em; }
+  h1 span { color: var(--amber); font-weight: 500; }
+  .meta { color: var(--muted); font-size: 12px; }
+  main { padding: 8px 22px 40px; display: grid; gap: 16px; }
+  .book {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 16px 16px;
+  }
+  .book.head-row, .row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+  .title { font-size: 16px; font-weight: 600; }
+  .badge {
+    display: inline-block;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 1px 8px;
+    color: var(--amber);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .badge.stale { color: var(--stale); border-color: var(--stale); }
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px;
+    margin: 12px 0;
+  }
+  .metric { background: #14160f; border-radius: 8px; padding: 8px 10px; }
+  .metric .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .metric .v { font-variant-numeric: tabular-nums; font-size: 16px; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 14px 6px 0; border-bottom: 1px solid var(--line); vertical-align: top; white-space: nowrap; }
+  th { color: var(--muted); font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; }
+  td.num, th.num { text-align: right; }
+  .up { color: var(--up); }
+  .down { color: var(--down); }
+  h2 { font-size: 13px; margin: 16px 0 6px; color: var(--muted); font-weight: 600; }
+  .halt { color: var(--down); margin: 8px 0 0; }
+  .empty { color: var(--muted); }
+  .journal { font-size: 12px; }
+  .err { color: var(--down); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Paper books <span>read only</span></h1>
+  <div class="meta" id="updated">loading…</div>
+</header>
+<main id="books"></main>
+<script>
+const books = document.getElementById("books");
+const updated = document.getElementById("updated");
+
+function usd(n) {
+  if (n == null || Number.isNaN(n)) return "—";
+  const sign = n < 0 ? "-" : "";
+  return sign + "$" + Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+function usd2(n) {
+  if (n == null || Number.isNaN(n)) return "—";
+  const sign = n < 0 ? "-" : "";
+  return sign + "$" + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function pct(n) {
+  if (n == null || Number.isNaN(n)) return "—";
+  return (n >= 0 ? "+" : "") + n.toFixed(1) + "%";
+}
+function cls(n) { return n > 0 ? "up" : n < 0 ? "down" : ""; }
+function ago(iso) {
+  if (!iso) return "no tick yet";
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 90) return Math.round(s) + "s ago";
+  if (s < 3600) return Math.round(s / 60) + "m ago";
+  return Math.round(s / 3600) + "h ago";
+}
+function stale(iso) {
+  if (!iso) return true;
+  return (Date.now() - new Date(iso).getTime()) > 180000;
+}
+function el(tag, attrs, text) {
+  const node = document.createElement(tag);
+  if (attrs) {
+    if (attrs.className) node.className = attrs.className;
+  }
+  if (text != null) node.textContent = text;
+  return node;
+}
+function metric(k, v, klass) {
+  const box = el("div", { className: "metric" });
+  box.appendChild(el("div", { className: "k" }, k));
+  box.appendChild(el("div", { className: "v " + (klass || "") }, v));
+  return box;
+}
+function table(headers, rows) {
+  const t = document.createElement("table");
+  const thead = document.createElement("thead");
+  const hr = document.createElement("tr");
+  headers.forEach((h) => {
+    const th = el("th", { className: h.num ? "num" : "" }, h.label);
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);
+  t.appendChild(thead);
+  const tb = document.createElement("tbody");
+  if (!rows.length) {
+    const tr = document.createElement("tr");
+    const td = el("td", { className: "empty" }, "none");
+    td.colSpan = headers.length;
+    tr.appendChild(td);
+    tb.appendChild(tr);
+  }
+  rows.forEach((cells) => {
+    const tr = document.createElement("tr");
+    cells.forEach((c, i) => {
+      const td = el("td", { className: (headers[i].num ? "num " : "") + (c.cls || "") }, c.text);
+      tr.appendChild(td);
+    });
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);
+  return t;
+}
+function cell(text, klass) { return { text: text == null || text === "" ? "—" : String(text), cls: klass || "" }; }
+
+function renderBook(book) {
+  const card = el("section", { className: "book" });
+  const head = el("div", { className: "row" });
+  const title = el("div", { className: "title" });
+  title.appendChild(document.createTextNode((book.kind === "options" ? "Options" : "Swing") + " · " + (book.name || book.rules_file)));
+  title.appendChild(document.createTextNode(" "));
+  title.appendChild(el("span", { className: "badge" }, "paper"));
+  if (stale(book.last_tick)) {
+    title.appendChild(document.createTextNode(" "));
+    title.appendChild(el("span", { className: "badge stale" }, "stale"));
+  }
+  head.appendChild(title);
+  const bits = [
+    ago(book.last_tick),
+    book.session || "",
+    book.tick_count != null ? "tick " + book.tick_count : "",
+    book.profile || ""
+  ].filter(Boolean).join(" · ");
+  head.appendChild(el("div", { className: "meta" }, bits));
+  card.appendChild(head);
+  if (book.error) {
+    card.appendChild(el("p", { className: "err" }, book.error));
+    return card;
+  }
+  if (book.halted) card.appendChild(el("p", { className: "halt" }, "Halted: " + book.halted));
+  const metrics = el("div", { className: "metrics" });
+  metrics.appendChild(metric("Equity", usd(book.equity_usd)));
+  metrics.appendChild(metric("Cash", usd(book.cash_usd)));
+  metrics.appendChild(metric("Realized", usd2(book.realized_pnl_usd), cls(book.realized_pnl_usd)));
+  metrics.appendChild(metric("Win rate", book.closed_count ? (book.win_rate_pct.toFixed(1) + "%") : "—"));
+  metrics.appendChild(metric("Open", String(book.open_count ?? 0)));
+  metrics.appendChild(metric("Closed", String(book.closed_count ?? 0)));
+  if (book.sleeve_cap_usd) metrics.appendChild(metric("Sleeve", usd(book.sleeve_cap_usd)));
+  if (book.deployed_pct != null) metrics.appendChild(metric("Deployed", book.deployed_pct.toFixed(0) + "%"));
+  card.appendChild(metrics);
+
+  card.appendChild(el("h2", null, "Open positions"));
+  if (book.kind === "options") {
+    card.appendChild(table(
+      [{label:"Underlying"},{label:"Strategy"},{label:"Expiry"},{label:"Contracts", num:true},{label:"Credit", num:true},{label:"Max loss", num:true}],
+      (book.positions || []).map((p) => [
+        cell(p.underlying), cell(p.strategy), cell(p.expiry),
+        cell(p.contracts), cell(p.entry_credit != null ? p.entry_credit.toFixed(2) : null),
+        cell(usd2(p.max_loss_usd), "down")
+      ])
+    ));
+  } else {
+    card.appendChild(table(
+      [{label:"Symbol"},{label:"Qty", num:true},{label:"Entry", num:true},{label:"Stop", num:true},{label:"Target", num:true},{label:"Value", num:true},{label:"Unrealized", num:true}],
+      (book.positions || []).map((p) => [
+        cell(p.symbol), cell(p.quantity), cell(p.entry_price != null ? p.entry_price.toFixed(2) : null),
+        cell(p.stop_price != null ? p.stop_price.toFixed(2) : null),
+        cell(p.profit_limit != null ? p.profit_limit.toFixed(2) : null),
+        cell(usd2(p.market_value_usd)),
+        cell(pct(p.unrealized_pct), cls(p.unrealized_pct))
+      ])
+    ));
+  }
+
+  card.appendChild(el("h2", null, "Recent closes"));
+  card.appendChild(table(
+    [{label:"When"},{label:"Symbol"},{label:"P&L", num:true},{label:"%", num:true},{label:"Reason"},{label:"Days", num:true}],
+    (book.recent_closes || []).map((t) => [
+      cell(t.closed_at ? new Date(t.closed_at).toLocaleString() : null),
+      cell(t.symbol || t.underlying),
+      cell(usd2(t.pnl_usd), cls(t.pnl_usd)),
+      cell(pct(t.pnl_pct), cls(t.pnl_pct)),
+      cell(t.exit_reason),
+      cell(t.hold_days)
+    ])
+  ));
+
+  card.appendChild(el("h2", null, "Recent journal"));
+  const j = el("div", { className: "journal" });
+  const events = book.journal || [];
+  if (!events.length) j.appendChild(el("div", { className: "empty" }, "none"));
+  events.forEach((ev) => {
+    const line = el("div");
+    const when = ev.ts ? new Date(ev.ts).toLocaleTimeString() : "";
+    line.appendChild(el("span", { className: "meta" }, when + "  "));
+    line.appendChild(document.createTextNode((ev.type || "") + (ev.detail ? " — " + ev.detail : "")));
+    j.appendChild(line);
+  });
+  card.appendChild(j);
+
+  if (book.shadows) {
+    card.appendChild(el("h2", null, "Shadow arms"));
+    card.appendChild(table(
+      [{label:"Arm"},{label:"Start", num:true},{label:"Equity", num:true},{label:"Open", num:true},{label:"Closed", num:true},{label:"Win", num:true},{label:"Realized", num:true},{label:"Tick"}],
+      book.shadows.map((s) => [
+        cell(s.id), cell(usd(s.starting_cash_usd)), cell(usd(s.equity_usd)),
+        cell(s.open_count), cell(s.closed_count),
+        cell(s.closed_count ? s.win_rate_pct.toFixed(0) + "%" : "—"),
+        cell(usd2(s.realized_pnl_usd), cls(s.realized_pnl_usd)),
+        cell(s.last_tick ? ago(s.last_tick) : "waiting")
+      ])
+    ));
+  }
+  return card;
+}
+
+async function refresh() {
+  try {
+    const res = await fetch("/api/status", { cache: "no-store" });
+    const data = await res.json();
+    updated.textContent = "Updated " + new Date(data.generated_at).toLocaleTimeString() + " · refreshes every 5s";
+    books.replaceChildren(...(data.books || []).map(renderBook));
+  } catch (err) {
+    updated.textContent = "Refresh failed: " + err;
+  }
+}
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

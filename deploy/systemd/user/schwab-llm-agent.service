@@ -1,0 +1,15 @@
+# Bounded analyst over names the rules already admitted.
+# No-ops when llm_signal.enabled is false. Does not place orders.
+
+[Unit]
+Description=Schwab bounded LLM analyst batch
+After=schwab-llm-signal.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/schwabinvestbot
+EnvironmentFile=-%h/.config/environment.d/schwab-paper.conf
+ExecStart=%h/.cargo/bin/schwab-trader llm-agent rules/trader-swing-9947.yaml
+
+[Install]
+WantedBy=default.target

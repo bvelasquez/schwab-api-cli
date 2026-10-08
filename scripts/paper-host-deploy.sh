@@ -52,12 +52,26 @@ cp -f deploy/systemd/user/schwab-scorecard.service "$unit_dir/"
 cp -f deploy/systemd/user/schwab-scorecard.timer "$unit_dir/"
 cp -f deploy/systemd/user/schwab-chain-snapshot.service "$unit_dir/"
 cp -f deploy/systemd/user/schwab-chain-snapshot.timer "$unit_dir/"
+cp -f deploy/systemd/user/schwab-outcomes.service "$unit_dir/"
+cp -f deploy/systemd/user/schwab-outcomes.timer "$unit_dir/"
+cp -f deploy/systemd/user/schwab-llm-signal.service "$unit_dir/"
+cp -f deploy/systemd/user/schwab-llm-signal.timer "$unit_dir/"
+cp -f deploy/systemd/user/schwab-llm-agent.service "$unit_dir/"
+cp -f deploy/systemd/user/schwab-llm-agent.timer "$unit_dir/"
+cp -f deploy/systemd/user/schwab-research-agent.service "$unit_dir/"
+cp -f deploy/systemd/user/schwab-research-agent.timer "$unit_dir/"
+cp -f deploy/systemd/user/schwab-earnings-calendar.service "$unit_dir/"
+cp -f deploy/systemd/user/schwab-earnings-calendar.timer "$unit_dir/"
+cp -f deploy/systemd/user/schwab-dashboard.service "$unit_dir/"
 
 chmod +x scripts/paper-host-watchdog.sh
 
 systemctl --user daemon-reload
 systemctl --user enable schwab-options.service schwab-swing.service
-systemctl --user enable --now schwab-bot-watchdog.timer schwab-scorecard.timer schwab-chain-snapshot.timer
+systemctl --user enable --now schwab-bot-watchdog.timer schwab-scorecard.timer schwab-chain-snapshot.timer \
+  schwab-outcomes.timer schwab-llm-signal.timer schwab-llm-agent.timer \
+  schwab-research-agent.timer schwab-earnings-calendar.timer
+systemctl --user enable --now schwab-dashboard.service
 systemctl --user restart schwab-options.service schwab-swing.service
 
 echo "==> versions"

@@ -114,24 +114,40 @@ pub async fn fetch_technical_snapshot_with_benchmark(
         ));
     }
     if rules.playbook.filters.no_trade_before_earnings_days > 0 {
-        enrich_earnings_estimate(market, &mut snap).await;
+        enrich_earnings_estimate(market, rules, &mut snap).await;
     }
     Ok(snap)
 }
 
-async fn enrich_earnings_estimate(market: &MarketCtx, snap: &mut TechnicalSnapshot) {
-    let Ok(fundamental) = market.quote_fundamental(&snap.symbol).await else {
-        return;
-    };
-    let Some(last) = crate::earnings::parse_last_earnings_date(&fundamental) else {
-        return;
-    };
+async fn enrich_earnings_estimate(
+    market: &MarketCtx,
+    rules: &crate::rules::TraderRules,
+    snap: &mut TechnicalSnapshot,
+) {
+    let fundamental = market.quote_fundamental(&snap.symbol).await.ok();
+    let last = fundamental
+        .as_ref()
+        .and_then(crate::earnings::parse_last_earnings_date);
     let today = match market {
         MarketCtx::Replay { as_of, .. } => as_of.date_naive(),
         MarketCtx::Live { .. } | MarketCtx::Tape { .. } => crate::earnings::today_et_naive(),
     };
-    let est = crate::earnings::estimate_next_earnings(last, today);
-    snap.last_earnings_date = Some(est.last_earnings_date.to_string());
+    let calendar_next = if rules.playbook.filters.earnings_source == "calendar" {
+        crate::earnings::calendar_next(&snap.symbol, rules.playbook.filters.earnings_calendar_file.as_deref())
+    } else {
+        None
+    };
+    let Some(est) = crate::earnings::resolve_next_earnings(
+        last,
+        calendar_next,
+        today,
+        &rules.playbook.filters.earnings_source,
+    ) else {
+        return;
+    };
+    if last.is_some() {
+        snap.last_earnings_date = Some(est.last_earnings_date.to_string());
+    }
     snap.estimated_next_earnings = Some(est.estimated_next_earnings.to_string());
     snap.days_until_estimated_earnings = Some(est.days_until_estimated);
     snap.earnings_estimate_confidence = Some(est.confidence.to_string());
@@ -515,6 +531,14 @@ pub fn reason_code(reason: &str) -> &'static str {
         "low_price"
     } else if reason.contains("not fetched by production tick") {
         "not_in_production_tape"
+    } else if reason.contains("API error")
+        || reason.contains("HTTP 401")
+        || reason.contains("HTTP 429")
+        || reason.contains("HTTP 500")
+        || reason.contains("error sending request")
+    {
+        // A data outage is not a gate decision. The outcome labeler skips these.
+        "data_unavailable"
     } else {
         "other"
     }
@@ -754,6 +778,7 @@ mod tests {
     #[test]
     fn reason_code_classifies_each_known_reason() {
         let cases: &[(&str, &str)] = &[
+            ("API error 401 unauthorized", "data_unavailable"),
             ("already_open", "already_open"),
             ("blocked_symbol", "blocked_symbol"),
             ("symbol_group_cap: semis has 2/2 open", "symbol_group_cap"),

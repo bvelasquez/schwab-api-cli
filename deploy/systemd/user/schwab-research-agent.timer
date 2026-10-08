@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the nightly research agent and promotion gate
+
+[Timer]
+OnCalendar=Mon..Fri 17:05 America/New_York
+Persistent=true
+Unit=schwab-research-agent.service
+
+[Install]
+WantedBy=timers.target

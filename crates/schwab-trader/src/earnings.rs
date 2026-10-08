@@ -74,6 +74,38 @@ pub fn today_et_naive() -> NaiveDate {
     Utc::now().date_naive()
 }
 
+/// Calendar date wins when `source` is `calendar` and a date is present.
+/// Otherwise the 91-day heuristic from `last`. None when both are missing.
+pub fn resolve_next_earnings(
+    last: Option<NaiveDate>,
+    calendar_next: Option<NaiveDate>,
+    today: NaiveDate,
+    source: &str,
+) -> Option<EarningsEstimate> {
+    if source == "calendar" {
+        if let Some(next) = calendar_next {
+            return Some(EarningsEstimate {
+                last_earnings_date: last.unwrap_or(next),
+                estimated_next_earnings: next,
+                days_until_estimated: (next - today).num_days(),
+                confidence: "calendar",
+            });
+        }
+    }
+    last.map(|d| estimate_next_earnings(d, today))
+}
+
+/// `rules/earnings-calendar.json`: `{ "AAPL": "2026-10-30", ... }`.
+/// Missing file or symbol returns None (caller falls back to the heuristic).
+pub fn calendar_next(symbol: &str, rel: Option<&str>) -> Option<NaiveDate> {
+    let rel = rel.unwrap_or("earnings-calendar.json");
+    let path = std::path::Path::new(rel);
+    let raw = std::fs::read_to_string(path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let date = value.get(symbol.trim().to_uppercase())?.as_str()?;
+    NaiveDate::parse_from_str(&date[..10.min(date.len())], "%Y-%m-%d").ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,5 +133,18 @@ mod tests {
         assert_eq!(est.days_until_estimated, 6);
         assert!(earnings_blackout_reason(&est, 2).is_none());
         assert!(earnings_blackout_reason(&est, 7).is_some());
+    }
+
+    #[test]
+    fn calendar_date_beats_the_91_day_heuristic() {
+        let last = NaiveDate::from_ymd_opt(2026, 4, 30).unwrap();
+        let today = NaiveDate::from_ymd_opt(2026, 7, 24).unwrap();
+        let announced = NaiveDate::from_ymd_opt(2026, 8, 15).unwrap();
+        let est = resolve_next_earnings(Some(last), Some(announced), today, "calendar").unwrap();
+        assert_eq!(est.estimated_next_earnings, announced);
+        assert_eq!(est.confidence, "calendar");
+        assert_eq!(est.days_until_estimated, 22);
+        let fallback = resolve_next_earnings(Some(last), None, today, "calendar").unwrap();
+        assert_eq!(fallback.confidence, "heuristic");
     }
 }

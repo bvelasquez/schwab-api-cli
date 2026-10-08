@@ -12,6 +12,7 @@ pub mod regime;
 pub mod cli;
 pub mod commands;
 pub mod config;
+pub mod dashboard;
 pub mod entry;
 pub mod earnings;
 pub mod fmp;

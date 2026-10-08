@@ -43,6 +43,17 @@ pub async fn run_scan_inner(
     rules_path: Option<&Path>,
 ) -> Result<Value> {
     let mut symbols = rules.all_watchlist_symbols();
+    if rules.watchlists.research_scan_pool {
+        if let Some(path) = rules_path {
+            if let Ok(pool) = rules.candidate_pool_symbols(path) {
+                for s in pool {
+                    if !symbols.contains(&s) {
+                        symbols.push(s);
+                    }
+                }
+            }
+        }
+    }
     for s in &state.dynamic_watchlist {
         let u = s.trim().to_uppercase();
         if !u.is_empty() && !symbols.contains(&u) {
