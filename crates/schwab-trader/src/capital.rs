@@ -138,11 +138,9 @@ fn build_capital_check(
     let sibling_deployed = rules_path
         .map(|p| crate::risk::sibling_sleeve_deployed(p, rules))
         .unwrap_or(0.0);
-    let cap_remaining = (rules.capital.fixed_sleeve_cap_usd
-        - equity_deployed
-        - pending_buy
-        - sibling_deployed)
-        .max(0.0);
+    let cap_remaining =
+        (rules.capital.fixed_sleeve_cap_usd - equity_deployed - pending_buy - sibling_deployed)
+            .max(0.0);
 
     let tradable_budget = if simulate {
         state
@@ -222,6 +220,28 @@ fn build_capital_check(
     }
 
     check
+}
+
+/// Shadow research arms set `capital.unconstrained` so a full sleeve or a
+/// zero cash floor cannot block an admitted setup. Drawdown halts still bind.
+/// Production never calls this: `validate()` rejects the flag there.
+pub fn relax_unconstrained_budget(rules: &TraderRules, check: &mut CapitalCheck) {
+    if !rules.capital.unconstrained {
+        return;
+    }
+    if check
+        .reject_reason
+        .as_deref()
+        .is_some_and(|r| r.starts_with("drawdown halt"))
+    {
+        return;
+    }
+    check.passed = true;
+    check.reject_reason = None;
+    let floor = rules.capital.fixed_sleeve_cap_usd.max(1.0);
+    if check.tradable_budget_usd < floor {
+        check.tradable_budget_usd = floor;
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -347,7 +367,9 @@ pub fn exit_geometry(
         .filter(|a| *a > 0.0 && entry_price > 0.0)
         .map(|atr| (atr / entry_price) * 100.0);
 
-    let atr_cap_pct = atr_pct.filter(|_| atr_cap_cfg.enabled).map(|p| atr_cap_cfg.atr_multiple * p);
+    let atr_cap_pct = atr_pct
+        .filter(|_| atr_cap_cfg.enabled)
+        .map(|p| atr_cap_cfg.atr_multiple * p);
     let horizon_cap_pct = atr_pct.filter(|_| horizon_cfg.enabled).map(|p| {
         let days = rules.playbook.holding_period.target_days.max(1) as f64;
         horizon_cfg.sqrt_days_multiple * p * days.sqrt()
@@ -362,7 +384,16 @@ pub fn exit_geometry(
                     let ceil = high * (1.0 + range_cfg.max_extension_above_high_pct / 100.0);
                     ((ceil / entry_price) - 1.0) * 100.0
                 })
-                .map(|pct| pct.max(0.0));
+                .map(|pct| {
+                    if pct <= 0.0 && range_cfg.skip_nonpositive_ceiling {
+                        None
+                    } else if pct <= 0.0 {
+                        Some(0.0)
+                    } else {
+                        Some(pct)
+                    }
+                })
+                .flatten();
             let width = match (range.recent_high, range.recent_low) {
                 (Some(h), Some(l)) if h > 0.0 && l > 0.0 && h >= l => {
                     Some(((h - l) / entry_price) * 100.0)
@@ -612,7 +643,11 @@ mod tests {
         rules.playbook.exit.profit_target_atr_cap.enabled = true;
         rules.playbook.exit.profit_target_atr_cap.atr_multiple = 5.0; // 5×2% = 10% > base
         rules.playbook.exit.profit_target_horizon_cap.enabled = true;
-        rules.playbook.exit.profit_target_horizon_cap.sqrt_days_multiple = 1.0;
+        rules
+            .playbook
+            .exit
+            .profit_target_horizon_cap
+            .sqrt_days_multiple = 1.0;
         // ATR 2% → horizon = 1.0 × 2% × 2 = 4% < 8%
         let (profit, _, _) = exit_prices(100.0, &rules, Some(2.0), ExitRangeContext::none());
         assert!((profit - 104.0).abs() < 0.01);
@@ -631,7 +666,11 @@ mod tests {
         rules.playbook.exit.profit_target_atr_cap.enabled = true;
         rules.playbook.exit.profit_target_atr_cap.atr_multiple = 2.5; // 3.75%
         rules.playbook.exit.profit_target_horizon_cap.enabled = true;
-        rules.playbook.exit.profit_target_horizon_cap.sqrt_days_multiple = 1.0;
+        rules
+            .playbook
+            .exit
+            .profit_target_horizon_cap
+            .sqrt_days_multiple = 1.0;
         // ATR 1.5% → atr cap 3.75%, horizon ≈ 4.74% → atr wins
         let g = exit_geometry(100.0, &rules, Some(1.5), ExitRangeContext::none());
         assert!((g.effective_target_pct - 3.75).abs() < 0.01);
@@ -651,7 +690,11 @@ mod tests {
         rules.playbook.exit.profit_target_atr_cap.enabled = true;
         rules.playbook.exit.profit_target_atr_cap.atr_multiple = 5.0; // loose
         rules.playbook.exit.profit_target_recent_range_cap.enabled = true;
-        rules.playbook.exit.profit_target_recent_range_cap.lookback_days = 60;
+        rules
+            .playbook
+            .exit
+            .profit_target_recent_range_cap
+            .lookback_days = 60;
         rules
             .playbook
             .exit
@@ -682,13 +725,17 @@ mod tests {
         };
         rules.playbook.exit.profit_target_pct = 8.0;
         rules.playbook.exit.profit_target_recent_range_cap.enabled = true;
-        rules.playbook.exit.profit_target_recent_range_cap.lookback_days = 60;
+        rules
+            .playbook
+            .exit
+            .profit_target_recent_range_cap
+            .lookback_days = 60;
         rules
             .playbook
             .exit
             .profit_target_recent_range_cap
             .max_extension_above_high_pct = 5.0; // loose ceiling
-        // high 104 / low 101 → width 3% < ceiling (~9%) and < fixed 8%
+                                                 // high 104 / low 101 → width 3% < ceiling (~9%) and < fixed 8%
         let g = exit_geometry(
             100.0,
             &rules,
@@ -700,7 +747,9 @@ mod tests {
         );
         assert!((g.effective_target_pct - 3.0).abs() < 0.01);
         assert_eq!(g.target_binding, "recent_range");
-        assert!(g.range_width_cap_pct.is_some_and(|w| (w - 3.0).abs() < 0.01));
+        assert!(g
+            .range_width_cap_pct
+            .is_some_and(|w| (w - 3.0).abs() < 0.01));
     }
 
     #[test]
@@ -733,6 +782,77 @@ mod tests {
     }
 
     #[test]
+    fn nonpositive_range_ceiling_is_ignored_when_the_arm_asks() {
+        let mut rules = TraderRules {
+            version: 1,
+            trader_id: "t".into(),
+            accounts: vec![],
+            ..TraderRules::default()
+        };
+        rules.playbook.exit.profit_target_pct = 7.5;
+        rules.playbook.exit.profit_target_recent_range_cap.enabled = true;
+        rules
+            .playbook
+            .exit
+            .profit_target_recent_range_cap
+            .skip_nonpositive_ceiling = true;
+        let g = exit_geometry(
+            100.0,
+            &rules,
+            None,
+            ExitRangeContext {
+                recent_high: Some(99.0),
+                recent_low: Some(80.0),
+            },
+        );
+        assert!(
+            g.effective_target_pct > 1.0,
+            "got {}",
+            g.effective_target_pct
+        );
+        assert_ne!(g.target_binding, "recent_range");
+    }
+
+    #[test]
+    fn unconstrained_budget_clears_a_zero_sleeve_but_not_a_drawdown_halt() {
+        let mut rules = TraderRules::default();
+        rules.capital.unconstrained = true;
+        rules.capital.fixed_sleeve_cap_usd = 1_000_000.0;
+        let mut check = CapitalCheck {
+            cash_available: 0.0,
+            options_reserved_usd: 0.0,
+            options_buffer_usd: 0.0,
+            options_reserve_source: "simulation".into(),
+            min_cash_floor_usd: 0.0,
+            free_cash_usd: 0.0,
+            max_pct_of_free_cash: 100.0,
+            pct_budget_usd: 0.0,
+            fixed_cap_usd: 1_000_000.0,
+            equity_deployed_usd: 1_000_000.0,
+            pending_buy_usd: 0.0,
+            cap_remaining_usd: 0.0,
+            tradable_budget_usd: 0.0,
+            estimated_cost_usd: None,
+            stop_risk_usd: None,
+            open_equity_risk_usd: 0.0,
+            sibling_deployed_usd: 0.0,
+            portfolio_heat_pct: 0.0,
+            heat_headroom_pct: 0.0,
+            heat_ceiling_pct: 12.0,
+            positions_open: 40,
+            passed: false,
+            reject_reason: Some("tradable_budget is zero".into()),
+        };
+        relax_unconstrained_budget(&rules, &mut check);
+        assert!(check.passed);
+        assert!(check.tradable_budget_usd >= 1_000_000.0);
+        check.passed = false;
+        check.reject_reason = Some("drawdown halt 26%".into());
+        relax_unconstrained_budget(&rules, &mut check);
+        assert!(!check.passed);
+    }
+
+    #[test]
     fn format_exit_geometry_brief_includes_binding() {
         let mut rules = TraderRules {
             version: 1,
@@ -743,7 +863,11 @@ mod tests {
         rules.playbook.holding_period.target_days = 4;
         rules.playbook.exit.profit_target_pct = 8.0;
         rules.playbook.exit.profit_target_horizon_cap.enabled = true;
-        rules.playbook.exit.profit_target_horizon_cap.sqrt_days_multiple = 1.0;
+        rules
+            .playbook
+            .exit
+            .profit_target_horizon_cap
+            .sqrt_days_multiple = 1.0;
         let g = exit_geometry(100.0, &rules, Some(2.0), ExitRangeContext::none());
         let s = format_exit_geometry_brief(&g);
         assert!(s.contains("ATR 2.0%"), "{s}");

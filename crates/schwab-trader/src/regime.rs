@@ -153,7 +153,7 @@ async fn fetch_vix(market: &MarketCtx, symbol: &str) -> Result<f64> {
     }
 }
 
-fn sma(values: &[f64], period: usize) -> Option<f64> {
+pub(crate) fn sma(values: &[f64], period: usize) -> Option<f64> {
     if values.len() < period || period == 0 {
         return None;
     }
@@ -178,15 +178,11 @@ fn realized_vol_annualized_pct(closes: &[f64], lookback: usize) -> f64 {
         return 0.0;
     }
     let mean = returns.iter().sum::<f64>() / returns.len() as f64;
-    let var = returns
-        .iter()
-        .map(|r| (r - mean).powi(2))
-        .sum::<f64>()
-        / returns.len() as f64;
+    let var = returns.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / returns.len() as f64;
     (var.sqrt() * (252.0_f64).sqrt()) * 100.0
 }
 
-fn realized_vol_percentile(closes: &[f64], lookback: usize, history: usize) -> f64 {
+pub(crate) fn realized_vol_percentile(closes: &[f64], lookback: usize, history: usize) -> f64 {
     if closes.len() <= lookback + 2 {
         return 50.0;
     }

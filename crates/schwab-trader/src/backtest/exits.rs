@@ -12,7 +12,7 @@ use crate::closure::{exit_reason_for_position_at, has_working_broker_oco};
 use crate::journal;
 use crate::market_ctx::MarketCtx;
 use crate::rules::TraderRules;
-use crate::sim::{ensure_ledger, sim_fill_price, snapshot_equity_at};
+use crate::sim::{ensure_ledger, sim_fill_price_for_rules, snapshot_equity_at};
 use crate::technical::fetch_technical_snapshot;
 
 pub fn exit_reason_for_bar(
@@ -74,7 +74,12 @@ pub async fn process_backtest_trailing(
             "last": last,
         });
         updates.push(event.clone());
-        journal::append_backtest_event(rules_path, market.as_of(), "sim_trailing_stop_updated", event)?;
+        journal::append_backtest_event(
+            rules_path,
+            market.as_of(),
+            "sim_trailing_stop_updated",
+            event,
+        )?;
     }
     if !updates.is_empty() {
         save_backtest_state(rules_path, state)?;
@@ -105,7 +110,9 @@ pub async fn process_backtest_exits(
     let mut exits = Vec::new();
 
     for pos in positions {
-        if pos.opened_at.with_timezone(&crate::market_session::trading_tz(&rules.schedule.timezone))
+        if pos
+            .opened_at
+            .with_timezone(&crate::market_session::trading_tz(&rules.schedule.timezone))
             .date_naive()
             >= day
         {
@@ -153,7 +160,7 @@ pub async fn process_backtest_exits(
             continue;
         };
 
-        let exit_price = sim_fill_price(reason, &pos, bar.close);
+        let exit_price = sim_fill_price_for_rules(rules, reason, &pos, bar.close);
         let proceeds = pos.quantity * exit_price;
         let pnl = proceeds - (pos.quantity * pos.entry_price);
         let pnl_pct = if pos.entry_price > 0.0 {

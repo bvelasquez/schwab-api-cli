@@ -284,8 +284,7 @@ fn filter_movers(rows: Vec<FmpMover>, opts: &DiscoverOptions) -> Vec<FmpMover> {
 
 pub fn write_discovered_pool(path: &Path, symbols: &[String], label: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create {}", parent.display()))?;
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     let mut body = String::new();
     body.push_str("version: 1\n");
@@ -333,9 +332,7 @@ pub fn fmp_discover_due(
         FmpDiscoverTrigger::Premarket => {
             cfg.run_premarket && state.last_fmp_premarket_day != Some(today)
         }
-        FmpDiscoverTrigger::AtOpen => {
-            cfg.run_at_open && state.last_fmp_open_day != Some(today)
-        }
+        FmpDiscoverTrigger::AtOpen => cfg.run_at_open && state.last_fmp_open_day != Some(today),
         FmpDiscoverTrigger::Periodic => {
             let every = cfg.discover_every_minutes.max(15) as i64;
             match state.last_fmp_discover_at {
@@ -386,9 +383,14 @@ pub async fn apply_fmp_discover_if_due(
     let discovered = client.discover(&opts).await?;
 
     let max_add = cfg.max_add_per_refresh.max(1) as usize;
-    let (candidates, filter_skipped) =
-        select_fmp_candidates(rules, market, cfg.require_playbook_pass, &discovered.candidates, max_add)
-            .await;
+    let (candidates, filter_skipped) = select_fmp_candidates(
+        rules,
+        market,
+        cfg.require_playbook_pass,
+        &discovered.candidates,
+        max_add,
+    )
+    .await;
 
     let previous_fmp = state.fmp_dynamic_symbols.clone();
     let added = crate::watchlist::dynamic_merge::merge_dynamic_symbols(
@@ -446,7 +448,12 @@ async fn select_fmp_candidates(
     let mut filter_skipped = 0u32;
 
     let bench_candles = if let Some(market) = market {
-        let bench_sym = rules.adaptation.regime.benchmark_symbol.trim().to_uppercase();
+        let bench_sym = rules
+            .adaptation
+            .regime
+            .benchmark_symbol
+            .trim()
+            .to_uppercase();
         if bench_sym.is_empty() {
             Vec::new()
         } else {
@@ -469,10 +476,7 @@ async fn select_fmp_candidates(
             break;
         }
         let sym = row.symbol.trim().to_uppercase();
-        if sym.is_empty()
-            || rules.is_core_holding(&sym)
-            || rules.is_blocked_symbol(&sym)
-        {
+        if sym.is_empty() || rules.is_core_holding(&sym) || rules.is_blocked_symbol(&sym) {
             continue;
         }
 
@@ -512,6 +516,97 @@ async fn select_fmp_candidates(
     }
 
     (out, filter_skipped)
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FmpHeadline {
+    pub id: String,
+    pub title: String,
+    pub published: String,
+}
+
+impl FmpClient {
+    /// Confirmed earnings dates. Failures return an empty calendar so the
+    /// heuristic stays the fallback.
+    pub async fn earnings_calendar(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<crate::earnings::EarningsCalendar> {
+        let url = format!("{FMP_BASE}/stable/earnings-calendar?from={from}&to={to}");
+        let resp = self
+            .http
+            .get(&url)
+            .query(&[("apikey", self.api_key.as_str())])
+            .send()
+            .await
+            .context("FMP earnings calendar request")?;
+        if !resp.status().is_success() {
+            anyhow::bail!("FMP earnings calendar HTTP {}", resp.status());
+        }
+        let rows: Vec<Value> = resp.json().await.unwrap_or_default();
+        let mut dates: std::collections::HashMap<String, Vec<chrono::NaiveDate>> =
+            std::collections::HashMap::new();
+        for row in rows {
+            let Some(sym) = row.get("symbol").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Some(date) = row.get("date").and_then(|v| v.as_str()).and_then(|s| {
+                chrono::NaiveDate::parse_from_str(&s[..10.min(s.len())], "%Y-%m-%d").ok()
+            }) else {
+                continue;
+            };
+            dates
+                .entry(sym.trim().to_uppercase())
+                .or_default()
+                .push(date);
+        }
+        for list in dates.values_mut() {
+            list.sort();
+            list.dedup();
+        }
+        Ok(crate::earnings::EarningsCalendar { dates })
+    }
+
+    pub async fn headlines(&self, symbol: &str, limit: usize) -> Result<Vec<FmpHeadline>> {
+        let url = format!("{FMP_BASE}/stable/news/stock");
+        let resp = self
+            .http
+            .get(url)
+            .query(&[
+                ("symbols", symbol),
+                ("limit", &limit.to_string()),
+                ("apikey", self.api_key.as_str()),
+            ])
+            .send()
+            .await
+            .context("FMP news request")?;
+        if !resp.status().is_success() {
+            anyhow::bail!("FMP news HTTP {}", resp.status());
+        }
+        let rows: Vec<Value> = resp.json().await.unwrap_or_default();
+        Ok(rows
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, row)| {
+                let title = row
+                    .get("title")
+                    .or_else(|| row.get("text"))
+                    .and_then(|v| v.as_str())?
+                    .to_string();
+                let published = row
+                    .get("publishedDate")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                Some(FmpHeadline {
+                    id: format!("{symbol}-{i}"),
+                    title,
+                    published,
+                })
+            })
+            .collect())
+    }
 }
 
 #[cfg(test)]
@@ -556,7 +651,10 @@ mod tests {
             },
         ];
         let out = filter_movers(rows, &opts);
-        assert_eq!(out.iter().map(|r| r.symbol.as_str()).collect::<Vec<_>>(), vec!["SOFI"]);
+        assert_eq!(
+            out.iter().map(|r| r.symbol.as_str()).collect::<Vec<_>>(),
+            vec!["SOFI"]
+        );
     }
 
     #[test]

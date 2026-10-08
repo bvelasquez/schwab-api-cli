@@ -1,0 +1,12 @@
+# After the cash session, once the day's bars can be in the backtest cache.
+
+[Unit]
+Description=Run the Schwab swing research pass on weekdays
+
+[Timer]
+OnCalendar=Mon..Fri 16:40 America/New_York
+Persistent=true
+Unit=schwab-research.service
+
+[Install]
+WantedBy=timers.target

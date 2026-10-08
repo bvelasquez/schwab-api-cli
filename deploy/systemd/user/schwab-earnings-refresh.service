@@ -1,0 +1,17 @@
+# Writes rules/earnings-calendar.yaml from FMP. The heuristic stays the
+# fallback for symbols the file does not list. Does not place orders.
+# Skips cleanly when FMP_API_KEY is unset.
+
+[Unit]
+Description=Refresh the Schwab swing earnings calendar
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/schwabinvestbot
+EnvironmentFile=-%h/.config/environment.d/schwab-paper.conf
+ExecStart=%h/projects/schwabinvestbot/scripts/jarvis-earnings-refresh.sh
+
+[Install]
+WantedBy=default.target

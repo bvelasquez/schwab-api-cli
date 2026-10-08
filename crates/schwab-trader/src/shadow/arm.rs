@@ -67,7 +67,7 @@ pub fn build_arm_rules(
             let path = resolve_arm_rules_file(rules_path, file);
             let raw = std::fs::read_to_string(&path)
                 .with_context(|| format!("read arm rules file {}", path.display()))?;
-            serde_yaml::from_str::<Value>(&raw)
+            crate::rules::parse_yaml_merged::<Value>(&raw)
                 .with_context(|| format!("parse arm rules file {}", path.display()))?
         }
         None => serde_json::to_value(production).context("serialize production rules")?,
@@ -82,7 +82,9 @@ pub fn build_arm_rules(
         serde_json::from_value(base).context("arm rules do not deserialize as TraderRules")?;
     rules.shadow = ShadowConfig::default();
     rules.normalize_adaptation();
-    rules.validate().context("arm rules failed validation")?;
+    rules
+        .validate_shadow_arm()
+        .context("arm rules failed validation")?;
     Ok(rules)
 }
 
@@ -241,11 +243,8 @@ impl ShadowArms {
         self.dirty = false;
         self.built_from = Some(key);
 
-        let mut previous: HashMap<String, ShadowArmState> = self
-            .arms
-            .drain(..)
-            .map(|a| (a.id, a.state))
-            .collect();
+        let mut previous: HashMap<String, ShadowArmState> =
+            self.arms.drain(..).map(|a| (a.id, a.state)).collect();
         let had_arms = !previous.is_empty();
 
         if production.shadow.enabled {
@@ -264,7 +263,8 @@ impl ShadowArms {
                 let state_path = shadow_state_path(rules_path, &production.trader_id, &cfg.id);
                 let state = match previous.remove(&cfg.id) {
                     Some(s) => s,
-                    None => match ShadowArmState::load(&state_path, &cfg.id, &production.trader_id) {
+                    None => match ShadowArmState::load(&state_path, &cfg.id, &production.trader_id)
+                    {
                         Ok(s) => s,
                         Err(err) => {
                             shadow_warn(rules_path, &cfg.id, &format!("disabled: {err:#}"));
@@ -335,7 +335,10 @@ mod tests {
         };
         let rules = build_arm_rules(&prod, Path::new("/tmp/rules/t.yaml"), &arm).unwrap();
         assert_eq!(rules.playbook.entry.max_positions, 1);
-        assert_eq!(rules.playbook.filters.blocked_symbols, vec!["JPM".to_string()]);
+        assert_eq!(
+            rules.playbook.filters.blocked_symbols,
+            vec!["JPM".to_string()]
+        );
         assert!(rules.shadow.is_empty());
         assert_eq!(rules.trader_id, "swing");
     }
@@ -391,7 +394,11 @@ mod tests {
             (Value::Object(x), Value::Object(y)) => {
                 let keys: std::collections::BTreeSet<&String> = x.keys().chain(y.keys()).collect();
                 for k in keys {
-                    let path = if prefix.is_empty() { k.clone() } else { format!("{prefix}.{k}") };
+                    let path = if prefix.is_empty() {
+                        k.clone()
+                    } else {
+                        format!("{prefix}.{k}")
+                    };
                     diff_paths(
                         x.get(k).unwrap_or(&Value::Null),
                         y.get(k).unwrap_or(&Value::Null),
@@ -419,7 +426,15 @@ mod tests {
         let example: ExampleFile = serde_yaml::from_str(&raw).expect("example parses");
         assert!(example.shadow.enabled);
         let ids: Vec<&str> = example.shadow.arms.iter().map(|a| a.id.as_str()).collect();
-        assert_eq!(ids, ["pullback-sma9", "breakout-ok", "corr-groups", "low-vol-only"]);
+        assert_eq!(
+            ids,
+            [
+                "pullback-sma9",
+                "breakout-ok",
+                "corr-groups",
+                "low-vol-only"
+            ]
+        );
 
         let mut prod = production();
         prod.playbook.entry.require_above_sma = vec![20, 50];
@@ -440,7 +455,12 @@ mod tests {
         };
         let changed = |rules: &TraderRules| {
             let mut out = Vec::new();
-            diff_paths(&prod_value, &serde_json::to_value(rules).unwrap(), "", &mut out);
+            diff_paths(
+                &prod_value,
+                &serde_json::to_value(rules).unwrap(),
+                "",
+                &mut out,
+            );
             out
         };
 
@@ -450,8 +470,17 @@ mod tests {
         assert_eq!(changed(&pullback), ["playbook.entry.require_below_sma"]);
 
         let breakout = build("breakout-ok");
-        assert_eq!(breakout.playbook.filters.min_distance_from_52w_high_pct, None);
-        assert!(!breakout.playbook.exit.profit_target_recent_range_cap.enabled);
+        assert_eq!(
+            breakout.playbook.filters.min_distance_from_52w_high_pct,
+            None
+        );
+        assert!(
+            !breakout
+                .playbook
+                .exit
+                .profit_target_recent_range_cap
+                .enabled
+        );
         assert_eq!(
             changed(&breakout),
             [
@@ -461,7 +490,10 @@ mod tests {
         );
 
         let corr = build("corr-groups");
-        assert_eq!(corr.playbook.filters.blocked_symbols, vec!["TQQQ".to_string()]);
+        assert_eq!(
+            corr.playbook.filters.blocked_symbols,
+            vec!["TQQQ".to_string()]
+        );
         let groups: Vec<(&str, usize, u32)> = corr
             .playbook
             .filters
@@ -487,7 +519,10 @@ mod tests {
         assert_eq!(corr.symbol_group_name("NVDA"), Some("semicap"));
         assert_eq!(
             changed(&corr),
-            ["playbook.filters.blocked_symbols", "playbook.filters.symbol_groups"]
+            [
+                "playbook.filters.blocked_symbols",
+                "playbook.filters.symbol_groups"
+            ]
         );
 
         let low_vol = build("low-vol-only");
@@ -507,7 +542,10 @@ mod tests {
         assert!(entries_in("low_vol_trend") > 0);
         let ev = &low_vol.adaptation.profiles["elevated_vol"];
         assert!(!ev.description.is_empty(), "merge keeps sibling keys");
-        assert_eq!(ev.overrides.exit.as_ref().and_then(|e| e.stop_loss_pct), Some(4.5));
+        assert_eq!(
+            ev.overrides.exit.as_ref().and_then(|e| e.stop_loss_pct),
+            Some(4.5)
+        );
         assert_eq!(
             changed(&low_vol),
             [
@@ -519,7 +557,11 @@ mod tests {
 
     #[test]
     fn day_summary_ranks_rejections() {
-        let mut day = ShadowDay::new(NaiveDate::from_ymd_opt(2026, 9, 28).unwrap(), 4000.0, 4100.0);
+        let mut day = ShadowDay::new(
+            NaiveDate::from_ymd_opt(2026, 9, 28).unwrap(),
+            4000.0,
+            4100.0,
+        );
         day.arm_last_equity_usd = 4050.0;
         day.prod_last_equity_usd = 4080.0;
         day.rejections.insert("below_sma".into(), 3);
@@ -527,6 +569,90 @@ mod tests {
         let p = day.summary_payload(2, Some("baseline"));
         assert_eq!(p["arm_equity_change_usd"], json!(50.0));
         assert_eq!(p["prod_equity_change_usd"], json!(-20.0));
-        assert_eq!(p["top_rejections"][0]["reason_code"], json!("rsi_out_of_range"));
+        assert_eq!(
+            p["top_rejections"][0]["reason_code"],
+            json!("rsi_out_of_range")
+        );
+    }
+
+    #[test]
+    fn research_arms_keep_one_variable_and_reject_unconstrained_on_production() {
+        #[derive(Deserialize)]
+        struct ExampleFile {
+            shadow: ShadowConfig,
+        }
+        let raw = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../rules/arms/research-arms.yaml"
+        ))
+        .unwrap();
+        let example: ExampleFile = crate::rules::parse_yaml_merged(&raw).unwrap();
+        let mut prod = production();
+        prod.shadow = example.shadow;
+        let build = |id: &str| {
+            let cfg = prod.shadow.arms.iter().find(|a| a.id == id).unwrap();
+            build_arm_rules(&prod, Path::new("/tmp/rules/t.yaml"), cfg).unwrap()
+        };
+        let tier_a = build("unconstrained");
+        assert!(tier_a.capital.unconstrained);
+        assert!((tier_a.capital.fixed_sleeve_cap_usd - 1_000_000.0).abs() < 1.0);
+        assert_eq!(tier_a.playbook.entry.max_positions, 40);
+        assert_eq!(tier_a.playbook.entry.max_new_entries_per_day, 15);
+        assert_eq!(
+            tier_a.playbook.entry.position_size.max_pct_of_adv,
+            Some(1.0)
+        );
+        assert!((tier_a.playbook.entry.position_size.risk_per_trade_pct - 0.25).abs() < 1e-9);
+
+        let twin = build("big-base");
+        assert!(!twin.capital.unconstrained);
+        assert!((twin.capital.fixed_sleeve_cap_usd - 30_000.0).abs() < 1.0);
+        assert_eq!(twin.playbook.entry.max_positions, 10);
+        assert!((twin.playbook.entry.position_size.risk_per_trade_pct - 0.75).abs() < 1e-9);
+        assert!((twin.playbook.entry.position_size.max_position_pct - 12.0).abs() < 1e-9);
+
+        let pullback = build("pullback");
+        assert_eq!(pullback.playbook.entry.require_below_sma, vec![9]);
+        assert_eq!(pullback.playbook.entry.max_positions, 40);
+        let dip = build("dip-reversion");
+        assert_eq!(dip.playbook.entry.require_above_sma, vec![200]);
+        assert_eq!(dip.playbook.entry.rsi_14_range, [30.0, 48.0]);
+        assert!(
+            build("rangecap-fix")
+                .playbook
+                .exit
+                .profit_target_recent_range_cap
+                .skip_nonpositive_ceiling
+        );
+        assert!(!build("stop-at-trigger").playbook.exit.fill_stop_through_gap);
+        assert!(build("no-blocked")
+            .playbook
+            .filters
+            .blocked_symbols
+            .is_empty());
+        assert_eq!(
+            build("wide-universe")
+                .watchlists
+                .candidate_pool_file
+                .as_deref(),
+            Some("universe/liquid-broad.yaml")
+        );
+        assert_eq!(build("llm-veto").llm_signal.policy.mode, "veto");
+        assert_eq!(build("llm-agent").llm_signal.policy.mode, "agent");
+        assert_eq!(build("llm-event-exit").llm_signal.policy.mode, "event_exit");
+        let regime = build("regime-playbooks");
+        assert_eq!(
+            regime.adaptation.profiles["low_vol_trend"]
+                .overrides
+                .entry
+                .as_ref()
+                .and_then(|e| e.require_below_sma.clone()),
+            Some(vec![9])
+        );
+
+        let mut live = production();
+        live.trader_id = "swing".into();
+        live.capital.unconstrained = true;
+        assert!(live.validate().is_err());
     }
 }

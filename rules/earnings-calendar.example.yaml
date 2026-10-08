@@ -1,0 +1,5 @@
+# Copy to rules/earnings-calendar.yaml (gitignored) or point
+# earnings.calendar_file here. Confirmed dates replace the 91-day heuristic.
+# Refresh: schwab-trader research earnings-refresh --rules-file <rules>
+symbols:
+  AAPL: ["2026-01-30", "2026-10-30"]

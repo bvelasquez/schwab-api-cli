@@ -1,0 +1,17 @@
+# Weekday after-close research pass. Reads the swing daily cache and writes
+# rules/candidate-outcomes.jsonl, an IC report, and at most three arm proposals.
+# It does not edit production rules and does not place orders.
+
+[Unit]
+Description=Schwab swing research outcomes, IC eval, and arm proposals
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/schwabinvestbot
+EnvironmentFile=-%h/.config/environment.d/schwab-paper.conf
+ExecStart=%h/projects/schwabinvestbot/scripts/jarvis-research.sh
+
+[Install]
+WantedBy=default.target

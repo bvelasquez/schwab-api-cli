@@ -276,18 +276,28 @@ impl TraderState {
     }
 
     pub fn entry_block_reason(&self, rules: &crate::rules::TraderRules) -> Option<String> {
-        self.entry_block_reason_inner(rules, true)
+        self.entry_block_reason_inner(rules, true, false)
     }
 
     /// Backtest/replay: skip live session clock gates (market hours, EOD cutoff).
     pub fn entry_block_reason_replay(&self, rules: &crate::rules::TraderRules) -> Option<String> {
-        self.entry_block_reason_inner(rules, false)
+        self.entry_block_reason_inner(rules, false, false)
+    }
+
+    /// Shadow research arms with `capital.unconstrained` skip slot and
+    /// daily-entry caps. Halts and the session clock still apply.
+    pub fn entry_block_reason_unconstrained(
+        &self,
+        rules: &crate::rules::TraderRules,
+    ) -> Option<String> {
+        self.entry_block_reason_inner(rules, true, true)
     }
 
     fn entry_block_reason_inner(
         &self,
         rules: &crate::rules::TraderRules,
         check_session: bool,
+        ignore_capacity: bool,
     ) -> Option<String> {
         if let Some(reason) = &self.trading_halted_reason {
             return Some(reason.clone());
@@ -300,22 +310,22 @@ impl TraderState {
                 return Some(reason);
             }
         }
-        if self.trades_today >= rules.risk.max_trades_per_day {
-            return Some(format!(
-                "max_trades_per_day reached ({}/{})",
-                self.trades_today,
-                rules.risk.max_trades_per_day
-            ));
-        }
-        if self.trades_today >= rules.playbook.entry.max_new_entries_per_day {
-            return Some(format!(
-                "max_new_entries_per_day reached ({}/{})",
-                self.trades_today,
-                rules.playbook.entry.max_new_entries_per_day
-            ));
-        }
-        if self.open_positions.len() >= rules.playbook.entry.max_positions as usize {
-            return Some("max_positions reached".into());
+        if !ignore_capacity {
+            if self.trades_today >= rules.risk.max_trades_per_day {
+                return Some(format!(
+                    "max_trades_per_day reached ({}/{})",
+                    self.trades_today, rules.risk.max_trades_per_day
+                ));
+            }
+            if self.trades_today >= rules.playbook.entry.max_new_entries_per_day {
+                return Some(format!(
+                    "max_new_entries_per_day reached ({}/{})",
+                    self.trades_today, rules.playbook.entry.max_new_entries_per_day
+                ));
+            }
+            if self.open_positions.len() >= rules.playbook.entry.max_positions as usize {
+                return Some("max_positions reached".into());
+            }
         }
         None
     }

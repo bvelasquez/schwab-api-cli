@@ -1,0 +1,215 @@
+# Research shadow arms. Copy the anchor blocks (`x-tier-a-entry`, `x-tier-a`)
+# and the `shadow:` key into the host swing rules (rules/trader-swing.yaml),
+# then reload. The anchors have to stay in the same file as `shadow:`.
+# Nothing here is auto-promoted.
+#
+# Tier A (`unconstrained` and every arm that merges it) skips slot and capital
+# gates so an admitted setup becomes a paper trade. Liquidity still binds:
+# position notional ≤ 1% of 20-day dollar volume. Tier A equity is not a
+# fundable portfolio — per-trade percent is the measurement.
+#
+# Tier B (`big-base`) is the $30k twin: 10 slots, 0.75% risk, 12% max position.
+#
+# A wider universe arm only sees symbols the production tick already fetched
+# (`not_in_production_tape` otherwise). Breadth is measured by
+# `schwab-trader research outcomes`, which walks the daily cache with no sleeve.
+#
+# LLM arms read rules/llm-signal-journal.jsonl. They never call a model.
+# A missing score does not block the entry.
+
+x-tier-a-entry: &tier-a-entry
+  max_positions: 40
+  max_new_entries_per_day: 15
+  position_size:
+    method: atr_normalized
+    risk_per_trade_pct: 0.25
+    max_position_pct: 8
+    atr_baseline_pct: 2.0
+    atr_vol_scalar_min: 0.5
+    atr_vol_scalar_max: 1.5
+    max_pct_of_adv: 1.0
+
+x-tier-a: &tier-a
+  capital:
+    unconstrained: true
+    fixed_sleeve_cap_usd: 1000000
+    max_pct_of_free_cash: 100
+    min_cash_floor_usd: 0
+  simulation:
+    starting_cash_usd: 1000000
+    allow_fractional_shares: true
+    allow_rule_adaptation: false
+  risk:
+    max_portfolio_heat_pct: 100
+    max_drawdown_halt_pct: 25
+    max_trades_per_day: 15
+  playbook:
+    entry: *tier-a-entry
+
+shadow:
+  enabled: true
+  arms:
+    - id: unconstrained
+      overrides:
+        <<: *tier-a
+
+    - id: big-base
+      overrides:
+        capital:
+          unconstrained: false
+          fixed_sleeve_cap_usd: 30000
+          max_pct_of_free_cash: 80
+          min_cash_floor_usd: 500
+        simulation:
+          starting_cash_usd: 30000
+          allow_fractional_shares: true
+          allow_rule_adaptation: false
+        risk:
+          max_portfolio_heat_pct: 12
+          max_drawdown_halt_pct: 12
+          max_trades_per_day: 4
+        playbook:
+          entry:
+            max_positions: 10
+            max_new_entries_per_day: 4
+            position_size:
+              method: atr_normalized
+              risk_per_trade_pct: 0.75
+              max_position_pct: 12
+              atr_baseline_pct: 2.0
+              atr_vol_scalar_min: 0.5
+              atr_vol_scalar_max: 1.5
+              max_pct_of_adv: 1.0
+
+    - id: wide-universe
+      overrides:
+        <<: *tier-a
+        watchlists:
+          candidate_pool_file: universe/liquid-broad.yaml
+
+    - id: pullback
+      overrides:
+        <<: *tier-a
+        playbook:
+          entry:
+            <<: *tier-a-entry
+            require_below_sma: [9]
+
+    - id: rangecap-fix
+      overrides:
+        <<: *tier-a
+        playbook:
+          entry: *tier-a-entry
+          exit:
+            profit_target_recent_range_cap:
+              enabled: true
+              skip_nonpositive_ceiling: true
+
+    - id: corr-groups
+      overrides:
+        <<: *tier-a
+        playbook:
+          entry: *tier-a-entry
+          filters:
+            symbol_groups:
+              - { name: semicap, symbols: [AMD, ASML, SMH, MU, NVDA], max_open: 1 }
+              - { name: crypto, symbols: [IBIT, BITO, MSTR, COIN], max_open: 1 }
+              - { name: megacap_tech, symbols: [AAPL, MSFT, GOOGL, AMZN, META, NVDA, TSLA, QQQ], max_open: 2 }
+
+    - id: no-blocked
+      overrides:
+        <<: *tier-a
+        playbook:
+          entry: *tier-a-entry
+          filters:
+            blocked_symbols: []
+
+    - id: stop-at-trigger
+      overrides:
+        <<: *tier-a
+        playbook:
+          entry: *tier-a-entry
+          exit:
+            fill_stop_through_gap: false
+
+    - id: dip-reversion
+      overrides:
+        <<: *tier-a
+        playbook:
+          holding_period:
+            min_days: 2
+            max_days: 12
+            target_days: 5
+          entry:
+            <<: *tier-a-entry
+            require_above_sma: [200]
+            require_below_sma: []
+            rsi_14_range: [30.0, 48.0]
+          exit:
+            profit_target_pct: 4.5
+            time_stop_days: 8
+
+    - id: regime-playbooks
+      overrides:
+        <<: *tier-a
+        adaptation:
+          profiles:
+            low_vol_trend:
+              description: Grind-up pullback. Do not chase extension.
+              overrides:
+                entry:
+                  require_below_sma: [9]
+                  rsi_14_range: [48.0, 65.0]
+            elevated_vol:
+              description: Dip reversion while the long trend holds.
+              overrides:
+                entry:
+                  require_above_sma: [200]
+                  rsi_14_range: [30.0, 48.0]
+                exit:
+                  profit_target_pct: 4.5
+                  time_stop_days: 8
+            high_vol_chop:
+              description: Same dip book as elevated vol. No new trend chases.
+              overrides:
+                entry:
+                  require_above_sma: [200]
+                  rsi_14_range: [30.0, 48.0]
+
+    - id: llm-veto
+      overrides:
+        <<: *tier-a
+        llm_signal:
+          policy:
+            mode: veto
+            min_score: 0
+
+    - id: llm-event-skip
+      overrides:
+        <<: *tier-a
+        llm_signal:
+          policy:
+            mode: event_skip
+
+    - id: llm-event-downsize
+      overrides:
+        <<: *tier-a
+        llm_signal:
+          policy:
+            mode: event_downsize
+            size_multiplier: 0.5
+
+    - id: llm-event-exit
+      overrides:
+        <<: *tier-a
+        llm_signal:
+          policy:
+            mode: event_exit
+
+    - id: llm-agent
+      overrides:
+        <<: *tier-a
+        llm_signal:
+          policy:
+            mode: agent
+            size_multiplier: 0.5

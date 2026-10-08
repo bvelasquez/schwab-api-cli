@@ -12,9 +12,7 @@ use crate::agent::state::{
     position_id, position_id_for_date, save_backtest_state, save_state, PendingBuy, SwingPosition,
     TraderState, UnbracketedPosition,
 };
-use crate::capital::{
-    capital_check_to_json, compute_capital_check, exit_prices,
-};
+use crate::capital::{capital_check_to_json, compute_capital_check, exit_prices};
 use crate::config::TraderRuntime;
 use crate::journal;
 use crate::market_ctx::MarketCtx;
@@ -111,6 +109,24 @@ pub fn compute_position_sizing(
     tradable_budget: f64,
     atr_14: Option<f64>,
 ) -> PositionSizing {
+    compute_position_sizing_with_volume(
+        rules,
+        entry_price,
+        stop_price,
+        tradable_budget,
+        atr_14,
+        None,
+    )
+}
+
+pub fn compute_position_sizing_with_volume(
+    rules: &TraderRules,
+    entry_price: f64,
+    stop_price: f64,
+    tradable_budget: f64,
+    atr_14: Option<f64>,
+    avg_share_volume_20d: Option<f64>,
+) -> PositionSizing {
     let empty = PositionSizing {
         quantity: 0.0,
         position_size_usd: 0.0,
@@ -144,10 +160,18 @@ pub fn compute_position_sizing(
     let max_position_value = max_pct_size_usd.min(tradable_budget);
     let qty_by_position_cap = round_quantity(max_position_value / entry_price, fractional);
     let qty_by_budget = round_quantity(tradable_budget / entry_price, fractional);
+    let qty_by_adv = match (ps.max_pct_of_adv, avg_share_volume_20d) {
+        (Some(pct), Some(vol)) if pct > 0.0 && vol > 0.0 && entry_price > 0.0 => {
+            let dollar_cap = vol * entry_price * (pct / 100.0);
+            round_quantity(dollar_cap / entry_price, fractional)
+        }
+        _ => f64::MAX,
+    };
 
     let quantity = qty_by_risk
         .min(qty_by_position_cap)
         .min(qty_by_budget)
+        .min(qty_by_adv)
         .max(0.0);
 
     let risk_pct_size_usd = qty_by_risk * entry_price;
@@ -158,6 +182,11 @@ pub fn compute_position_sizing(
         "none".to_string()
     } else if quantity == qty_by_budget && qty_by_budget <= qty_by_risk.min(qty_by_position_cap) {
         "tradable_budget".into()
+    } else if qty_by_adv < f64::MAX
+        && quantity == qty_by_adv
+        && qty_by_adv <= qty_by_risk.min(qty_by_position_cap).min(qty_by_budget)
+    {
+        "max_pct_of_adv".into()
     } else if quantity == qty_by_position_cap
         && qty_by_position_cap <= qty_by_risk.min(qty_by_budget)
     {
@@ -202,7 +231,12 @@ pub fn log_position_sizing(sizing: &PositionSizing, max_position_pct: f64) {
     }
 }
 
-fn record_sizing_streak(state: &mut TraderState, sizing: &PositionSizing, simulate: bool, rules_path: &Path) {
+fn record_sizing_streak(
+    state: &mut TraderState,
+    sizing: &PositionSizing,
+    simulate: bool,
+    rules_path: &Path,
+) {
     if sizing.quantity <= 0.0 {
         return;
     }
@@ -211,10 +245,7 @@ fn record_sizing_streak(state: &mut TraderState, sizing: &PositionSizing, simula
     } else {
         state.sizing_max_pct_binding_streak = 0;
     }
-    if simulate
-        && state.sizing_max_pct_binding_streak >= 3
-        && !state.sizing_redundant_risk_warned
-    {
+    if simulate && state.sizing_max_pct_binding_streak >= 3 && !state.sizing_redundant_risk_warned {
         state.sizing_redundant_risk_warned = true;
         let msg = "risk_per_trade_pct sizing is consistently non-binding (max_position_pct clamps every recent entry); \
                    consider reconciling risk_per_trade_pct and max_position_pct in rules YAML";
@@ -268,8 +299,8 @@ pub async fn attempt_entry(
     }
 
     let snap = fetch_technical_snapshot(market, rules, &symbol).await?;
-    let limit_price = limit_price_override
-        .unwrap_or_else(|| resolve_entry_limit_price(&snap, rules));
+    let limit_price =
+        limit_price_override.unwrap_or_else(|| resolve_entry_limit_price(&snap, rules));
     if limit_price <= 0.0 {
         return Ok(skip_entry(
             &symbol,
@@ -298,7 +329,12 @@ pub async fn attempt_entry(
         range,
         sizing,
         quantity: base_qty,
-    } = plan_entry(rules, &snap, limit_price, capital_preview.tradable_budget_usd);
+    } = plan_entry(
+        rules,
+        &snap,
+        limit_price,
+        capital_preview.tradable_budget_usd,
+    );
     let quantity = quantity_override.unwrap_or(base_qty);
     log_position_sizing(
         &if quantity_override.is_some() {
@@ -578,8 +614,7 @@ pub async fn attempt_entry(
     let fill_started = std::time::Instant::now();
     let range =
         crate::capital::ExitRangeContext::from_history(rules, snap.history_features.as_ref());
-    let (profit_limit, stop_px, stop_limit_px) =
-        exit_prices(fill_price, rules, snap.atr_14, range);
+    let (profit_limit, stop_px, stop_limit_px) = exit_prices(fill_price, rules, snap.atr_14, range);
     let mut bracket_result = None;
     let mut oco_order_id = None;
 
@@ -600,8 +635,7 @@ pub async fn attempt_entry(
         .await
         {
             Ok(bracket) => {
-                state.last_fill_to_bracket_seconds =
-                    Some(fill_started.elapsed().as_secs());
+                state.last_fill_to_bracket_seconds = Some(fill_started.elapsed().as_secs());
                 oco_order_id = bracket
                     .order
                     .get("order_id")
@@ -622,8 +656,7 @@ pub async fn attempt_entry(
                         bracket_attempts: 1,
                     },
                 );
-                state.trading_halted_reason =
-                    Some(format!("unbracketed position: {symbol}"));
+                state.trading_halted_reason = Some(format!("unbracketed position: {symbol}"));
                 journal::append_event(
                     rules_path,
                     "bracket_failed",
@@ -763,8 +796,14 @@ pub(crate) fn plan_entry(
         crate::capital::ExitRangeContext::from_history(rules, snap.history_features.as_ref());
     let (profit_limit, stop_price, stop_limit) =
         exit_prices(limit_price, rules, snap.atr_14, range);
-    let sizing =
-        compute_position_sizing(rules, limit_price, stop_price, tradable_budget, snap.atr_14);
+    let sizing = compute_position_sizing_with_volume(
+        rules,
+        limit_price,
+        stop_price,
+        tradable_budget,
+        snap.atr_14,
+        snap.volume_sma_20,
+    );
     let quantity = sizing.quantity * near_52w_high_size_scalar(rules, snap);
     EntryPlan {
         profit_limit,
