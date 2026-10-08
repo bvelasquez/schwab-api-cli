@@ -50,7 +50,7 @@ schwab-trader agent stop rules/my-trader.yaml
 
 - [Trader rules & playbook](https://github.com/bvelasquez/schwab-api-cli/blob/main/docs/TRADER_RULES.md)
 - [Live rollout checklist](https://github.com/bvelasquez/schwab-api-cli/blob/main/docs/TRADER_ROLLOUT.md)
-- [the paper host paper host](https://github.com/bvelasquez/schwab-api-cli/blob/main/docs/PAPER_HOST_PAPER_HOST.md)
+- [Remote paper host](https://github.com/bvelasquez/schwab-api-cli/blob/main/docs/REMOTE_PAPER_HOST.md)
 - [Full project README](https://github.com/bvelasquez/schwab-api-cli)
 
 ## License

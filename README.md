@@ -19,7 +19,7 @@ Agent-first Rust CLI for the [Charles Schwab Trader API](https://developer.schwa
 - **Trading** — `trade buy` / `trade sell` with preview and safety guardrails
 - **Trade plans** — YAML/JSON multi-step rebalances; LLM-authored, CLI-validated
 - **Options agent** — long-running daemon from `rules/*.yaml`; put credit spreads, mechanical exits, phased schedule (regular / overnight), OpenRouter LLM advisor, Telegram alerts
-- **Equity swing trader** — separate `schwab-trader` CLI for short/medium-term stock swings; capital sleeve on sleeve account, post-fill OCO brackets, Perplexity picks ([docs/TRADER_RULES.md](docs/TRADER_RULES.md))
+- **Equity swing trader** — separate `schwab-trader` CLI for short/medium-term stock swings; capital sleeve, post-fill OCO brackets, Perplexity picks ([docs/TRADER_RULES.md](docs/TRADER_RULES.md))
 - **Order wait** — poll until limit orders fill before advancing a plan
 - **Safety config** — `safety.json` enforces max trade size, symbols, order types (cannot be bypassed)
 - **Trust mode** — autonomous agent execution requires `--trust --yes`
@@ -131,7 +131,7 @@ Global flags: `--json`, `--yes`, `--trust`, `--dry-run`
 | [docs/OPTIONS_RULES.md](docs/OPTIONS_RULES.md) | Operators | Options agent quick reference |
 | [docs/AGENT_SCHEDULE.md](docs/AGENT_SCHEDULE.md) | Operators | Regular / overnight / at-open sessions |
 | [docs/TRADER_RULES.md](docs/TRADER_RULES.md) | Operators | Equity swing trader (`schwab-trader`) |
-| [docs/PAPER_HOST_PAPER_HOST.md](docs/PAPER_HOST_PAPER_HOST.md) | Operators | the paper host paper-host migration (Phase 0: systemd + deploy scripts) |
+| [docs/REMOTE_PAPER_HOST.md](docs/REMOTE_PAPER_HOST.md) | Operators | Remote paper host (systemd user units, deploy scripts) |
 
 Machine-readable discovery: `schwab instructions --json`, `schwab plan schema --json`, `schwab agent schema --json`, `schwab plan prompt --json`.
 
@@ -567,22 +567,18 @@ Output envelope fields: `success`, `command`, `inputs`, `data`, `warnings`, `err
 ```
 schwab-api-cli/
 ├── crates/
-│   ├── schwab-api/          # HTTP client, OAuth, Trader API endpoints
-│   ├── schwab-market-data/  # Market Data API client (quotes, history, instruments)
-│   └── schwab-cli/          # CLI binary (`schwab`)
-├── docs/
-│   ├── LLM_SCHEMA_REFERENCE.md  # LLM authoring: trade plans + options rules
-│   ├── OPTIONS_RULES.md         # Options agent reference
-│   └── AGENT_SCHEDULE.md        # Regular / overnight sessions
+│   ├── schwab-api/          # HTTP client, OAuth, Trader API (published as schwab-api-cli-core)
+│   ├── schwab-market-data/  # Market Data API client
+│   ├── schwab-cli/          # CLI binary (`schwab`)
+│   └── schwab-trader/       # Equity swing CLI (`schwab-trader`)
+├── deploy/systemd/user/     # Example paper-host user units
+├── docs/                    # Operator and LLM references (see Documentation above)
 ├── plans/                   # Example trade plans + TRADE_PLAN.md
-├── rules/                   # Example rules templates + gitignored runtime state
-│   ├── options-rules.example.yaml
-│   ├── trader-rules.example.yaml
-│   ├── agent-state-*.json   # written at runtime (gitignored)
-│   ├── agent-*.pid          # background daemon PID (gitignored)
-│   └── agent-*.log          # background daemon log (gitignored)
+├── rules/                   # Example rules templates; personal copies and runtime state are gitignored
+├── scripts/                 # Publish helpers, paper-host deploy, scorecard
 ├── safety.json.example
 ├── .env.example
+├── SECURITY.md
 └── README.md
 ```
 
@@ -599,8 +595,8 @@ The crates.io README includes the same **use at your own risk** disclaimer as th
 
 ### Maintainer release flow
 
-1. Bump `version` in all four `crates/*/Cargo.toml` files (keep versions aligned).
-2. Commit and push to `main` (or run **Publish crates.io** workflow manually).
+1. Bump `version` in the crates that changed. `schwab-api-cli` and `schwab-trader` stay in lockstep. Bump `schwab-api-cli-core` when its public API changes, and point dependents at that version. `schwab-api-cli-market-data` only needs a bump when it changes.
+2. Commit and push to `main` (or run **Publish crates.io** workflow manually). The workflow publishes core, then market-data, then the CLIs, and skips any version already on crates.io.
 
 See **[docs/CRATES_IO_PUBLISH.md](docs/CRATES_IO_PUBLISH.md)** for crate name mapping and `CRATES_IO_TOKEN` setup.
 
@@ -627,11 +623,13 @@ cargo build --release -p schwab-trader
 ## Security
 
 - **Accept the disclaimer** before live trading: `schwab disclaimer accept --yes` (shown on first run)
-- **Do not commit** `.env`, `tokens.json`, `safety.json` with personal limits, or API keys
-- **Do not commit** account hash values in public plans — use placeholders
-- Rotate Schwab app credentials if ever exposed
+- **Do not commit** `.env`, `tokens.json`, `safety.json`, API keys, account hashes, or personal rules files. Copy `rules/*.example.yaml` to a gitignored local name (`rules/options-pilot.yaml`, `rules/trader-swing.yaml`)
+- OAuth tokens are stored as mode `0600` under a mode `0700` directory. `safety.json`, agent state, and journals that can contain account hashes are written as mode `0600`
+- Schwab allows one refresh-token owner per app login. Refresh on one host only. See [docs/REMOTE_PAPER_HOST.md](docs/REMOTE_PAPER_HOST.md)
+- `schwab auth status` reports access-token expiry and, when `login_at` is known, the 7-day refresh-token lifetime. Refreshing the access token does not extend that lifetime
 - Use `--dry-run` and `plan validate` before live trades
 - Enable `--trust` only when you explicitly want autonomous agent execution
+- Report vulnerabilities as described in [SECURITY.md](SECURITY.md)
 
 ## License
 

@@ -49,11 +49,13 @@ Requires `CRATES_IO_TOKEN` repository secret.
 
 **Fix:** bump and publish dependencies first (`schwab-api-cli-core` → `schwab-api-cli-market-data` → `schwab-api-cli` → `schwab-trader`), keeping `version =` constraints in sync.
 
-Current minimum versions for the trader stack:
+Publishing is CI-only in normal use: push a version bump to `main`, or run **Publish crates.io** (`workflow_dispatch`). Local `cargo login` is not required. `scripts/publish-crate.sh` skips a version that is already on the index.
+
+Current minimum versions:
 
 | Package | Notes |
 |---------|--------|
-| `schwab-api-cli-core` ≥ 0.1.1 | `Tokens::obtained_at`, `refresh_expires_in_seconds()` |
-| `schwab-api-cli-market-data` ≥ 0.1.1 | depends on core 0.1.1 |
-| `schwab-api-cli` ≥ 0.1.6 | regime-mismatch early take, live spread analytics/UI |
-| `schwab-trader` ≥ 0.1.6 | recent-range profit-target cap; depends on api-cli 0.1.6 |
+| `schwab-api-cli-core` ≥ 0.1.2 | owner-only token files (`0600` / dir `0700`); `Tokens::login_at` refresh lifetime |
+| `schwab-api-cli-market-data` ≥ 0.1.1 | unchanged since 0.1.1; depends on core `^0.1.1` |
+| `schwab-api-cli` ≥ 0.1.7 | depends on core 0.1.2 |
+| `schwab-trader` ≥ 0.1.7 | depends on api-cli 0.1.7 and core 0.1.2 |
