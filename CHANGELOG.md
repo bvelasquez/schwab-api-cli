@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.8 — 2026-10-08
+
+`schwab-api-cli` and `schwab-trader`. Same library crates as 0.1.7 (`schwab-api-cli-core` 0.1.2, `schwab-api-cli-market-data` 0.1.1).
+
+- Dependency patches: `rustls` 0.23.45 (RUSTSEC-2026-0285), `webbrowser` 1.2.4 (RUSTSEC-2026-0257), and transitive `quinn-proto` 0.11.19 (RUSTSEC-2026-0185).
+- Minimum supported Rust is 1.85, matching `webbrowser` 1.2.2+.
+
 ## 0.1.7 — 2026-10-08
 
 `schwab-api-cli` and `schwab-trader`. Requires `schwab-api-cli-core` 0.1.2. `schwab-api-cli-market-data` stays 0.1.1.

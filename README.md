@@ -26,7 +26,7 @@ Agent-first Rust CLI for the [Charles Schwab Trader API](https://developer.schwa
 
 ## Requirements
 
-- Rust 1.75+ ([rustup](https://rustup.rs/))
+- Rust 1.85+ ([rustup](https://rustup.rs/))
 - Schwab Developer Portal app with **Trader API – Individual** (Production)
 - Same app should also enable **Market Data Production** for quotes and history
 - macOS / Linux / Windows

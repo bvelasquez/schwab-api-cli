@@ -57,5 +57,5 @@ Current minimum versions:
 |---------|--------|
 | `schwab-api-cli-core` ≥ 0.1.2 | owner-only token files (`0600` / dir `0700`); `Tokens::login_at` refresh lifetime |
 | `schwab-api-cli-market-data` ≥ 0.1.1 | unchanged since 0.1.1; depends on core `^0.1.1` |
-| `schwab-api-cli` ≥ 0.1.7 | depends on core 0.1.2 |
-| `schwab-trader` ≥ 0.1.7 | depends on api-cli 0.1.7 and core 0.1.2 |
+| `schwab-api-cli` ≥ 0.1.8 | depends on core 0.1.2; Rust 1.85+ |
+| `schwab-trader` ≥ 0.1.8 | depends on api-cli 0.1.8 and core 0.1.2 |
