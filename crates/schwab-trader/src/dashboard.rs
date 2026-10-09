@@ -5,7 +5,7 @@
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -529,14 +529,11 @@ fn pointer<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
 }
 
 fn handle(mut stream: TcpStream, paths: &DashboardPaths) -> Result<()> {
-    let mut buf = [0_u8; 1024];
-    let n = stream.read(&mut buf).unwrap_or(0);
-    let req = String::from_utf8_lossy(&buf[..n]);
-    let path = req
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .unwrap_or("/");
+    // Read the whole header block before answering. A browser request is often
+    // larger than one 1KB read; closing with unread bytes makes the kernel RST
+    // the connection, which shows up as ERR_CONNECTION_RESET.
+    let headers = read_headers(&mut stream)?;
+    let path = request_path(&headers);
     let (status, content_type, body) = match path {
         "/" => ("200 OK", "text/html; charset=utf-8", PAGE.to_string()),
         "/api/status" => (
@@ -544,6 +541,7 @@ fn handle(mut stream: TcpStream, paths: &DashboardPaths) -> Result<()> {
             "application/json",
             snapshot(paths).to_string(),
         ),
+        "/favicon.ico" => ("204 No Content", "text/plain", String::new()),
         _ => ("404 Not Found", "text/plain", "not found".to_string()),
     };
     let header = format!(
@@ -551,8 +549,35 @@ fn handle(mut stream: TcpStream, paths: &DashboardPaths) -> Result<()> {
         body.len()
     );
     stream.write_all(header.as_bytes())?;
-    stream.write_all(body.as_bytes())?;
+    if !body.is_empty() {
+        stream.write_all(body.as_bytes())?;
+    }
+    let _ = stream.shutdown(Shutdown::Write);
     Ok(())
+}
+
+fn read_headers(stream: &mut TcpStream) -> Result<String> {
+    let mut buf = Vec::new();
+    let mut tmp = [0_u8; 2048];
+    while buf.windows(4).all(|w| w != b"\r\n\r\n") && buf.len() < 64 * 1024 {
+        let n = stream.read(&mut tmp).unwrap_or(0);
+        if n == 0 {
+            break;
+        }
+        buf.extend_from_slice(&tmp[..n]);
+    }
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
+fn request_path(headers: &str) -> &str {
+    headers
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .unwrap_or("/")
+        .split('?')
+        .next()
+        .unwrap_or("/")
 }
 
 #[cfg(test)]
@@ -632,6 +657,13 @@ mod tests {
         assert_eq!(book["shadows"][0]["id"], "big-base");
         assert_eq!(book["shadows"][0]["starting_cash_usd"], 30000.0);
         assert!(book.get("error").is_none());
+    }
+
+    #[test]
+    fn request_path_ignores_the_query_string() {
+        let headers = "GET /api/status?x=1 HTTP/1.1\r\nHost: jarvis\r\n\r\n";
+        assert_eq!(request_path(headers), "/api/status");
+        assert_eq!(request_path("GET /favicon.ico HTTP/1.1\r\n\r\n"), "/favicon.ico");
     }
 
     #[test]
