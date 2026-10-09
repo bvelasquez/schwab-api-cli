@@ -70,6 +70,7 @@ rules/measure-frozen.yaml
 
 # Personal agent rules (account hashes — copy from *-example.yaml; never commit)
 rules/options-pilot*.yaml
+rules/options-arm-*.yaml
 rules/trader-swing*.yaml
 rules/trader-intraday*.yaml
 rules/options-monthly-income.yaml
@@ -83,9 +84,15 @@ scripts/schwab-auto-login.sh
 scripts/*-auth-login.sh
 scripts/*-token-sync.sh
 scripts/*-token-keeper.sh
+scripts/jarvis-deploy.sh
+scripts/jarvis-rules-reload.sh
+scripts/jarvis-bot-watchdog.sh
 deploy/systemd/user/schwab-auto-login.*
 deploy/systemd/user/schwab-token-keeper.*
 deploy/systemd/user/*token-mirror*
+deploy/systemd/user/schwab-options-8709.service
+deploy/systemd/user/schwab-swing-9947.service
+docs/JARVIS_PAPER_HOST.md
 
 # Python
 __pycache__/
