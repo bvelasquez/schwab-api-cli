@@ -1,0 +1,312 @@
+version: 1
+# Paper arm o0 ($30k sleeve, LLM off, 300s tick). Does not change 8709.
+# O0 control. Same gates as 8709 after the mark and IV fixes, with the
+# pre-2026-09-28 floors (credit 0.30, 6% of width). One slot. SPY keeps
+# the 4% OTM and 6% break-even gates, so this arm is QQQ in practice.
+agent_id: options-arm-o0
+
+# 2026-09-28 (Barry OK, audit analysis-20260928): credit floors raised to 10% of width /
+# $0.50 — v4.2 6% floors made breakeven win rate ~= POP (no edge). Expect fewer entries
+# in mid-teens VIX; that is intended. Execution: +15 min open-bell gate, degraded-quote exit deferral.
+
+# v4.2 frequency unlock (2026-08-27): paper-only via option-start.sh --simulate until
+# promotion gates in docs/OPTIONS_PILOT_V4_RECOVERY.md. QQQ/SPY put/call credits only;
+# no iron condors. Relaxed 1σ / delta / IV-RV so mid-teens VIX can clear entries.
+
+accounts:
+  - hash: __ACCOUNT_HASH__
+    label: IRA account ending 8709
+    type: ira
+    enabled: true
+
+schedule:
+  tick_interval_seconds: 300
+  tick_jitter_seconds: 90
+  market_hours_only: true
+  timezone: America/New_York
+  overnight:
+    enabled: false
+
+strategies:
+  vertical:
+    enabled: true
+  iron_condor:
+    # Disabled for v4 recovery — live IC losses (GLD) + no defensive roll path.
+    enabled: false
+
+# QQQ/SPY only — no fallback sleeve burn on IWM/GLD/sectors.
+# Paper ease (2026-08-21): abs + credit/width floored so far-OTM 12Δ puts can
+# clear in mid-teens VIX (~$0.30 on $5 ≈ 6%). Floors sit a few cents under
+# typical marks so equality/float rounding does not false-reject. Do NOT
+# promote these floors live without a re-backtest; recovery Phase 2 may raise
+# QQQ min_credit again after 10+ sim round trips.
+watchlist:
+  - symbol: QQQ
+    role: primary
+    min_credit: 0.30
+    min_credit_to_width_pct: 6.0
+  - symbol: SPY
+    role: primary
+    min_credit: 0.30
+    min_credit_to_width_pct: 6.0
+entry_policy:
+  mode: first_qualifying
+  fallback_only_after_primary_exhausted: true
+  # Mechanical entries only while the LLM advisor is off (2026-10-01).
+  require_llm_proceed: false
+  fail_open_on_llm_defer: false
+  proceed_cache_minutes: 45
+  entry_attempt_cooldown_minutes: 60
+  promote_redeploy_symbol: false
+  # P1.3 Post-stop caution: after a stop-loss exit, entries use tighter IV/RV + OTM
+  # cushions for 14 calendar days (avoid stacking losses right after a stop).
+  # 2026-09-08 Barry: disabled for paper — post-stop (IV/RV≥1.25 + OTM≥6%) + 10d
+  # QQQ re-entry cooldown starved entries for a week after the Sep 1 stop. Re-enable
+  # after collecting more sim round trips if stops cluster.
+  post_stop_tightening:
+    enabled: false
+    min_iv_rv_ratio: 1.25
+    min_short_otm_pct: 6.0
+    cooldown_days: 14
+
+entry_rules:
+  vertical:
+    # Regime chooses put_credit / call_credit; this is the default when flat map.
+    type: put_credit
+    dte_min: 32
+    dte_max: 45
+    # Paper ease: was 0.45 / 10% — see watchlist comment (2026-08-21).
+    min_credit: 0.30
+    max_width: 5
+    # v4.2: ~12–20Δ — wider band so credit clears in mid-teens VIX without needing
+    # the short outside 1σ (that combo was mathematically empty for weeks).
+    # Engine picks ONLY by delta band (no 5% OTM fallback).
+    short_delta_min: 0.12
+    short_delta_max: 0.20
+    min_pop_pct: 68
+    min_distance_to_be_pct: 6.0
+    min_credit_to_width_pct: 6.0
+    # Thesis exit remains 3.0%; entry cushion slightly eased for frequency.
+    min_short_otm_pct: 4.0
+    # P2.6 RSI(2) timing gates — DISABLED after backtest sensitivity (45/60/65/70/off):
+    # the gate removed ~4 winners to avoid 1 extra stop (net −$55; off = +$353 vs +$298
+    # at 45). The put-credit guard does the breakdown protection; RSI(2) just throttled
+    # frequency in uptrends. Re-enable only if live sim shows stops piling up.
+    put_credit_max_rsi2: null
+    call_credit_min_rsi2: 55
+    # Don't sell puts into an already-red day / calls into a rip (QQQ −1.4% Jul 23).
+    max_adverse_day_change_pct: 1.0
+    # v4.2: off for paper — 10–16Δ shorts almost always sit inside 1σ when VIX ~15,
+    # so the gate blocked every tick. Re-enable only after live/sim proves need.
+    reject_short_inside_1sigma: false
+    # Softened from 1.15 — still prefer IV > RV, without hard-rejecting calm tapes.
+    min_iv_rv_ratio: 1.05
+    max_open_positions: 1
+    max_contracts_per_trade: 1
+  iron_condor:
+    dte_min: 32
+    dte_max: 45
+    min_credit: 0.60
+    wing_width: 5
+    short_delta: 0.12
+    min_iv_rv_ratio: 1.15
+    # P2.7 GLD post-mortem gate: require BOTH wings outside 1σ before any condor.
+    require_shorts_outside_1sigma: true
+    max_open_positions: 1
+    max_contracts_per_trade: 1
+
+exit_rules:
+  profit_target_pct: 60
+  # 2× credit stop, armed only when short OTM is below thesis floor (3%).
+  # Always-armed 2× (v4) stopped a well-OTM QQQ on 2026-09-01 open-quote width
+  # (~4.7% / $33 OTM). Late-armed 2.5× (v3) let GLD run after the short was tested.
+  # Arm at 3% so mark noise while far from strike is ignored; 2× still fires when
+  # the short is actually threatened.
+  stop_loss_pct: 200
+  stop_loss_require_short_otm_below_pct: 3.0
+  dte_close: 21
+  # 2026-10-07: Sep 25 QQQ was ~10% OTM and dte_close filled a degraded last-good
+  # debit (-$25) once the 60-minute defer expired. Hold the calendar close while
+  # the short is still above this OTM% and the quote is degraded. At expiry a
+  # still-far short settles worthless instead of that debit.
+  dte_close_skip_degraded_above_otm_pct: 5.0
+  # 2026-09-28 Barry OK: defer non-urgent exits (profit_target/dte_close/regime/giveback)
+  # while quotes are degraded, up to 60 min. Stops are never deferred.
+  defer_non_urgent_on_degraded_quotes: true
+  max_defer_minutes: 60
+  # Live: defensive roll on mechanical stop (close then reopen farther OTM / later DTE).
+  # Successful rolls skip stop-loss re-entry cooldown. Max 1 roll/position/day.
+  roll:
+    enabled: true
+    min_dte_remaining: 21
+    min_short_otm_pct: 0.5
+    min_dte_extension: 7
+    target_short_delta_max: 0.12
+    max_debit_pct_of_entry_credit: 25
+    max_rolls_per_position: 1
+    max_rolls_per_day: 1
+  thesis:
+    enabled: true
+    # Hold through first-day mark noise before thesis exits.
+    min_hold_minutes: 2880
+    min_pop_pct_exit: 50
+    max_short_delta_exit: 0.40
+    # Exit earlier than the old 2% (Jul 28 QQQ fired at 2% OTM → −95% of credit).
+    # Backtest Jan–Jul 2026: 3.5% killed a recoverable QQQ drawdown (−$92 vs +$5);
+    # 3.0% survives it AND still exits July-style grinds ~1% of spot sooner.
+    min_short_otm_pct: 3.0
+    # Still off for *exits*: most healthy ~15Δ shorts sit inside 1σ mid-life.
+    exit_short_inside_1sigma: false
+    redeploy_cooldown_minutes: 1440
+    # "What would I open now?" — take green structures that no longer match regime
+    # (e.g. iron condor when tape flips to put_credit / call_credit / pause).
+    regime_mismatch:
+      enabled: true
+      min_profit_pct: 25
+      treat_pause_as_mismatch: true
+    profit_giveback:
+      peak_profit_min_pct: 30
+      exit_if_below_pct: 10
+
+risk:
+  # $5-wide IC @ ~$0.60–1.00 credit → ~$400–440 defined risk; allow slight wing snap.
+  max_portfolio_risk_usd: 3000
+  max_risk_per_trade_usd: 1100
+  max_trades_per_day: 1
+  allowed_underlyings:
+    - QQQ
+    - SPY
+  max_open_per_underlying:
+    QQQ: 1
+    SPY: 1
+  correlation_groups:
+    - name: broad_index
+      symbols: [QQQ, SPY]
+      max_open: 1
+  # Halt new entries after ~10% sleeve drawdown from HWM (~$4k options cash).
+  # P3: tightened from 15% (backtest max DD was ~6%; 15% would allow 2-3 stacked stops).
+  max_drawdown_halt_pct: 10.0
+  drawdown_sleeve_usd: 30000
+  # 2026-09-08 Barry paper unlock: was 10d (QQQ still blocked ~3d after Sep 1 stop).
+  re_entry_after_stop_loss:
+    enabled: true
+    cooldown_days: 3
+  blocked_events: []
+  # P2.5 Post-event IV-harvest window: for 2 calendar days after each macro event,
+  # the tick flags post_event_window (LLM context) — premium is typically rich right
+  # after FOMC/CPI/NFP settles. Entries already resume mechanically after the event.
+  post_event_entry_window_days: 2
+  # Macro calendar (H2 2026). Blocks new entries on [date - lead_days, date].
+  # Sources: Fed FOMC calendar; BLS/FRED CPI + Employment Situation.
+  blocked_dates:
+    # FOMC decision days (2nd day of meeting), lead 1 = also block day-of open
+    - date: "2026-07-29"
+      lead_days: 1
+      label: FOMC
+    - date: "2026-09-16"
+      lead_days: 1
+      label: FOMC
+    - date: "2026-10-28"
+      lead_days: 1
+      label: FOMC
+    - date: "2026-12-09"
+      lead_days: 1
+      label: FOMC
+    # CPI
+    - date: "2026-08-12"
+      lead_days: 0
+      label: CPI
+    - date: "2026-09-11"
+      lead_days: 0
+      label: CPI
+    - date: "2026-10-14"
+      lead_days: 0
+      label: CPI
+    - date: "2026-11-10"
+      lead_days: 0
+      label: CPI
+    - date: "2026-12-10"
+      lead_days: 0
+      label: CPI
+    # NFP (Employment Situation)
+    - date: "2026-08-07"
+      lead_days: 0
+      label: NFP
+    - date: "2026-09-04"
+      lead_days: 0
+      label: NFP
+    - date: "2026-10-02"
+      lead_days: 0
+      label: NFP
+    - date: "2026-11-06"
+      lead_days: 0
+      label: NFP
+    - date: "2026-12-04"
+      lead_days: 0
+      label: NFP
+
+# Regime picks structure: bullish → put credit, bearish → call credit,
+# chop → iron condor, VIX ≤ 14 or ≥ 22 → pause (don't sell crushed or hostile vol).
+# Code change: below the 50DMA now classifies chop/bearish (never neutral → puts),
+# and a missing VIX quote pauses entries (fail-closed) via pause_on_missing_vix.
+regime:
+  enabled: true
+  benchmark_symbol: SPY
+  vix_symbol: $VIX
+  vix_low: 14.0
+  vix_high: 22.0
+  pause_entries_vix_below: 14.0
+  pause_entries_vix_above: 22.0
+  pause_on_missing_vix: true
+  realized_vol_lookback: 20
+  strategy_map:
+    low_vol_trend: put_credit
+    elevated_vol: put_credit
+    # P1.2 chop below the 50DMA = sell CALLS (bearish tilt), not puts — the v3
+    # high_vol_chop→put_credit map sold puts into every breakdown (all 7 stops).
+    high_vol_chop: call_credit
+    bearish_trend: call_credit
+    hostile: pause
+    neutral: put_credit
+  # P1.1 Put-credit guard: when VIX ≥ 18 AND SPY below its 20DMA, no new put credits
+  # (VIX 18-22 was where every backtest stop lived; expectancy collapses there).
+  put_credit_guard:
+    vix_above: 18.0
+    require_benchmark_above_sma: 20
+
+simulation:
+  starting_budget_usd: 30000
+  # P0.3 honest paper fills: entry credit −5%, exit debit +5% (bid/ask cost).
+  fill_slippage_pct: 5.0
+
+execution:
+  # 2026-09-28 Barry OK: no entries / non-urgent exits in the first 15 min after the open.
+  min_minutes_after_open: 15
+  order_type: limit
+  require_preview: true
+  wait_for_fill: true
+  fill_timeout_seconds: 300
+
+llm:
+  # Off 2026-10-01: reviews were not changing entries or exits.
+  enabled: false
+  selection_model: anthropic/claude-sonnet-4
+  monitor_model: google/gemini-2.5-flash
+  web_model: perplexity/sonar
+  review_every_ticks: 30
+  monitor_review_every_ticks: 60
+  web_research_every_reviews: 3
+  max_tokens: 2000
+  veto_entries: true
+  allow_llm_exits: false
+  allow_rule_suggestions: true
+
+notify:
+  telegram:
+    enabled: true
+    notify_every_tick: false
+    notify_on_actions: true
+    llm_notify_digest: true
+    llm_digest_interval_minutes: 60
+    llm_notify_urgent: true
+    llm_urgent_cooldown_minutes: 30
