@@ -22,8 +22,8 @@ export SCHWAB_REPO="${SCHWAB_REPO:-${HOME}/projects/schwabinvestbot}"
 
 SCHWAB="${SCHWAB:-${HOME}/.cargo/bin/schwab}"
 OUT_DIR="${OUT_DIR:-rules/chains}"
-STRIKE_COUNT="${STRIKE_COUNT:-40}"
-DTE_FROM="${DTE_FROM:-20}"
+STRIKE_COUNT="${STRIKE_COUNT:-150}"
+DTE_FROM="${DTE_FROM:-14}"
 DTE_TO="${DTE_TO:-60}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -152,8 +152,8 @@ else:
 merged["snapshot_meta"] = {
     "from_date": os.environ["FROM_DATE"],
     "to_date": os.environ["TO_DATE"],
-    "strike_count": int(os.environ.get("STRIKE_COUNT", "40")),
-    "dte_from": int(os.environ.get("DTE_FROM", "20")),
+    "strike_count": int(os.environ.get("STRIKE_COUNT", "150")),
+    "dte_from": int(os.environ.get("DTE_FROM", "14")),
     "dte_to": int(os.environ.get("DTE_TO", "60")),
     "contract_types": ["PUT", "CALL"],
 }

@@ -33,8 +33,7 @@ use crate::safety::{execute_trading_order, require_trading_approval};
 use crate::trade_audio::{self, TradeAudioEvent};
 
 use super::chains_util::{
-    fetch_chain_for_expiry, fetch_vertical_entry_chain, find_expiry_strikes, merge_strike_maps,
-    vertical_entry_strike_count,
+    atm_implied_vol_across, fetch_vertical_entry_chain, find_expiry_strikes,
 };
 use super::exits::{
     candidate_fails_thesis_gates, degraded_quote_defer_reason, evaluate_position_monitor,
@@ -77,7 +76,6 @@ use super::telegram_format::{
 };
 use crate::ui::agent_health::SharedAgentHealth;
 
-const MAX_ENTRY_QUOTE_WIDTH_RATIO: f64 = 1.0;
 const EXIT_LIMIT_SLIPPAGE: f64 = 0.05;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -456,7 +454,15 @@ pub async fn tick_once(
     let transition =
         schedule::resolve_session(market_open, &rules.schedule, state.last_session.as_deref());
     result.session = transition.session.as_str().to_string();
-    result.next_sleep_seconds = transition.sleep_seconds;
+    result.next_sleep_seconds = if transition.session == AgentSession::RegularHours {
+        schedule::sleep_with_jitter(
+            transition.sleep_seconds,
+            rules.schedule.tick_jitter_seconds,
+            &rules.agent_id,
+        )
+    } else {
+        transition.sleep_seconds
+    };
     state.last_session = Some(result.session.clone());
 
     match transition.session {
@@ -475,6 +481,7 @@ pub async fn tick_once(
                     .push("market open — full evaluation (mechanical exits + live marks)".into());
             }
             state.regular_tick_count += 1;
+            flush_entry_funnel(rules_path, runtime.simulate, state, today);
         }
     }
 
@@ -563,7 +570,12 @@ pub async fn tick_once(
                     update_peak_profit_pct(p, profit);
                 }
                 if let Some(mark) = monitor.mark.as_ref() {
-                    update_last_good_close_quotes(p, mark);
+                    if update_last_good_close_quotes(p, mark) {
+                        result.skipped.push(format!(
+                            "close mark stale — last-good quote used for {} ticks on {position_id}",
+                            super::exits::LAST_GOOD_STALE_AFTER_TICKS
+                        ));
+                    }
                 }
             }
             if !group.legs.is_empty() {
@@ -706,7 +718,12 @@ pub async fn tick_once(
                         update_peak_profit_pct(p, profit);
                     }
                     if let Some(mark) = monitor.mark.as_ref() {
-                        update_last_good_close_quotes(p, mark);
+                        if update_last_good_close_quotes(p, mark) {
+                            result.skipped.push(format!(
+                                "close mark stale — last-good quote used for {} ticks on {position_id}",
+                                super::exits::LAST_GOOD_STALE_AFTER_TICKS
+                            ));
+                        }
                     }
                 }
 
@@ -1011,6 +1028,7 @@ pub async fn tick_once(
                     for skip in found.skipped {
                         result.skipped.push(skip);
                     }
+                    note_entry_funnel(state, today, &found.funnel);
                     pending_entries.extend(found.entries);
                 }
                 Err(e) => result.skipped.push(format!("entry scan {}: {e:#}", account.hash)),
@@ -1047,6 +1065,7 @@ pub async fn tick_once(
                         for skip in found.skipped {
                             result.skipped.push(skip);
                         }
+                        note_entry_funnel(state, today, &found.funnel);
                         pending_entries.extend(found.entries);
                     }
                     Err(e) => {
@@ -1785,6 +1804,7 @@ fn watchlist_for_scan(rules: &RulesConfig, state: &AgentState) -> Vec<WatchlistI
 struct ScanEntriesResult {
     entries: Vec<(String, StrategyKind, Value)>,
     skipped: Vec<String>,
+    funnel: super::entry_search::EntryFunnelCounts,
 }
 
 /// Result of one vertical entry evaluation (signal, soft skip, or hard error via `Result::Err`).
@@ -1818,6 +1838,7 @@ async fn scan_entries_for_account(
     let mut result = ScanEntriesResult {
         entries: Vec::new(),
         skipped: Vec::new(),
+        funnel: super::entry_search::EntryFunnelCounts::default(),
     };
     let policy = &rules.entry_policy;
 
@@ -1939,7 +1960,8 @@ async fn scan_watchlist_tier(
                     result.skipped.push(format!("{sym} vertical: {skip}"));
                 }
                 Ok(None) => {
-                    match evaluate_vertical_entry(
+                    let mut funnel = super::entry_search::EntryFunnelCounts::default();
+                    let outcome = evaluate_vertical_entry(
                         market,
                         rules,
                         &vertical_rules,
@@ -1949,9 +1971,11 @@ async fn scan_watchlist_tier(
                         account_hash,
                         vertical_type,
                         None,
+                        &mut funnel,
                     )
-                    .await
-                    {
+                    .await;
+                    result.funnel.merge(&funnel);
+                    match outcome {
                         Ok(VerticalEntryOutcome::Signal(signal)) => {
                             result.entries.push((
                                 account_hash.to_string(),
@@ -2338,6 +2362,65 @@ async fn notify_llm(
     record_llm_telegram_sent(state, review, now);
 }
 
+fn flush_entry_funnel(
+    rules_path: &std::path::Path,
+    simulate: bool,
+    state: &mut AgentState,
+    today: NaiveDate,
+) {
+    let Some(prev) = state.entry_funnel.clone() else {
+        state.entry_funnel = Some(empty_funnel_day(today));
+        return;
+    };
+    if prev.day >= today {
+        return;
+    }
+    if prev.candidates_seen > 0 || prev.admitted > 0 || !prev.rejects.is_empty() {
+        let _ = journal::append_event(
+            rules_path,
+            simulate,
+            "entry_funnel",
+            json!({
+                "day": prev.day.to_string(),
+                "candidates_seen": prev.candidates_seen,
+                "admitted": prev.admitted,
+                "rejects": prev.rejects,
+            }),
+        );
+    }
+    state.entry_funnel = Some(empty_funnel_day(today));
+}
+
+fn empty_funnel_day(today: NaiveDate) -> super::state::EntryFunnelDay {
+    super::state::EntryFunnelDay {
+        day: today,
+        candidates_seen: 0,
+        admitted: 0,
+        rejects: std::collections::BTreeMap::new(),
+    }
+}
+
+fn note_entry_funnel(
+    state: &mut AgentState,
+    today: NaiveDate,
+    counts: &super::entry_search::EntryFunnelCounts,
+) {
+    if counts.candidates_seen == 0 && counts.admitted == 0 && counts.rejects.is_empty() {
+        return;
+    }
+    let day = state
+        .entry_funnel
+        .get_or_insert_with(|| empty_funnel_day(today));
+    if day.day != today {
+        *day = empty_funnel_day(today);
+    }
+    day.candidates_seen = day.candidates_seen.saturating_add(counts.candidates_seen);
+    day.admitted = day.admitted.saturating_add(counts.admitted);
+    for (gate, n) in &counts.rejects {
+        *day.rejects.entry(gate.clone()).or_insert(0) += *n;
+    }
+}
+
 async fn evaluate_vertical_entry(
     market: &MarketDataApi,
     rules: &RulesConfig,
@@ -2348,6 +2431,7 @@ async fn evaluate_vertical_entry(
     account_hash: &str,
     spread_type: &str,
     exclude_position_id: Option<&str>,
+    funnel_out: &mut super::entry_search::EntryFunnelCounts,
 ) -> Result<VerticalEntryOutcome> {
     // `exclude_position_id` lets a defensive-roll replacement search run *before* the
     // being-rolled position is closed, without that still-open position counting
@@ -2392,143 +2476,72 @@ async fn evaluate_vertical_entry(
         return Ok(VerticalEntryOutcome::Skip("missing underlying price".into()));
     }
 
-    let mut chain =
-        fetch_vertical_entry_chain(
-            market,
-            underlying,
-            contract_type,
-            underlying_price,
-            entry.max_width,
-        )
-        .await?;
-
-    let (mut expiry, mut strike_map) =
-        pick_expiry_map(&chain, map_key, entry.dte_min, entry.dte_max, today)?;
-
-    let mut short_strike = pick_strike_by_delta(
-        &strike_map,
-        entry.short_delta_min,
-        entry.short_delta_max,
-        is_put,
-    );
-
-    if short_strike.is_none() {
-        for mult in [0.93_f64, 0.90, 0.87] {
-            let biased_anchor = if is_put {
-                underlying_price * mult
-            } else {
-                underlying_price * (2.0 - mult)
-            };
-            if let Ok(biased_chain) = fetch_vertical_entry_chain(
-                market,
-                underlying,
-                contract_type,
-                biased_anchor,
-                entry.max_width,
-            )
-            .await
-            {
-                if let Ok((exp, map)) =
-                    pick_expiry_map(&biased_chain, map_key, entry.dte_min, entry.dte_max, today)
-                {
-                    if let Some(s) = pick_strike_by_delta(
-                        &map,
-                        entry.short_delta_min,
-                        entry.short_delta_max,
-                        is_put,
-                    ) {
-                        chain = biased_chain;
-                        expiry = exp;
-                        strike_map = map;
-                        short_strike = Some(s);
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    let Some(short_strike) = short_strike else {
-        return Ok(VerticalEntryOutcome::Skip(format!(
-            "no short in |delta| {:.2}-{:.2}",
-            entry.short_delta_min, entry.short_delta_max
-        )));
-    };
-
-    let exp_str = expiry.to_string();
-    let strike_map = if pick_wing_strike(&strike_map, short_strike, entry.max_width, is_put).is_err() {
-        if let Ok(wing_chain) = fetch_chain_for_expiry(
-            market,
-            underlying,
-            contract_type,
-            if is_put {
-                short_strike - entry.max_width
-            } else {
-                short_strike + entry.max_width
-            },
-            &exp_str,
-            vertical_entry_strike_count(underlying_price, entry.max_width),
-        )
-        .await
-        {
-            if let Ok(mut wing_map) = find_expiry_strikes(&wing_chain, map_key, &exp_str) {
-                merge_strike_maps(&mut wing_map, &strike_map);
-                wing_map
-            } else {
-                strike_map
-            }
-        } else {
-            strike_map
-        }
-    } else {
-        strike_map
-    };
-
-    let long_strike = if let Ok(long) =
-        pick_wing_strike(&strike_map, short_strike, entry.max_width, is_put)
-    {
-        long
-    } else {
-        let target = if is_put {
-            short_strike - entry.max_width
-        } else {
-            short_strike + entry.max_width
-        };
-        if estimate_spread_credit(&strike_map, short_strike, target).is_ok() {
-            target
-        } else {
-            return Ok(VerticalEntryOutcome::Skip(format!(
-                "no wing beyond short {short_strike} (target long {target:.1} not quoted)"
-            )));
-        }
-    };
-
-    let width = (short_strike - long_strike).abs();
-    if width < entry.max_width * 0.5 {
-        return Ok(VerticalEntryOutcome::Skip(format!(
-            "spread width {width:.1} too narrow (max_width {})",
-            entry.max_width
-        )));
-    }
-    let credit = estimate_spread_credit(&strike_map, short_strike, long_strike)
-        .context("estimate spread credit")?;
-    if credit < entry.min_credit {
-        return Ok(VerticalEntryOutcome::Skip(format!(
-            "credit ${credit:.2} below min ${:.2}",
-            entry.min_credit
-        )));
-    }
-    if !entry_quality_ok(&strike_map, short_strike, long_strike, width, credit, entry) {
-        return Ok(VerticalEntryOutcome::Skip(
-            "quote width too wide vs credit or credit/width below entry floor".into(),
-        ));
-    }
+    let chain = fetch_vertical_entry_chain(
+        market,
+        underlying,
+        contract_type,
+        underlying_price,
+        entry.max_width,
+    )
+    .await?;
 
     let lookback = rules.regime.realized_vol_lookback.max(5);
     let realized_vol_pct = fetch_realized_vol_pct(market, underlying, lookback)
         .await
         .ok()
         .flatten();
+    let day_change = chain
+        .pointer("/underlying/percentChange")
+        .and_then(|v| v.as_f64());
+    let listed = super::entry_search::expiries_in_window(
+        &chain,
+        map_key,
+        entry.dte_min,
+        entry.dte_max,
+        today,
+    );
+    let had_listed = !listed.is_empty();
+    let expiries: Vec<_> = listed
+        .into_iter()
+        .filter(|(expiry, _)| {
+            !has_legacy_duplicate(state, account_hash, underlying, &expiry.to_string())
+        })
+        .collect();
+    let search = if had_listed && expiries.is_empty() {
+        let mut blocked = super::entry_search::EntryFunnelCounts::default();
+        blocked.bump("duplicate");
+        super::entry_search::VerticalSearch {
+            best: None,
+            funnel: blocked,
+        }
+    } else {
+        super::entry_search::search_verticals(
+            &expiries,
+            entry,
+            is_put,
+            underlying_price,
+            today,
+            realized_vol_pct,
+            day_change,
+            |analytics| candidate_fails_thesis_gates(rules, analytics),
+        )
+    };
+    funnel_out.merge(&search.funnel);
+    let Some(chosen) = search.best else {
+        return Ok(VerticalEntryOutcome::Skip(
+            super::entry_search::funnel_skip_reason(&search.funnel),
+        ));
+    };
+    let expiry = chosen.expiry;
+    let short_strike = chosen.short_strike;
+    let long_strike = chosen.long_strike;
+    let width = chosen.width;
+    let credit = chosen.credit;
+    let strike_map = expiries
+        .iter()
+        .find(|(exp, _)| *exp == expiry)
+        .map(|(_, map)| map.clone())
+        .unwrap_or_else(|| json!({}));
 
     let market_context = vertical_entry_market_context(
         &chain,
@@ -2692,7 +2705,7 @@ async fn evaluate_condor_entry(
         .ok()
         .flatten();
     if entry.min_iv_rv_ratio.is_some() {
-        let chain_iv = chain.get("volatility").and_then(|v| v.as_f64());
+        let chain_iv = atm_implied_vol_across(&[&put_map, &call_map], underlying_price);
         let ratio = iv_rv_ratio(chain_iv, realized_vol_pct);
         if !passes_min_iv_rv_ratio(entry.min_iv_rv_ratio, ratio) {
             anyhow::bail!(
@@ -2937,36 +2950,6 @@ fn strike_key_candidates(strike: f64) -> Vec<String> {
         format!("{strike:.0}"),
         strike.to_string(),
     ]
-}
-
-fn entry_quality_ok(
-    strike_map: &Value,
-    short_strike: f64,
-    long_strike: f64,
-    width: f64,
-    credit: f64,
-    entry: &VerticalEntryRules,
-) -> bool {
-    if width <= f64::EPSILON || credit <= f64::EPSILON {
-        return false;
-    }
-    let min_ctw = entry.min_credit_to_width_pct.unwrap_or(12.5);
-    let credit_to_width_pct = (credit / width) * 100.0;
-    if credit_to_width_pct < min_ctw {
-        return false;
-    }
-    let short_quote_width = quote_width(strike_map, short_strike).unwrap_or(f64::INFINITY);
-    let long_quote_width = quote_width(strike_map, long_strike).unwrap_or(f64::INFINITY);
-    (short_quote_width + long_quote_width) <= credit * MAX_ENTRY_QUOTE_WIDTH_RATIO
-}
-
-fn quote_width(strike_map: &Value, strike: f64) -> Option<f64> {
-    let bid = strike_quote_field(strike_map, strike, "bid").ok()?;
-    let ask = strike_quote_field(strike_map, strike, "ask").ok()?;
-    if bid < 0.0 || ask <= 0.0 || ask < bid {
-        return None;
-    }
-    Some(ask - bid)
 }
 
 fn has_legacy_duplicate(
@@ -3597,6 +3580,7 @@ async fn try_defensive_roll(
         tracked.contracts.max(1),
     );
 
+    let mut roll_funnel = super::entry_search::EntryFunnelCounts::default();
     let search = evaluate_vertical_entry(
         market,
         rules,
@@ -3607,6 +3591,7 @@ async fn try_defensive_roll(
         account_hash,
         &spread_type,
         Some(position_id),
+        &mut roll_funnel,
     )
     .await;
     let (candidate_credit, mut candidate, no_candidate_reason) = match search {

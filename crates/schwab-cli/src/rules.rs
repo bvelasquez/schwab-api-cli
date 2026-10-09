@@ -104,6 +104,11 @@ pub enum AccountType {
 #[serde(default)]
 pub struct ScheduleConfig {
     pub tick_interval_seconds: u64,
+    /// Extra seconds added to the regular-hours sleep, hashed from `agent_id`,
+    /// so parallel paper arms do not hit the chain API on the same second.
+    /// `0` keeps the interval exact.
+    #[serde(default)]
+    pub tick_jitter_seconds: u64,
     pub market_hours_only: bool,
     pub timezone: String,
     #[serde(default)]
@@ -142,6 +147,7 @@ impl Default for ScheduleConfig {
     fn default() -> Self {
         Self {
             tick_interval_seconds: 60,
+            tick_jitter_seconds: 0,
             market_hours_only: true,
             timezone: "America/New_York".into(),
             overnight: OvernightConfig::default(),
@@ -224,6 +230,7 @@ pub struct VerticalEntryOverrides {
     pub min_pop_pct: Option<f64>,
     pub min_distance_to_be_pct: Option<f64>,
     pub min_credit_to_width_pct: Option<f64>,
+    pub min_short_otm_pct: Option<f64>,
 }
 
 impl VerticalEntryOverrides {
@@ -248,6 +255,9 @@ impl VerticalEntryOverrides {
         }
         if let Some(v) = self.min_credit_to_width_pct {
             base.min_credit_to_width_pct = Some(v);
+        }
+        if let Some(v) = self.min_short_otm_pct {
+            base.min_short_otm_pct = Some(v);
         }
         base
     }
@@ -371,6 +381,9 @@ pub struct VerticalEntryRules {
     pub dte_max: u32,
     pub min_credit: f64,
     pub max_width: f64,
+    /// Widths to search, each at most `max_width`. Empty means `[max_width]` only.
+    #[serde(default)]
+    pub widths: Vec<f64>,
     pub short_delta_min: f64,
     pub short_delta_max: f64,
     /// Minimum modeled POP vs break-even (percent). Omit to skip.
@@ -419,6 +432,7 @@ impl Default for VerticalEntryRules {
             dte_max: 45,
             min_credit: 0.50,
             max_width: 5.0,
+            widths: Vec::new(),
             // Prefer quality shorts; widen only explicitly in rules YAML.
             short_delta_min: 0.10,
             short_delta_max: 0.20,
@@ -1323,6 +1337,7 @@ pub fn rules_json_schema() -> Value {
                 "type": "object",
                 "properties": {
                     "tick_interval_seconds": { "type": "integer", "minimum": 5 },
+                    "tick_jitter_seconds": { "type": "integer", "minimum": 0 },
                     "market_hours_only": { "type": "boolean" },
                     "timezone": { "type": "string" },
                     "overnight": {
@@ -1356,7 +1371,9 @@ pub fn rules_json_schema() -> Value {
                                 "symbol": { "type": "string" },
                                 "role": { "enum": ["primary", "fallback"] },
                                 "min_credit": { "type": "number" },
-                                "min_credit_to_width_pct": { "type": "number" }
+                                "min_credit_to_width_pct": { "type": "number" },
+                                "min_short_otm_pct": { "type": "number" },
+                                "min_distance_to_be_pct": { "type": "number" }
                             }
                         }
                     ]

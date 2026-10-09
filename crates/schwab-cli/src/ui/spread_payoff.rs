@@ -269,6 +269,7 @@ mod tests {
             credit: 0.28,
             dte: 35,
             chain_iv_pct: Some(29.0),
+            pop_iv_pct: None,
             realized_vol_pct: None,
             short_delta: Some(-0.26),
             long_delta: Some(-0.23),

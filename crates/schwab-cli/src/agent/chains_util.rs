@@ -314,6 +314,124 @@ pub fn vertical_entry_strike_count(underlying_price: f64, max_width: f64) -> u32
     (depth_usd.ceil() as u32).clamp(130, 150)
 }
 
+/// Strike count for monitoring an open vertical.
+///
+/// Schwab's `/chains` response is centered on the underlying. The `strike` query
+/// is not an anchor: `strike=<short>&strikeCount=50` still returns ~50 strikes
+/// around spot, which drops a short that has rallied 8% OTM. Size the window
+/// from spot out to the farther leg ($1 grids, both sides of spot, plus pad).
+pub fn monitor_strike_count(spot: f64, far_strike: f64) -> u32 {
+    if !(spot > 0.0) {
+        return 160;
+    }
+    let distance = (spot - far_strike).abs();
+    let needed = (2.0 * distance + 30.0).ceil() as u32;
+    needed.clamp(80, 400)
+}
+
+pub fn both_strikes_in_map(strike_map: &Value, short_strike: f64, long_strike: f64) -> bool {
+    contract_at_strike(strike_map, short_strike).is_some()
+        && contract_at_strike(strike_map, long_strike).is_some()
+}
+
+/// ATM implied vol from per-contract `volatility` (percent). Never the chain-level
+/// `volatility` field, which Schwab fills with a constant placeholder.
+pub fn atm_implied_vol_pct(strike_map: &Value, spot: f64) -> Option<f64> {
+    nearest_listed_iv(strike_map, spot).map(|(_, iv)| iv)
+}
+
+fn nearest_listed_iv(strike_map: &Value, spot: f64) -> Option<(f64, f64)> {
+    if !(spot > 0.0) {
+        return None;
+    }
+    let obj = strike_map.as_object()?;
+    let mut best: Option<(f64, f64)> = None;
+    for (key, contracts) in obj {
+        let Ok(strike) = key.parse::<f64>() else {
+            continue;
+        };
+        let Some(iv) = contracts
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|c| c.get("volatility"))
+            .and_then(|v| v.as_f64())
+            .filter(|v| *v > 0.0)
+        else {
+            continue;
+        };
+        let dist = (strike - spot).abs();
+        match best {
+            Some((best_dist, _)) if dist >= best_dist => {}
+            _ => best = Some((dist, iv)),
+        }
+    }
+    best
+}
+
+/// Closest listed IV across several expiry maps (put and call wings).
+pub fn atm_implied_vol_across(maps: &[&Value], spot: f64) -> Option<f64> {
+    maps.iter()
+        .filter_map(|m| nearest_listed_iv(m, spot))
+        .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(_, iv)| iv)
+}
+
+pub fn insert_chain_contract(strike_map: &mut Value, strike: f64, contract: Value) {
+    let Some(obj) = strike_map.as_object_mut() else {
+        return;
+    };
+    let key = format!("{strike:.1}");
+    obj.insert(key, serde_json::json!([contract]));
+}
+
+fn quote_number(quote: &Value, fields: &[&str]) -> Option<f64> {
+    for field in fields {
+        if let Some(n) = quote.get(*field).and_then(|v| v.as_f64()).filter(|v| *v > 0.0) {
+            return Some(n);
+        }
+    }
+    None
+}
+
+fn quote_entry_for_symbol<'a>(raw: &'a Value, symbol: &str) -> Option<&'a Value> {
+    let want = symbol.trim();
+    if let Some(entry) = raw.get(want) {
+        return Some(entry);
+    }
+    let obj = raw.as_object().or_else(|| raw.get("data")?.as_object())?;
+    for (key, value) in obj {
+        if key.trim().eq_ignore_ascii_case(want) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+/// Map a Schwab option quote (`bidPrice` / `askPrice` / greeks) onto a chain
+/// contract (`bid` / `ask` / `delta` / `volatility`) so a missing wing can be
+/// spliced into the strike map.
+pub fn chain_contract_from_option_quote(raw: &Value, symbol: &str) -> Option<Value> {
+    let entry = quote_entry_for_symbol(raw, symbol)?;
+    let quote = entry.get("quote").unwrap_or(entry);
+    let bid = quote_number(quote, &["bidPrice", "bid"]);
+    let ask = quote_number(quote, &["askPrice", "ask"]);
+    let mark = quote_number(quote, &["mark"]);
+    let last = quote_number(quote, &["lastPrice", "last"]);
+    if bid.is_none() && ask.is_none() && mark.is_none() && last.is_none() {
+        return None;
+    }
+    Some(serde_json::json!({
+        "bid": bid,
+        "ask": ask,
+        "mark": mark,
+        "last": last,
+        "delta": quote.get("delta").and_then(|v| v.as_f64()),
+        "theta": quote.get("theta").and_then(|v| v.as_f64()),
+        "volatility": quote_number(quote, &["volatility"]),
+        "inTheMoney": quote.get("inTheMoney").and_then(|v| v.as_bool()),
+    }))
+}
+
 pub async fn fetch_vertical_entry_chain(
     market: &MarketDataApi,
     underlying: &str,
@@ -357,45 +475,6 @@ pub async fn fetch_vertical_entry_chain(
     Err(last_err.unwrap_or_else(|| anyhow::anyhow!("vertical entry chain fetch failed")))
 }
 
-/// Strike-centered chain for one expiry (smaller payload; used for long-wing quotes).
-pub async fn fetch_chain_for_expiry(
-    market: &MarketDataApi,
-    underlying: &str,
-    contract_type: &str,
-    anchor_price: f64,
-    expiry: &str,
-    strike_count: u32,
-) -> Result<Value> {
-    let anchor = format_chain_strike(anchor_price);
-    market
-        .chains()
-        .get(&ChainQuery {
-            symbol: underlying,
-            contract_type: Some(contract_type),
-            strike: Some(&anchor),
-            strike_count: Some(strike_count),
-            from_date: Some(expiry),
-            to_date: Some(expiry),
-            include_underlying_quote: Some(true),
-            ..Default::default()
-        })
-        .await
-        .map_err(Into::into)
-}
-
-/// Merge missing strike keys from `fallback` into `primary` (for short-leg quotes after wing refetch).
-pub fn merge_strike_maps(primary: &mut Value, fallback: &Value) {
-    let Some(into) = primary.as_object_mut() else {
-        return;
-    };
-    let Some(from) = fallback.as_object() else {
-        return;
-    };
-    for (k, v) in from {
-        into.entry(k.clone()).or_insert_with(|| v.clone());
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -410,6 +489,65 @@ mod tests {
     fn entry_strike_count_covers_deep_otm_on_high_priced_etfs() {
         assert!(vertical_entry_strike_count(715.0, 5.0) >= 130);
         assert!(vertical_entry_strike_count(400.0, 5.0) >= 130);
+    }
+
+    /// QQQ 689/684 with spot 746: a 50- or 100-strike window around spot misses both legs.
+    #[test]
+    fn monitor_window_reaches_a_short_eight_percent_otm() {
+        let count = monitor_strike_count(746.0, 684.0);
+        assert!(count > 100, "count {count} still misses a 62-point wing");
+        assert!(count <= 400);
+        let around_spot = serde_json::json!({
+            "722.0": [{ "bid": 1.0, "ask": 1.1 }],
+            "771.0": [{ "bid": 20.0, "ask": 20.2 }]
+        });
+        assert!(!both_strikes_in_map(&around_spot, 689.0, 684.0));
+    }
+
+    #[test]
+    fn atm_iv_uses_nearest_contract_not_chain_placeholder() {
+        let map = serde_json::json!({
+            "740.0": [{ "volatility": 18.2 }],
+            "700.0": [{ "volatility": 22.0 }]
+        });
+        let iv = atm_implied_vol_pct(&map, 746.0).unwrap();
+        assert!((iv - 18.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn option_quote_splices_into_chain_contract() {
+        let raw = serde_json::json!({
+            "QQQ   261030P00689000": {
+                "quote": {
+                    "bidPrice": 1.99,
+                    "askPrice": 2.02,
+                    "mark": 2.005,
+                    "lastPrice": 2.0,
+                    "delta": -0.091,
+                    "theta": -0.12,
+                    "volatility": 25.1
+                }
+            }
+        });
+        let contract = chain_contract_from_option_quote(&raw, "QQQ   261030P00689000").unwrap();
+        assert!((contract["bid"].as_f64().unwrap() - 1.99).abs() < 1e-9);
+        assert!((contract["ask"].as_f64().unwrap() - 2.02).abs() < 1e-9);
+        assert!((contract["volatility"].as_f64().unwrap() - 25.1).abs() < 1e-9);
+        let mut map = serde_json::json!({});
+        insert_chain_contract(&mut map, 689.0, contract);
+        assert!(both_strikes_in_map(
+            &{
+                let mut with_long = map.clone();
+                insert_chain_contract(
+                    &mut with_long,
+                    684.0,
+                    serde_json::json!({"bid": 1.72, "ask": 1.74, "volatility": 25.8}),
+                );
+                with_long
+            },
+            689.0,
+            684.0,
+        ));
     }
 
     /// QQQ put-credit 670/665: long 665 bid blank (CPI thin quote) — still mark the spread.

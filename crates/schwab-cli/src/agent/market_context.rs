@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 
 use crate::options::days_to_expiry;
 
+use super::chains_util::{atm_implied_vol_across, atm_implied_vol_pct};
 use super::spread_analytics::{
     analytics_to_json, compute_iron_condor_analytics, compute_vertical_analytics,
     IronCondorAnalyticsInput, VerticalAnalyticsInput,
@@ -38,7 +39,8 @@ pub fn vertical_entry_market_context(
     let short_iv = strike_field(strike_map, short_strike, "volatility");
     let short_theta = strike_field(strike_map, short_strike, "theta");
     let long_theta = strike_field(strike_map, long_strike, "theta");
-    let chain_iv = chain.get("volatility").and_then(|v| v.as_f64());
+    // Per-contract IV only. Schwab's chain-level `volatility` is a constant placeholder.
+    let chain_iv = atm_implied_vol_pct(strike_map, underlying_price).or(short_iv);
 
     let underlying_change_pct = underlying_quote
         .pointer("/percentChange")
@@ -51,7 +53,8 @@ pub fn vertical_entry_market_context(
         long_strike,
         credit,
         dte,
-        chain_iv_pct: chain_iv.or(short_iv),
+        chain_iv_pct: chain_iv,
+        pop_iv_pct: short_iv,
         realized_vol_pct,
         short_delta,
         long_delta,
@@ -135,7 +138,9 @@ pub fn iron_condor_entry_market_context(
     let call_short_delta = strike_field(call_map, call_short, "delta");
     let put_short_iv = strike_field(put_map, put_short, "volatility");
     let call_short_iv = strike_field(call_map, call_short, "volatility");
-    let chain_iv = chain.get("volatility").and_then(|v| v.as_f64());
+    let chain_iv = atm_implied_vol_across(&[put_map, call_map], underlying_price)
+        .or(put_short_iv)
+        .or(call_short_iv);
     let total_credit = put_credit + call_credit;
     let put_width = (put_short - put_long).abs();
     let call_width = (call_long - call_short).abs();
@@ -162,7 +167,8 @@ pub fn iron_condor_entry_market_context(
         long_strike: put_long,
         credit: put_credit,
         dte,
-        chain_iv_pct: chain_iv.or(put_short_iv),
+        chain_iv_pct: chain_iv,
+        pop_iv_pct: put_short_iv,
         realized_vol_pct,
         short_delta: put_short_delta,
         long_delta: strike_field(put_map, put_long, "delta"),
@@ -180,7 +186,8 @@ pub fn iron_condor_entry_market_context(
         long_strike: call_long,
         credit: call_credit,
         dte,
-        chain_iv_pct: chain_iv.or(call_short_iv),
+        chain_iv_pct: chain_iv,
+        pop_iv_pct: call_short_iv,
         realized_vol_pct,
         short_delta: call_short_delta,
         long_delta: strike_field(call_map, call_long, "delta"),
@@ -291,7 +298,7 @@ pub fn vertical_open_position_context(
     let short_theta = strike_field(strike_map, short_strike, "theta");
     let long_theta = strike_field(strike_map, long_strike, "theta");
     let short_itm = strike_bool(strike_map, short_strike, "inTheMoney");
-    let chain_iv = chain.get("volatility").and_then(|v| v.as_f64());
+    let chain_iv = atm_implied_vol_pct(strike_map, underlying_price).or(short_iv);
     let width = (short_strike - long_strike).abs();
     let credit = entry_credit.unwrap_or(0.0);
 
@@ -306,7 +313,8 @@ pub fn vertical_open_position_context(
         long_strike,
         credit,
         dte,
-        chain_iv_pct: chain_iv.or(short_iv),
+        chain_iv_pct: chain_iv,
+        pop_iv_pct: short_iv,
         realized_vol_pct: None,
         short_delta,
         long_delta,
@@ -402,9 +410,11 @@ pub fn iron_condor_open_position_context(
         .and_then(|v| v.as_f64())
         .unwrap_or(0.0);
 
-    let chain_iv = chain.get("volatility").and_then(|v| v.as_f64());
     let put_short_iv = strike_field(put_map, put_short, "volatility");
     let call_short_iv = strike_field(call_map, call_short, "volatility");
+    let chain_iv = atm_implied_vol_across(&[put_map, call_map], underlying_price)
+        .or(put_short_iv)
+        .or(call_short_iv);
     let underlying_change_pct = underlying_quote
         .pointer("/percentChange")
         .and_then(|v| v.as_f64());
@@ -418,7 +428,7 @@ pub fn iron_condor_open_position_context(
         call_long,
         credit,
         dte,
-        chain_iv_pct: chain_iv.or(put_short_iv).or(call_short_iv),
+        chain_iv_pct: chain_iv,
         realized_vol_pct: None,
         put_short_delta: strike_field(put_map, put_short, "delta"),
         put_long_delta: strike_field(put_map, put_long, "delta"),
@@ -556,7 +566,8 @@ mod tests {
             Some(20.0),
         );
         assert_eq!(ctx["underlying_price"], 298.0);
-        assert_eq!(ctx["chain_iv"], 29.0);
+        // Spot 298 is nearest listed strike 283 (vol 30.1), not the chain placeholder 29.
+        assert_eq!(ctx["chain_iv"], 30.1);
         assert_eq!(ctx["short_delta"], -0.22);
         assert!((ctx["credit_to_width_pct"].as_f64().unwrap() - 15.0).abs() < 0.01);
         assert!(ctx["spread_pop_pct"].as_f64().unwrap() > 50.0);

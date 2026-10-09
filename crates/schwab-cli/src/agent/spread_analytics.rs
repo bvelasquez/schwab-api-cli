@@ -72,7 +72,11 @@ pub struct VerticalAnalyticsInput {
     pub long_strike: f64,
     pub credit: f64,
     pub dte: i64,
+    /// ATM implied vol of the expiry (percent). IV/RV and the 1σ move use this.
+    /// Callers pass per-contract IV, not Schwab's chain-level placeholder.
     pub chain_iv_pct: Option<f64>,
+    /// Short-strike implied vol (percent) for POP. Falls back to `chain_iv_pct`.
+    pub pop_iv_pct: Option<f64>,
     pub realized_vol_pct: Option<f64>,
     pub short_delta: Option<f64>,
     pub long_delta: Option<f64>,
@@ -110,13 +114,15 @@ pub fn compute_vertical_analytics(input: VerticalAnalyticsInput) -> SpreadAnalyt
     let credit = input.credit.max(0.0);
     let contracts = input.contracts.max(1);
 
-    let iv = input
+    let atm_iv = input
         .chain_iv_pct
         .or_else(|| strike_iv_fallback(input.short_delta))
         .filter(|v| *v > 0.0);
+    let pop_iv = input.pop_iv_pct.filter(|v| *v > 0.0).or(atm_iv);
+    let move_iv = atm_iv.or(pop_iv);
 
     let realized_vol_pct = input.realized_vol_pct.filter(|v| *v > 0.0);
-    let iv_rv_ratio = match (iv, realized_vol_pct) {
+    let iv_rv_ratio = match (move_iv, realized_vol_pct) {
         (Some(iv_pct), Some(rv)) if rv > 0.0 => Some(iv_pct / rv),
         _ => None,
     };
@@ -155,7 +161,7 @@ pub fn compute_vertical_analytics(input: VerticalAnalyticsInput) -> SpreadAnalyt
     });
 
     let (expected_move_1sigma_usd, expected_move_1sigma_pct) =
-        iv.and_then(|iv_pct| {
+        move_iv.and_then(|iv_pct| {
             expected_move(input.underlying_price, iv_pct, input.dte)
         })
         .map(|em| (Some(em), Some((em / input.underlying_price) * 100.0)))
@@ -188,7 +194,7 @@ pub fn compute_vertical_analytics(input: VerticalAnalyticsInput) -> SpreadAnalyt
     };
 
     let spread_pop_pct = break_even.and_then(|be| {
-        iv.and_then(|iv_pct| {
+        pop_iv.and_then(|iv_pct| {
             probability_above_price(input.underlying_price, be, iv_pct, input.dte)
         })
     });
@@ -224,7 +230,7 @@ pub fn compute_vertical_analytics(input: VerticalAnalyticsInput) -> SpreadAnalyt
         width,
         credit,
         dte: input.dte,
-        chain_iv_pct: iv,
+        chain_iv_pct: move_iv,
         realized_vol_pct,
         iv_rv_ratio,
         short_delta: input.short_delta,
@@ -276,6 +282,7 @@ pub fn compute_iron_condor_analytics(input: IronCondorAnalyticsInput) -> SpreadA
         credit: 0.0,
         dte: input.dte,
         chain_iv_pct: input.chain_iv_pct,
+        pop_iv_pct: None,
         realized_vol_pct: input.realized_vol_pct,
         short_delta: input.put_short_delta,
         long_delta: input.put_long_delta,
@@ -292,6 +299,7 @@ pub fn compute_iron_condor_analytics(input: IronCondorAnalyticsInput) -> SpreadA
         credit: 0.0,
         dte: input.dte,
         chain_iv_pct: input.chain_iv_pct,
+        pop_iv_pct: None,
         realized_vol_pct: input.realized_vol_pct,
         short_delta: input.call_short_delta,
         long_delta: input.call_long_delta,
@@ -711,6 +719,59 @@ pub fn entry_analytics_pass(entry: &crate::rules::VerticalEntryRules, a: &Spread
     true
 }
 
+/// Stable gate id when [`entry_analytics_pass`] would return false.
+pub fn entry_analytics_reject_code(
+    entry: &crate::rules::VerticalEntryRules,
+    a: &SpreadAnalytics,
+) -> Option<&'static str> {
+    match a.short_delta {
+        Some(d) => {
+            let abs = d.abs();
+            if abs < entry.short_delta_min || abs > entry.short_delta_max {
+                return Some("delta");
+            }
+        }
+        None => return Some("delta"),
+    }
+    if let Some(min) = entry.min_pop_pct {
+        if a.spread_pop_pct.unwrap_or(0.0) < min {
+            return Some("pop");
+        }
+    }
+    if let Some(min) = entry.min_distance_to_be_pct {
+        if a.distance_to_be_pct.unwrap_or(0.0) < min {
+            return Some("distance_to_be");
+        }
+    }
+    if let Some(min_otm) = entry.min_short_otm_pct {
+        if a.short_otm_pct.unwrap_or(0.0) < min_otm {
+            return Some("otm");
+        }
+    }
+    let min_ctw = entry.min_credit_to_width_pct.unwrap_or(12.5);
+    if a.credit_to_width_pct.unwrap_or(0.0) < min_ctw {
+        return Some("credit_width");
+    }
+    if entry.reject_short_inside_1sigma && a.short_strike_inside_1sigma != Some(false) {
+        return Some("inside_1sigma");
+    }
+    if let Some(min_ratio) = entry.min_iv_rv_ratio {
+        match a.iv_rv_ratio {
+            Some(ratio) if ratio >= min_ratio => {}
+            _ => return Some("iv_rv"),
+        }
+    }
+    if let Some(max_adverse) = entry.max_adverse_day_change_pct {
+        if let Some(chg) = a.underlying_change_pct {
+            let adverse = if a.is_put_spread { -chg } else { chg };
+            if adverse > max_adverse {
+                return Some("adverse_day");
+            }
+        }
+    }
+    None
+}
+
 /// Human-readable reason when [`entry_analytics_pass`] would return false.
 pub fn entry_analytics_reject_reason(
     entry: &crate::rules::VerticalEntryRules,
@@ -960,6 +1021,7 @@ mod tests {
             credit: 0.25,
             dte: 36,
             chain_iv_pct: Some(28.0),
+            pop_iv_pct: None,
             realized_vol_pct: Some(20.0),
             short_delta: Some(-0.22),
             long_delta: Some(-0.15),
@@ -972,6 +1034,33 @@ mod tests {
         assert!(a.spread_pop_pct.unwrap() > 55.0);
         assert!(a.distance_to_be_pct.unwrap() > 5.0);
         assert!(a.net_theta_per_day_usd.unwrap() > 0.0);
+    }
+
+    #[test]
+    fn pop_follows_short_iv_and_expected_move_follows_atm() {
+        let base = VerticalAnalyticsInput {
+            is_put_spread: true,
+            underlying_price: 750.0,
+            short_strike: 710.0,
+            long_strike: 705.0,
+            credit: 0.40,
+            dte: 35,
+            chain_iv_pct: Some(18.0),
+            pop_iv_pct: Some(25.0),
+            realized_vol_pct: Some(16.0),
+            short_delta: Some(-0.16),
+            long_delta: Some(-0.12),
+            short_theta: Some(-0.04),
+            long_theta: Some(-0.03),
+            contracts: 1,
+            underlying_change_pct: Some(0.2),
+        };
+        let split = compute_vertical_analytics(base.clone());
+        let mut same = base;
+        same.pop_iv_pct = Some(18.0);
+        let flat = compute_vertical_analytics(same);
+        assert!((split.expected_move_1sigma_pct.unwrap() - flat.expected_move_1sigma_pct.unwrap()).abs() < 0.01);
+        assert!(split.spread_pop_pct.unwrap() < flat.spread_pop_pct.unwrap());
     }
 
     #[test]

@@ -148,6 +148,7 @@ pub fn vertical_passes_entry_gates(
         credit: v.credit,
         dte: v.dte,
         chain_iv_pct: Some(v.iv_pct),
+        pop_iv_pct: None,
         realized_vol_pct: Some(v.realized_vol_pct).filter(|x| *x > 0.0),
         short_delta: Some(v.short_delta),
         long_delta: Some(v.long_delta),

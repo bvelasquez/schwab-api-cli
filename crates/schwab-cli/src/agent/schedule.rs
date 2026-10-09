@@ -80,6 +80,19 @@ pub fn should_run_overnight_digest(
     }
 }
 
+/// Regular-hours sleep with a stable per-agent offset in `0..=jitter`.
+pub fn sleep_with_jitter(base_seconds: u64, jitter_seconds: u64, agent_id: &str) -> u64 {
+    if jitter_seconds == 0 {
+        return base_seconds;
+    }
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in agent_id.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    base_seconds.saturating_add(hash % (jitter_seconds + 1))
+}
+
 pub fn should_run_monitor_review(
     regular_tick_count: u64,
     last_llm_tick: Option<u64>,
@@ -99,6 +112,7 @@ mod tests {
     fn schedule_with_overnight() -> ScheduleConfig {
         ScheduleConfig {
             tick_interval_seconds: 120,
+            tick_jitter_seconds: 0,
             market_hours_only: true,
             timezone: "America/New_York".into(),
             overnight: OvernightConfig {
@@ -109,6 +123,19 @@ mod tests {
                 alert_on_risk_only: true,
             },
         }
+    }
+
+    #[test]
+    fn jitter_is_stable_and_within_the_window() {
+        let a = sleep_with_jitter(300, 90, "options-arm-o0");
+        let b = sleep_with_jitter(300, 90, "options-arm-o0");
+        assert_eq!(a, b);
+        assert!((300..=390).contains(&a));
+        assert_eq!(sleep_with_jitter(300, 0, "options-arm-o0"), 300);
+        assert_ne!(
+            sleep_with_jitter(300, 90, "options-arm-o0"),
+            sleep_with_jitter(300, 90, "options-arm-o4")
+        );
     }
 
     #[test]

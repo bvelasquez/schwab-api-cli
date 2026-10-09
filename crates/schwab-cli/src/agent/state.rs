@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
 
@@ -90,6 +90,23 @@ pub struct AgentState {
     /// gates via `entry_policy.post_stop_tightening`). Set on stop-loss exits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_tightening_until: Option<chrono::NaiveDate>,
+    /// Today's entry-search tallies. The previous day is journaled as `entry_funnel`
+    /// on the first regular tick of the next session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_funnel: Option<EntryFunnelDay>,
+}
+
+/// Candidates the entry search saw on one trading day, and the first gate that
+/// rejected each one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntryFunnelDay {
+    pub day: NaiveDate,
+    #[serde(default)]
+    pub candidates_seen: u32,
+    #[serde(default)]
+    pub admitted: u32,
+    #[serde(default)]
+    pub rejects: BTreeMap<String, u32>,
 }
 
 impl AgentState {
@@ -179,6 +196,9 @@ pub struct TrackedPosition {
     pub last_good_short_ask: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_good_long_bid: Option<f64>,
+    /// Consecutive monitor ticks whose close debit came from a frozen last-good quote.
+    #[serde(default)]
+    pub last_good_streak: u32,
     /// When a non-urgent exit was first deferred on a degraded quote
     /// (`exit_rules.defer_non_urgent_on_degraded_quotes`). Cleared once the exit
     /// proceeds (the position leaves `open_positions`).
@@ -412,6 +432,7 @@ impl Default for TrackedPosition {
             last_good_debit_to_close: None,
             last_good_short_ask: None,
             last_good_long_bid: None,
+            last_good_streak: 0,
             degraded_quote_exit_deferred_at: None,
         }
     }

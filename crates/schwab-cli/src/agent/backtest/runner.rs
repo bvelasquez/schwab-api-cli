@@ -308,6 +308,7 @@ fn process_open(
                 credit: pos.entry_credit,
                 dte,
                 chain_iv_pct: Some(iv),
+                pop_iv_pct: None,
                 realized_vol_pct: Some(v.realized_vol_pct).filter(|x| *x > 0.0),
                 short_delta: Some(
                     crate::agent::backtest::bs::bs_delta(

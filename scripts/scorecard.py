@@ -417,10 +417,14 @@ def options_section(state_path: Path, journal_path: Path) -> dict:
             open_mark += (float(credit) - float(debit)) * 100.0 * contracts
 
     degraded_exits = 0
+    stale_exits = 0
     for e in exits:
         mark = e.get("mark") or {}
         if mark.get("quote_degraded") or mark.get("source") == "chain_degraded":
             degraded_exits += 1
+        fallback = str(mark.get("quote_fallback") or e.get("quote_fallback") or "")
+        if "last_good" in fallback:
+            stale_exits += 1
 
     mislabeled_rolls: list[str] = []
     entry_times = [(e["ts"], e.get("underlying") or _underlying_from_position(e.get("position_id", ""))) for e in entries]
@@ -458,11 +462,13 @@ def options_section(state_path: Path, journal_path: Path) -> dict:
         "open_position_mark_usd": round(open_mark, 2),
         "equity_usd_est": round(equity, 2),
         "exits_on_degraded_quotes": degraded_exits,
+        "exits_on_stale_marks": stale_exits,
         "defensive_roll_mislabels": mislabeled_rolls,
         "_alerts_inputs": {
             "avg_credit_width_pct": statistics.mean(cw_ratios) if cw_ratios else None,
             "drawdown_pct": drawdown_pct,
             "mislabeled_rolls": mislabeled_rolls,
+            "exits_on_stale_marks": stale_exits,
         },
     }
 
@@ -503,6 +509,10 @@ def build_drift_alerts(swing: dict, options: dict) -> list[str]:
 
     for pid in oi.get("mislabeled_rolls") or []:
         alerts.append(f"options: defensive_roll with no follow-up entry ({pid})")
+
+    stale = oi.get("exits_on_stale_marks") or 0
+    if stale:
+        alerts.append(f"options: {stale} close(s) booked on a stale last-good mark")
 
     return alerts
 

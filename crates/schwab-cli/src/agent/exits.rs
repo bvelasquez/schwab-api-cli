@@ -1,6 +1,7 @@
 use super::chains_util::{
-    credit_spread_debit_to_close_with_last_good_legs, find_expiry_strikes, format_chain_strike,
-    iron_condor_debit_to_close, CreditCloseQuote,
+    both_strikes_in_map, chain_contract_from_option_quote,
+    credit_spread_debit_to_close_with_last_good_legs, find_expiry_strikes, insert_chain_contract,
+    iron_condor_debit_to_close, monitor_strike_count, CreditCloseQuote,
 };
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
@@ -44,18 +45,34 @@ pub struct SpreadMark {
     pub last_good_long_bid: Option<f64>,
 }
 
+/// Consecutive ticks that closed from a frozen last-good quote before we alert.
+pub const LAST_GOOD_STALE_AFTER_TICKS: u32 = 3;
+
 /// Persist a live close mark so the next tick can fall back if a wing's bid/ask is blank.
-pub fn update_last_good_close_quotes(position: &mut TrackedPosition, mark: &SpreadMark) {
-    if !mark.persist_as_last_good {
-        return;
+///
+/// Returns true on the tick that crosses [`LAST_GOOD_STALE_AFTER_TICKS`] of last-good
+/// fallbacks. A live NBBO (or a mark/last substitute fresh enough to persist) resets
+/// the streak. Last-good itself is not written back over the stored prices.
+pub fn update_last_good_close_quotes(position: &mut TrackedPosition, mark: &SpreadMark) -> bool {
+    let used_last_good = mark
+        .quote_fallback
+        .as_deref()
+        .is_some_and(|s| s.contains("last_good"));
+    if used_last_good {
+        position.last_good_streak = position.last_good_streak.saturating_add(1);
+        return position.last_good_streak == LAST_GOOD_STALE_AFTER_TICKS;
     }
-    position.last_good_debit_to_close = Some(mark.debit_to_close);
-    if let Some(ask) = mark.last_good_short_ask {
-        position.last_good_short_ask = Some(ask);
+    if mark.persist_as_last_good {
+        position.last_good_streak = 0;
+        position.last_good_debit_to_close = Some(mark.debit_to_close);
+        if let Some(ask) = mark.last_good_short_ask {
+            position.last_good_short_ask = Some(ask);
+        }
+        if let Some(bid) = mark.last_good_long_bid {
+            position.last_good_long_bid = Some(bid);
+        }
     }
-    if let Some(bid) = mark.last_good_long_bid {
-        position.last_good_long_bid = Some(bid);
-    }
+    false
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -725,10 +742,13 @@ async fn fetch_vertical_chain_snapshot(
         "callExpDateMap"
     };
 
+    // Schwab centers /chains on the underlying and ignores `strike` as an anchor.
+    // Start wide enough for a short several percent OTM, then widen from the
+    // live spot, then quote the two OCC symbols if the legs are still missing.
     let mut last_err = None;
-    let mut last_incomplete: Option<VerticalChainSnapshot> = None;
-    for strike_count in [50u32, 100] {
-        match fetch_vertical_chain_at_strikes(
+    let mut snap = None;
+    for strike_count in [160u32, 240] {
+        match fetch_vertical_chain_window(
             market,
             group,
             contract_type,
@@ -737,27 +757,125 @@ async fn fetch_vertical_chain_snapshot(
             long_strike,
             is_put,
             strike_count,
-            tracked,
         )
         .await
         {
-            Ok(snap) if snap.debit.is_some() => return Ok(snap),
-            Ok(snap) => {
-                last_incomplete = Some(snap);
-                last_err = Some(anyhow::anyhow!("incomplete option quotes after fallbacks"));
+            Ok(window) => {
+                let covered = both_strikes_in_map(&window.strike_map, short_strike, long_strike);
+                snap = Some(window);
+                if covered {
+                    break;
+                }
             }
             Err(e) => last_err = Some(e),
         }
     }
+    let Some(mut snap) = snap else {
+        return Err(last_err.unwrap_or_else(|| anyhow::anyhow!("chain fetch failed")));
+    };
 
-    if let Some(snap) = last_incomplete {
-        return Ok(snap);
+    if !both_strikes_in_map(&snap.strike_map, short_strike, long_strike) {
+        let spot = chain_underlying_price(&snap.chain);
+        let far = if is_put {
+            short_strike.min(long_strike)
+        } else {
+            short_strike.max(long_strike)
+        };
+        let needed = monitor_strike_count(spot, far);
+        if needed > 240 {
+            if let Ok(wider) = fetch_vertical_chain_window(
+                market,
+                group,
+                contract_type,
+                map_key,
+                short_strike,
+                long_strike,
+                is_put,
+                needed,
+            )
+            .await
+            {
+                snap = wider;
+            }
+        }
     }
-    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("chain fetch failed")))
+
+    if !both_strikes_in_map(&snap.strike_map, short_strike, long_strike) {
+        let _ = splice_missing_leg_quotes(
+            market,
+            group,
+            &mut snap.strike_map,
+            short_strike,
+            long_strike,
+            is_put,
+        )
+        .await;
+    }
+
+    let last_good_debit = tracked.and_then(|t| t.last_good_debit_to_close);
+    let last_good_short = tracked.and_then(|t| t.last_good_short_ask);
+    let last_good_long = tracked.and_then(|t| t.last_good_long_bid);
+    snap.debit = credit_spread_debit_to_close_with_last_good_legs(
+        &snap.strike_map,
+        short_strike,
+        long_strike,
+        last_good_debit,
+        last_good_short,
+        last_good_long,
+    );
+    Ok(snap)
+}
+
+fn chain_underlying_price(chain: &Value) -> f64 {
+    chain
+        .pointer("/underlying/last")
+        .or_else(|| chain.pointer("/underlying/mark"))
+        .or_else(|| chain.pointer("/underlyingPrice"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0)
+}
+
+async fn splice_missing_leg_quotes(
+    market: &MarketDataApi,
+    group: &OptionPositionGroup,
+    strike_map: &mut Value,
+    short_strike: f64,
+    long_strike: f64,
+    is_put: bool,
+) -> bool {
+    let put_call = if is_put { 'P' } else { 'C' };
+    let mut wanted: Vec<(f64, String)> = Vec::new();
+    for strike in [short_strike, long_strike] {
+        if super::chains_util::contract_at_strike(strike_map, strike).is_some() {
+            continue;
+        }
+        if let Ok(symbol) =
+            build_option_symbol(&group.underlying, &group.expiry, put_call, strike)
+        {
+            wanted.push((strike, symbol));
+        }
+    }
+    if wanted.is_empty() {
+        return true;
+    }
+    let joined = wanted
+        .iter()
+        .map(|(_, symbol)| symbol.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    let Ok(raw) = market.quotes().get_quotes(&joined, Some("quote"), None).await else {
+        return false;
+    };
+    for (strike, symbol) in &wanted {
+        if let Some(contract) = chain_contract_from_option_quote(&raw, symbol) {
+            insert_chain_contract(strike_map, *strike, contract);
+        }
+    }
+    both_strikes_in_map(strike_map, short_strike, long_strike)
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn fetch_vertical_chain_at_strikes(
+async fn fetch_vertical_chain_window(
     market: &MarketDataApi,
     group: &OptionPositionGroup,
     contract_type: &str,
@@ -766,15 +884,14 @@ async fn fetch_vertical_chain_at_strikes(
     long_strike: f64,
     is_put: bool,
     strike_count: u32,
-    tracked: Option<&TrackedPosition>,
 ) -> Result<VerticalChainSnapshot> {
-    let strike_anchor = format_chain_strike(short_strike);
+    // Do not pass `strike`. Schwab ignores it as an anchor and returns a window
+    // around the underlying; a short-centered request still misses far-OTM legs.
     let chain = market
         .chains()
         .get(&ChainQuery {
             symbol: &group.underlying,
             contract_type: Some(contract_type),
-            strike: Some(&strike_anchor),
             strike_count: Some(strike_count),
             include_underlying_quote: Some(true),
             from_date: Some(&group.expiry),
@@ -786,25 +903,13 @@ async fn fetch_vertical_chain_at_strikes(
     let strike_map =
         find_expiry_strikes(&chain, map_key, &group.expiry).context("expiry not found in chain")?;
 
-    let last_good_debit = tracked.and_then(|t| t.last_good_debit_to_close);
-    let last_good_short = tracked.and_then(|t| t.last_good_short_ask);
-    let last_good_long = tracked.and_then(|t| t.last_good_long_bid);
-    let debit = credit_spread_debit_to_close_with_last_good_legs(
-        &strike_map,
-        short_strike,
-        long_strike,
-        last_good_debit,
-        last_good_short,
-        last_good_long,
-    );
-
     Ok(VerticalChainSnapshot {
         chain,
         strike_map,
         short_strike,
         long_strike,
         is_put,
-        debit,
+        debit: None,
     })
 }
 
@@ -1425,6 +1530,34 @@ mod tests {
         // Unknown reasons default to urgent (fail-safe).
         assert!(is_urgent_exit_reason("max_loss"));
         assert!(is_urgent_exit_reason("some_future_reason"));
+    }
+
+    #[test]
+    fn last_good_streak_alerts_on_the_third_tick_and_resets_on_a_live_mark() {
+        let mut position = TrackedPosition::default();
+        let stale = SpreadMark {
+            debit_to_close: 0.68,
+            quote_degraded: true,
+            quote_fallback: Some("ask 689: last_good; bid 684: last_good".into()),
+            suppress_profit_target: true,
+            ..Default::default()
+        };
+        assert!(!update_last_good_close_quotes(&mut position, &stale));
+        assert!(!update_last_good_close_quotes(&mut position, &stale));
+        assert!(update_last_good_close_quotes(&mut position, &stale));
+        assert_eq!(position.last_good_streak, 3);
+        assert!(position.last_good_debit_to_close.is_none());
+
+        let live = SpreadMark {
+            debit_to_close: 0.30,
+            persist_as_last_good: true,
+            last_good_short_ask: Some(2.02),
+            last_good_long_bid: Some(1.72),
+            ..Default::default()
+        };
+        assert!(!update_last_good_close_quotes(&mut position, &live));
+        assert_eq!(position.last_good_streak, 0);
+        assert!((position.last_good_debit_to_close.unwrap() - 0.30).abs() < 1e-9);
     }
 
     #[test]

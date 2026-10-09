@@ -15,6 +15,7 @@ pub mod roll;
 pub mod scorecard;
 pub mod backtest;
 pub mod chains_util;
+pub mod entry_search;
 pub mod technical;
 pub mod sim;
 pub mod volatility;

@@ -4,6 +4,7 @@
 Description=Run Schwab chain snapshots on weekdays
 
 [Timer]
+OnCalendar=Mon..Fri 09:45 America/New_York
 OnCalendar=Mon..Fri 10:00 America/New_York
 OnCalendar=Mon..Fri 12:30 America/New_York
 OnCalendar=Mon..Fri 15:45 America/New_York
