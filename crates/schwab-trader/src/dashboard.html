@@ -512,6 +512,13 @@ function positionHealth(p) {
   if (be != null) bits.push("Break-even at expiration is " + be.toFixed(2) + ".");
   return { label, tone, say: bits.join(" ") };
 }
+function bookHealth(book) {
+  const rows = (book.positions || []).map(positionHealth).filter(Boolean);
+  if (!rows.length) return { text: "—", tone: "" };
+  if (rows.every((h) => h.label === "On track")) return { text: "Yes", tone: "up" };
+  if (rows.some((h) => h.label === "Under pressure")) return { text: "No", tone: "down" };
+  return { text: "Watch", tone: "watch" };
+}
 function payoffChart(p) {
   const credit = p.entry_credit;
   const short = p.short_strike;
@@ -802,11 +809,13 @@ function renderLab(options, lab) {
 
   card.appendChild(el("h2", null, "What each book is testing"));
   card.appendChild(table(
-    [{label:"Book"},{label:"Open", num:true},{label:"Sleeve return", num:true},{label:"Realized", num:true},{label:"Open mark", num:true},{label:"Closed", num:true},{label:"Gates", wrap:true}],
+    [{label:"Book"},{label:"On track"},{label:"Open", num:true},{label:"Sleeve return", num:true},{label:"Realized", num:true},{label:"Open mark", num:true},{label:"Closed", num:true},{label:"Gates", wrap:true}],
     options.map((b) => {
       const ret = sleeveReturn(b);
+      const health = bookHealth(b);
       return [
         cell(shortName(b)),
+        cell(health.text, health.tone),
         cell(b.open_count),
         cell(ret == null ? "—" : pct2(ret), cls(ret)),
         cell(usd2(b.realized_pnl_usd), cls(b.realized_pnl_usd)),
