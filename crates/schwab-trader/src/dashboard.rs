@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 
 use crate::agent::paths::{journal_path, shadow_state_path, state_path};
@@ -21,6 +21,8 @@ const JOURNAL_CHUNK_BYTES: u64 = 256 * 1024;
 const JOURNAL_SEARCH_BYTES: u64 = 8 * 1024 * 1024;
 const JOURNAL_LIMIT: usize = 40;
 const CLOSE_LIMIT: usize = 12;
+/// A nightly artifact older than this is shown as stale on the dashboard.
+const LAB_STALE_HOURS: f64 = 36.0;
 
 pub struct DashboardPaths {
     pub swing: Vec<PathBuf>,
@@ -70,7 +72,106 @@ pub fn snapshot(paths: &DashboardPaths) -> Value {
     json!({
         "generated_at": Utc::now().to_rfc3339(),
         "books": books,
+        "lab": lab_section(paths),
     })
+}
+
+/// Nightly evidence files (scorecard, benchmarks, slippage calibration, promotion gate).
+/// They live under the rules directory that holds the options rules files. Missing
+/// files are reported as `present: false`; they are never an error.
+fn lab_section(paths: &DashboardPaths) -> Value {
+    let rules_dir = paths
+        .options
+        .first()
+        .and_then(|p| p.parent())
+        .map(|p| if p.as_os_str().is_empty() { Path::new(".") } else { p })
+        .unwrap_or_else(|| Path::new("."));
+    json!({
+        "scorecard": lab_artifact(&rules_dir.join("scorecards").join("latest.json"), |doc| {
+            json!({
+                "date": doc.get("date").cloned().unwrap_or(Value::Null),
+                "options_arms": doc.get("options_arms").cloned().unwrap_or(Value::Null),
+                "drift_alerts": doc.get("drift_alerts").cloned().unwrap_or(Value::Null),
+            })
+        }),
+        "benchmarks": lab_artifact(&rules_dir.join("benchmarks").join("latest.json"), |doc| {
+            let mut doc = doc.clone();
+            // Per-trade rows are bulky and not shown; keep the totals.
+            if let Some(agents) = doc.get_mut("agents").and_then(Value::as_object_mut) {
+                for agent in agents.values_mut() {
+                    if let Some(obj) = agent.as_object_mut() {
+                        obj.remove("trades");
+                    }
+                }
+            }
+            doc
+        }),
+        "slippage": lab_artifact(&rules_dir.join("analysis").join("slippage-calibration.json"), |doc| {
+            json!({
+                "snapshots": doc.get("snapshots").cloned().unwrap_or(Value::Null),
+                "current_8709_fill_slippage_pct": doc.get("current_8709_fill_slippage_pct").cloned().unwrap_or(Value::Null),
+                "recommended": doc.get("recommended").cloned().unwrap_or(Value::Null),
+                "by_symbol_and_dte": doc.get("by_symbol_and_dte").cloned().unwrap_or(Value::Null),
+                "paper_fills_vs_quotes": doc.get("paper_fills_vs_quotes").cloned().unwrap_or(Value::Null),
+            })
+        }),
+        "promotion_gate": lab_artifact(&rules_dir.join("analysis").join("options-promotion-gate.json"), |doc| doc.clone()),
+    })
+}
+
+fn lab_artifact(path: &Path, shape: impl Fn(&Value) -> Value) -> Value {
+    let Ok(doc) = read_json(path) else {
+        return json!({ "present": false });
+    };
+    let generated = doc.get("generated_at").and_then(Value::as_str).map(str::to_string);
+    let age_hours = generated
+        .as_deref()
+        .and_then(|ts| DateTime::parse_from_rfc3339(ts).ok())
+        .map(|ts| (Utc::now() - ts.with_timezone(&Utc)).num_seconds() as f64 / 3600.0);
+    json!({
+        "present": true,
+        "generated_at": generated,
+        "age_hours": age_hours,
+        "stale": age_hours.map(|h| h > LAB_STALE_HOURS).unwrap_or(true),
+        "data": shape(&doc),
+    })
+}
+
+/// `# HYPOTHESIS:` and `# FALSIFIER:` lines from the comment block at the top of an
+/// arm's rules file. Continuation comment lines are joined. Both are `None` when absent.
+fn arm_notes(rules_path: &Path) -> (Option<String>, Option<String>) {
+    let Ok(raw) = std::fs::read_to_string(rules_path) else {
+        return (None, None);
+    };
+    let mut hypothesis = String::new();
+    let mut falsifier = String::new();
+    let mut target = 0_u8; // 0 none, 1 hypothesis, 2 falsifier
+    for line in raw.lines() {
+        let Some(comment) = line.strip_prefix('#') else {
+            if !line.trim().is_empty() && target != 0 {
+                break;
+            }
+            continue;
+        };
+        let comment = comment.trim();
+        if let Some(rest) = comment.strip_prefix("HYPOTHESIS:") {
+            target = 1;
+            hypothesis.push_str(rest.trim());
+        } else if let Some(rest) = comment.strip_prefix("FALSIFIER:") {
+            target = 2;
+            falsifier.push_str(rest.trim());
+        } else if comment.is_empty() {
+            target = 0;
+        } else if target == 1 {
+            hypothesis.push(' ');
+            hypothesis.push_str(comment);
+        } else if target == 2 {
+            falsifier.push(' ');
+            falsifier.push_str(comment);
+        }
+    }
+    let wrap = |s: String| if s.is_empty() { None } else { Some(s) };
+    (wrap(hypothesis), wrap(falsifier))
 }
 
 fn swing_book(rules_path: &Path) -> Value {
@@ -105,8 +206,18 @@ fn options_book(rules_path: &Path) -> Value {
     let state = inner_state(&state).clone();
     let mut book = book_from_equity_state("options", &name, rules_path, &state, sleeve);
     let positions = options_positions(&state);
+    let unrealized: f64 = positions
+        .iter()
+        .filter_map(|p| p.get("unrealized_usd").and_then(Value::as_f64))
+        .sum();
     book["open_count"] = json!(positions.len());
     book["positions"] = json!(positions);
+    book["unrealized_pnl_usd"] = json!(unrealized);
+    book["entry_funnel"] = state.get("entry_funnel").cloned().unwrap_or(Value::Null);
+    book["experiment"] = options_experiment(&yaml);
+    let (hypothesis, falsifier) = arm_notes(rules_path);
+    book["hypothesis"] = json!(hypothesis);
+    book["falsifier"] = json!(falsifier);
     if book["cash_usd"].is_null() {
         if let Some(start) = state
             .pointer("/sim/starting_budget_usd")
@@ -116,10 +227,12 @@ fn options_book(rules_path: &Path) -> Value {
                 .pointer("/sim/realized_pnl_usd")
                 .and_then(Value::as_f64)
                 .unwrap_or(0.0);
-            book["equity_usd"] = json!(start + realized);
+            book["equity_usd"] = json!(start + realized + unrealized);
             book["cash_usd"] = json!(start + realized);
             book["starting_cash_usd"] = json!(start);
         }
+    } else if let Some(equity) = book["equity_usd"].as_f64() {
+        book["equity_usd"] = json!(equity + unrealized);
     }
     book["journal"] = json!(journal_tail(&options_journal_path(rules_path)));
     book
@@ -184,6 +297,7 @@ fn book_from_equity_state(
         "realized_pnl_usd": realized,
         "positions": positions,
         "recent_closes": recent_closes(&closed),
+        "pnl_series": pnl_series(&closed),
         "journal": journal,
     })
 }
@@ -239,13 +353,49 @@ fn options_positions(state: &Value) -> Vec<Value> {
     let mut rows: Vec<Value> = map
         .values()
         .map(|p| {
+            let params = p.get("entry_params");
+            let credit = p.get("entry_credit").and_then(Value::as_f64);
+            let debit = p.get("last_good_debit_to_close").and_then(Value::as_f64);
+            let contracts = p
+                .get("contracts")
+                .and_then(Value::as_f64)
+                .unwrap_or(1.0)
+                .max(0.0);
+            let unrealized = credit.zip(debit).map(|(c, d)| (c - d) * 100.0 * contracts);
+            let unrealized_pct = credit
+                .zip(debit)
+                .filter(|(c, _)| *c > 0.0)
+                .map(|(c, d)| (c - d) / c * 100.0);
+            let short = params
+                .and_then(|v| v.get("short_strike"))
+                .and_then(Value::as_f64);
+            let long = params
+                .and_then(|v| v.get("long_strike"))
+                .and_then(Value::as_f64);
+            let width = short.zip(long).map(|(s, l)| (s - l).abs());
+            let credit_to_width_pct = credit
+                .zip(width)
+                .filter(|(_, w)| *w > 0.0)
+                .map(|(c, w)| c / w * 100.0);
             json!({
                 "underlying": p.get("underlying").cloned().unwrap_or(Value::Null),
                 "strategy": p.get("strategy").cloned().unwrap_or(Value::Null),
+                "spread_type": params.and_then(|v| v.get("type")).cloned().unwrap_or(Value::Null),
                 "expiry": p.get("expiry").cloned().unwrap_or(Value::Null),
+                "opened_at": p.get("opened_at").cloned().unwrap_or(Value::Null),
                 "contracts": p.get("contracts").cloned().unwrap_or(Value::Null),
-                "entry_credit": p.get("entry_credit").cloned().unwrap_or(Value::Null),
+                "short_strike": short,
+                "long_strike": long,
+                "width": width,
+                "entry_credit": credit,
+                "debit_to_close": debit,
+                "credit_to_width_pct": credit_to_width_pct,
+                "unrealized_usd": unrealized,
+                "unrealized_pct": unrealized_pct,
+                "entry_pop_pct": p.get("entry_pop_pct").cloned().unwrap_or(Value::Null),
+                "entry_short_delta": p.get("entry_short_delta").cloned().unwrap_or(Value::Null),
                 "max_loss_usd": p.get("max_loss_usd").cloned().unwrap_or(Value::Null),
+                "last_good_streak": p.get("last_good_streak").cloned().unwrap_or(json!(0)),
             })
         })
         .collect();
@@ -356,6 +506,56 @@ fn trade_stats(closed: &[Value]) -> (usize, usize, f64) {
         }
     }
     (closed.len(), wins, realized)
+}
+
+fn pnl_series(closed: &[Value]) -> Vec<Value> {
+    let mut rows: Vec<&Value> = closed.iter().collect();
+    rows.sort_by(|a, b| {
+        a.get("closed_at")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .cmp(b.get("closed_at").and_then(Value::as_str).unwrap_or(""))
+    });
+    let mut cumulative = 0.0;
+    rows.into_iter()
+        .map(|t| {
+            let pnl = t.get("pnl_usd").and_then(Value::as_f64).unwrap_or(0.0);
+            cumulative += pnl;
+            json!({
+                "at": t.get("closed_at").cloned().unwrap_or(Value::Null),
+                "pnl_usd": pnl,
+                "realized_usd": cumulative,
+            })
+        })
+        .collect()
+}
+
+fn options_experiment(yaml: &Value) -> Value {
+    let widths = pointer(yaml, &["entry_rules", "vertical", "widths"])
+        .and_then(Value::as_array)
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|n| n.as_f64().or_else(|| n.as_i64().map(|i| i as f64)))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    json!({
+        "profit_target_pct": yaml_f64(yaml, &["exit_rules", "profit_target_pct"]),
+        "stop_loss_pct": yaml_f64(yaml, &["exit_rules", "stop_loss_pct"]),
+        "dte_close": yaml_f64(yaml, &["exit_rules", "dte_close"]),
+        "min_credit": yaml_f64(yaml, &["entry_rules", "vertical", "min_credit"]),
+        "min_credit_to_width_pct": yaml_f64(yaml, &["entry_rules", "vertical", "min_credit_to_width_pct"]),
+        "min_distance_to_be_pct": yaml_f64(yaml, &["entry_rules", "vertical", "min_distance_to_be_pct"]),
+        "min_short_otm_pct": yaml_f64(yaml, &["entry_rules", "vertical", "min_short_otm_pct"]),
+        "short_delta_min": yaml_f64(yaml, &["entry_rules", "vertical", "short_delta_min"]),
+        "short_delta_max": yaml_f64(yaml, &["entry_rules", "vertical", "short_delta_max"]),
+        "max_width": yaml_f64(yaml, &["entry_rules", "vertical", "max_width"]),
+        "widths": widths,
+        "dte_min": yaml_f64(yaml, &["entry_rules", "vertical", "dte_min"]),
+        "dte_max": yaml_f64(yaml, &["entry_rules", "vertical", "dte_max"]),
+        "max_open_positions": yaml_f64(yaml, &["entry_rules", "vertical", "max_open_positions"]),
+        "max_trades_per_day": yaml_f64(yaml, &["risk", "max_trades_per_day"]),
+    })
 }
 
 fn recent_closes(closed: &[Value]) -> Vec<Value> {
@@ -660,6 +860,60 @@ mod tests {
     }
 
     #[test]
+    fn arm_notes_join_continuation_lines_and_stop_at_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let rules = dir.path().join("arm.yaml");
+        std::fs::write(
+            &rules,
+            "version: 1\n# Paper arm\n# HYPOTHESIS: longer trades keep\n# more edge after costs.\n# FALSIFIER: no better than O0.\nagent_id: x\n# HYPOTHESIS: ignored because yaml already started\n",
+        )
+        .unwrap();
+        let (h, f) = arm_notes(&rules);
+        assert_eq!(h.as_deref(), Some("longer trades keep more edge after costs."));
+        assert_eq!(f.as_deref(), Some("no better than O0."));
+        assert_eq!(arm_notes(&dir.path().join("missing.yaml")), (None, None));
+    }
+
+    #[test]
+    fn lab_section_reports_missing_files_without_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let rules = dir.path().join("options-a.yaml");
+        std::fs::write(&rules, "agent_id: a\n").unwrap();
+        let lab = lab_section(&DashboardPaths { swing: vec![], options: vec![rules] });
+        for key in ["scorecard", "benchmarks", "slippage", "promotion_gate"] {
+            assert_eq!(lab[key]["present"], false, "{key}");
+        }
+    }
+
+    #[test]
+    fn lab_section_reads_artifacts_and_flags_stale_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let rules = dir.path().join("options-a.yaml");
+        std::fs::write(&rules, "agent_id: a\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("scorecards")).unwrap();
+        std::fs::create_dir_all(dir.path().join("benchmarks")).unwrap();
+        let fresh = Utc::now().to_rfc3339();
+        std::fs::write(
+            dir.path().join("scorecards/latest.json"),
+            json!({"date": "2026-10-12", "generated_at": fresh, "options_arms": {"nominal_entries": 11, "effective_entries": 5}, "drift_alerts": ["x"], "swing": {"big": 1}}).to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("benchmarks/latest.json"),
+            json!({"generated_at": "2020-01-01T00:00:00+00:00", "agents": {"a": {"total_usd": 1.0, "trades": [1, 2, 3]}}}).to_string(),
+        )
+        .unwrap();
+        let lab = lab_section(&DashboardPaths { swing: vec![], options: vec![rules] });
+        assert_eq!(lab["scorecard"]["present"], true);
+        assert_eq!(lab["scorecard"]["stale"], false);
+        assert_eq!(lab["scorecard"]["data"]["options_arms"]["effective_entries"], 5);
+        assert!(lab["scorecard"]["data"].get("swing").is_none());
+        assert_eq!(lab["benchmarks"]["stale"], true);
+        assert!(lab["benchmarks"]["data"]["agents"]["a"].get("trades").is_none());
+        assert_eq!(lab["benchmarks"]["data"]["agents"]["a"]["total_usd"], 1.0);
+    }
+
+    #[test]
     fn request_path_ignores_the_query_string() {
         let headers = "GET /api/status?x=1 HTTP/1.1\r\nHost: jarvis\r\n\r\n";
         assert_eq!(request_path(headers), "/api/status");
@@ -670,7 +924,11 @@ mod tests {
     fn options_book_reads_the_paper_sim_state() {
         let dir = tempfile::tempdir().unwrap();
         let rules = dir.path().join("options-pilot.yaml");
-        std::fs::write(&rules, "agent_id: options-pilot\nsimulation:\n  starting_budget_usd: 4000\n").unwrap();
+        std::fs::write(
+            &rules,
+            "agent_id: options-pilot\nsimulation:\n  starting_budget_usd: 4000\nexit_rules:\n  profit_target_pct: 60\n  stop_loss_pct: 200\n  dte_close: 21\nentry_rules:\n  vertical:\n    min_credit: 0.50\n    short_delta_min: 0.12\n    short_delta_max: 0.20\n    max_open_positions: 1\nrisk:\n  max_trades_per_day: 1\n",
+        )
+        .unwrap();
         std::fs::write(
             dir.path().join("agent-state-options-pilot.json"),
             r#"{"agent_id":"options-pilot","last_tick":"2026-08-05T15:00:00Z","open_positions":{},"tick_count":1}"#,
@@ -678,7 +936,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             dir.path().join("agent-sim-state-options-pilot.json"),
-            r#"{"agent_id":"options-pilot","last_tick":"2026-10-08T18:00:00Z","tick_count":9,"open_positions":{"p":{"underlying":"SPY","strategy":"iron_condor","expiry":"2026-10-16","contracts":1,"entry_credit":1.2,"max_loss_usd":380}},"sim":{"starting_budget_usd":4000,"realized_pnl_usd":-71.6,"closed_trades":[{"underlying":"QQQ","pnl_usd":-71.6,"pnl_pct":-8.0,"exit_reason":"stop","hold_days":4,"closed_at":"2026-10-01T20:00:00Z"}]}}"#,
+            r#"{"agent_id":"options-pilot","last_tick":"2026-10-08T18:00:00Z","tick_count":9,"entry_funnel":{"day":"2026-10-08","candidates_seen":4,"admitted":0,"rejects":{"distance_to_be":4}},"open_positions":{"p":{"underlying":"SPY","strategy":"iron_condor","expiry":"2026-10-16","contracts":1,"entry_credit":1.5,"last_good_debit_to_close":1.0,"max_loss_usd":380,"entry_params":{"short_strike":440,"long_strike":435,"type":"put_credit"},"entry_short_delta":0.16,"entry_pop_pct":80}},"sim":{"starting_budget_usd":4000,"realized_pnl_usd":-71.6,"closed_trades":[{"underlying":"QQQ","pnl_usd":-71.6,"pnl_pct":-8.0,"exit_reason":"stop","hold_days":4,"closed_at":"2026-10-01T20:00:00Z"}]}}"#,
         )
         .unwrap();
         let snap = snapshot(&DashboardPaths {
@@ -692,6 +950,14 @@ mod tests {
         assert_eq!(book["positions"][0]["underlying"], "SPY");
         assert_eq!(book["closed_count"], 1);
         assert_eq!(book["realized_pnl_usd"], -71.6);
-        assert_eq!(book["equity_usd"], 3928.4);
+        assert_eq!(book["unrealized_pnl_usd"], 50.0);
+        assert_eq!(book["equity_usd"], 3978.4);
+        assert_eq!(book["positions"][0]["width"], 5.0);
+        assert_eq!(book["entry_funnel"]["rejects"]["distance_to_be"], 4);
+        assert_eq!(book["experiment"]["profit_target_pct"], 60.0);
+        assert_eq!(book["experiment"]["stop_loss_pct"], 200.0);
+        assert_eq!(book["experiment"]["short_delta_max"], 0.20);
+        assert_eq!(book["pnl_series"][0]["realized_usd"], -71.6);
+        assert!(book["positions"][0].get("position_id").is_none());
     }
 }

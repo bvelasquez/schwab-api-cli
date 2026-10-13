@@ -71,6 +71,7 @@
   .metric .v { font-variant-numeric: tabular-nums; font-size: 16px; margin-top: 2px; }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
   th, td { text-align: left; padding: 6px 14px 6px 0; border-bottom: 1px solid var(--line); vertical-align: top; white-space: nowrap; }
+  td.wrap, th.wrap { white-space: normal; min-width: 240px; }
   th { color: var(--muted); font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; }
   td.num, th.num { text-align: right; }
   .up { color: var(--up); }
@@ -80,6 +81,60 @@
   .empty { color: var(--muted); }
   .journal { font-size: 12px; }
   .err { color: var(--down); }
+  .lab h2 { color: var(--text); font-size: 15px; margin: 14px 0 8px; }
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .chart-card { background: #14160f; border-radius: 8px; padding: 10px 12px 8px; }
+  .chart-card .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .chart-card .note { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
+  svg.chart { width: 100%; height: 220px; display: block; }
+  .line-plot { position: relative; }
+  svg.line-chart { width: 100%; height: 260px; display: block; }
+  svg.line-chart line, svg.line-chart path { vector-effect: non-scaling-stroke; }
+  .line-dot {
+    position: absolute; width: 8px; height: 8px; border-radius: 50%;
+    transform: translate(-50%, -50%); pointer-events: none;
+  }
+  .hbar { display: grid; grid-template-columns: 210px 1fr 88px; gap: 10px; align-items: center; margin: 5px 0; }
+  .hbar-name { color: #c4bfb0; font-size: 13px; }
+  .hbar-track { position: relative; height: 18px; background: #2a2e22; border-radius: 5px; }
+  .hbar-fill { position: absolute; top: 3px; height: 12px; border-radius: 3px; }
+  .hbar-fill.up { background: var(--up); }
+  .hbar-fill.down { background: var(--down); }
+  .hbar-val { text-align: right; font-variant-numeric: tabular-nums; }
+  nav.tabs { display: flex; gap: 8px; padding: 4px 22px 0; }
+  button.tab {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 6px 14px;
+    font: inherit;
+    cursor: pointer;
+  }
+  button.tab.on { color: var(--amber); border-color: var(--amber); }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 4px; font-size: 12px; color: var(--muted); }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
+  .pos-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+  .pos {
+    background: #14160f;
+    border-radius: 8px;
+    padding: 10px 12px 12px;
+  }
+  .pos .who { font-weight: 600; }
+  .pos .pnl { font-variant-numeric: tabular-nums; font-size: 18px; margin: 4px 0; }
+  .rail { position: relative; height: 14px; margin: 8px 6px 0; background: #3a3f30; border-radius: 99px; }
+  .rail .mark {
+    position: absolute; top: 1px; width: 12px; height: 12px; border-radius: 50%;
+    transform: translateX(-50%); border: 2px solid #12140f;
+  }
+  .rail .tick {
+    position: absolute; top: -3px; width: 2px; height: 20px; background: var(--amber); transform: translateX(-50%);
+  }
+  .rail-caps { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin: 6px 0 2px; }
+  .learnings { margin: 8px 0 0; padding-left: 18px; }
+  .learnings li { margin: 4px 0; }
+  .gates { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  @media (max-width: 800px) { .charts { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -87,6 +142,10 @@
   <h1>Paper books <span>read only</span></h1>
   <div class="meta" id="updated">loading…</div>
 </header>
+<nav class="tabs" id="tabs">
+  <button type="button" class="tab on" data-tab="options">Options</button>
+  <button type="button" class="tab" data-tab="swing">Swing</button>
+</nav>
 <main id="books"></main>
 <script>
 const books = document.getElementById("books");
@@ -105,6 +164,10 @@ function usd2(n) {
 function pct(n) {
   if (n == null || Number.isNaN(n)) return "—";
   return (n >= 0 ? "+" : "") + n.toFixed(1) + "%";
+}
+function pct2(n) {
+  if (n == null || Number.isNaN(n)) return "—";
+  return (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
 }
 function cls(n) { return n > 0 ? "up" : n < 0 ? "down" : ""; }
 function ago(iso) {
@@ -137,7 +200,7 @@ function table(headers, rows) {
   const thead = document.createElement("thead");
   const hr = document.createElement("tr");
   headers.forEach((h) => {
-    const th = el("th", { className: h.num ? "num" : "" }, h.label);
+    const th = el("th", { className: [h.num ? "num" : "", h.wrap ? "wrap" : ""].filter(Boolean).join(" ") }, h.label);
     hr.appendChild(th);
   });
   thead.appendChild(hr);
@@ -153,7 +216,7 @@ function table(headers, rows) {
   rows.forEach((cells) => {
     const tr = document.createElement("tr");
     cells.forEach((c, i) => {
-      const td = el("td", { className: (headers[i].num ? "num " : "") + (c.cls || "") }, c.text);
+      const td = el("td", { className: [headers[i].num ? "num" : "", headers[i].wrap ? "wrap" : "", c.cls || ""].filter(Boolean).join(" ") }, c.text);
       tr.appendChild(td);
     });
     tb.appendChild(tr);
@@ -162,6 +225,481 @@ function table(headers, rows) {
   return t;
 }
 function cell(text, klass) { return { text: text == null || text === "" ? "—" : String(text), cls: klass || "" }; }
+
+const COLORS = ["#e2b15a", "#8fceab", "#8eb4e8", "#e08b7a", "#c7b4f5", "#d4c48a"];
+
+function num(n, digits) {
+  if (n == null || Number.isNaN(Number(n))) return "—";
+  return Number(n).toFixed(digits);
+}
+function structure(p) {
+  if (p.short_strike == null || p.long_strike == null) return p.strategy || "—";
+  const kind = String(p.spread_type || "").replaceAll("_", " ");
+  return p.short_strike + "/" + p.long_strike + (kind ? " " + kind : "");
+}
+function shortName(book) {
+  return (book.name || "").replace("options-", "");
+}
+function sleeveReturn(book) {
+  const start = book.starting_cash_usd || book.sleeve_cap_usd;
+  if (!start) return null;
+  return ((book.realized_pnl_usd || 0) + (book.unrealized_pnl_usd || 0)) / start * 100;
+}
+function dte(expiry) {
+  if (!expiry) return null;
+  const day = new Date(String(expiry).slice(0, 10) + "T00:00:00");
+  if (Number.isNaN(day.getTime())) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((day - today) / 86400000);
+}
+function heldDays(iso) {
+  if (!iso) return null;
+  const days = (Date.now() - new Date(iso).getTime()) / 86400000;
+  return Number.isNaN(days) ? null : Math.max(0, Math.floor(days));
+}
+function railModel(p, exp) {
+  const credit = p.entry_credit;
+  const debit = p.debit_to_close;
+  if (credit == null || debit == null || !(credit > 0)) return null;
+  const targetPct = (exp && exp.profit_target_pct) || 60;
+  const stopPct = (exp && exp.stop_loss_pct) || 200;
+  const target = credit * (1 - targetPct / 100);
+  const stop = credit * (stopPct / 100);
+  const span = stop - target;
+  if (!(span > 0)) return null;
+  const at = (px) => Math.max(0, Math.min(1, (stop - px) / span));
+  let progress;
+  if (debit > credit) {
+    const ratio = Math.min(1, (debit - credit) / Math.max(stop - credit, 0.0001));
+    progress = debit >= stop ? "at or through the stop" : Math.round(ratio * 100) + "% of the way from entry to the stop";
+  } else {
+    const ratio = Math.min(1, (credit - debit) / Math.max(credit - target, 0.0001));
+    progress = debit <= target ? "at or through the profit target" : Math.round(ratio * 100) + "% of the way from entry to the target";
+  }
+  return { credit, debit, target, stop, mark: at(debit), entry: at(credit), winning: debit <= credit, progress };
+}
+function experimentLine(exp) {
+  if (!exp) return "";
+  const bits = [];
+  if (exp.short_delta_min != null) bits.push("delta " + num(exp.short_delta_min, 2) + "–" + num(exp.short_delta_max, 2));
+  if (exp.min_credit != null) bits.push("credit ≥ " + num(exp.min_credit, 2));
+  if (exp.min_credit_to_width_pct != null) bits.push(num(exp.min_credit_to_width_pct, 0) + "% of width");
+  if (exp.widths && exp.widths.length) bits.push("width " + exp.widths.join("/"));
+  else if (exp.max_width != null) bits.push("width ≤ " + num(exp.max_width, 0));
+  if (exp.profit_target_pct != null) bits.push("target " + num(exp.profit_target_pct, 0) + "%");
+  if (exp.stop_loss_pct != null) bits.push("stop " + num(exp.stop_loss_pct / 100, 1) + "×");
+  if (exp.dte_min != null) bits.push("enter " + num(exp.dte_min, 0) + "–" + num(exp.dte_max, 0) + " DTE");
+  if (exp.dte_close != null) bits.push("close " + num(exp.dte_close, 0) + " DTE");
+  if (exp.max_open_positions != null) bits.push("max open " + num(exp.max_open_positions, 0));
+  return bits.join(" · ");
+}
+function gateName(name) {
+  return String(name || "").replaceAll("_", " ");
+}
+function funnelLine(book) {
+  const f = book.entry_funnel;
+  if (!f || !f.candidates_seen) return "";
+  const rejects = Object.entries(f.rejects || {}).sort((a, b) => b[1] - a[1]);
+  const top = rejects.length ? gateName(rejects[0][0]) + " " + rejects[0][1] : "none";
+  return "Today's search: " + f.candidates_seen + " candidates, " + (f.admitted || 0) + " admitted. Top reject: " + top + ".";
+}
+function learnings(options) {
+  const notes = [];
+  const positions = options.flatMap((b) => (b.positions || []).map((p) => Object.assign({ book: shortName(b), exp: b.experiment }, p)));
+  const closedBooks = options.filter((b) => b.closed_count > 0);
+  const openBooks = options.filter((b) => !(b.closed_count > 0));
+  notes.push(positions.length + " open contracts across " + options.length + " options books.");
+  if (positions.length) {
+    const under = positions.filter((p) => p.unrealized_usd < 0).length;
+    notes.push(under + " of " + positions.length + " open marks are below the credit collected. The mark is the live path; the result is the close.");
+    const names = [...new Set(positions.map((p) => p.underlying).filter(Boolean))];
+    if (names.length === 1) notes.push("Every open fill is " + names[0] + ".");
+    const ranked = positions.map((p) => ({ p, rail: railModel(p, p.exp) })).filter((row) => row.rail);
+    const losing = ranked.filter((row) => !row.rail.winning).sort((a, b) => a.rail.mark - b.rail.mark);
+    const winning = ranked.filter((row) => row.rail.winning).sort((a, b) => b.rail.mark - a.rail.mark);
+    const where = (p) => p.book + " " + (p.underlying || "") + " " + structure(p) + (p.expiry ? " exp " + p.expiry : "");
+    if (losing[0]) notes.push(where(losing[0].p) + " is the closest open spread to its stop: " + losing[0].rail.progress + ".");
+    if (winning[0]) notes.push(where(winning[0].p) + " is the closest open spread to its target: " + winning[0].rail.progress + ".");
+  }
+  if (openBooks.length) {
+    notes.push(openBooks.map(shortName).join(", ") + (openBooks.length === 1 ? " has" : " have") + " no completed round trip, so win rate is not knowable yet.");
+  }
+  closedBooks.forEach((b) => {
+    notes.push(shortName(b) + " has closed " + b.closed_count + " trade" + (b.closed_count === 1 ? "" : "s") + " for " + usd2(b.realized_pnl_usd) + " realized, win rate " + b.win_rate_pct.toFixed(0) + "%.");
+  });
+  options.forEach((b) => {
+    const f = b.entry_funnel;
+    if (f && f.candidates_seen > 0 && !(f.admitted > 0)) {
+      const top = Object.entries(f.rejects || {}).sort((a, c) => c[1] - a[1])[0];
+      notes.push(shortName(b) + " looked at " + f.candidates_seen + " candidates today and took none. The first failing gate was " + (top ? gateName(top[0]) : "unrecorded") + ".");
+    }
+  });
+  const control = options.find((b) => String(b.name || "").includes("8709")) || options[0];
+  options.forEach((b) => {
+    if (!control || b === control || !b.experiment) return;
+    const bits = [];
+    const a = b.experiment, c = control.experiment || {};
+    const changed = (key, text) => { if (a[key] != null && a[key] !== c[key]) bits.push(text); };
+    changed("short_delta_min", "delta " + num(a.short_delta_min, 2) + "–" + num(a.short_delta_max, 2));
+    if (a.short_delta_max !== c.short_delta_max && a.short_delta_min === c.short_delta_min) {
+      bits.push("delta " + num(a.short_delta_min, 2) + "–" + num(a.short_delta_max, 2));
+    }
+    changed("min_credit", "credit floor " + num(a.min_credit, 2));
+    changed("min_credit_to_width_pct", num(a.min_credit_to_width_pct, 0) + "% of width");
+    if (!(a.widths && a.widths.length)) changed("max_width", "max width " + num(a.max_width, 0));
+    changed("profit_target_pct", "target " + num(a.profit_target_pct, 0) + "%");
+    changed("dte_close", "close at " + num(a.dte_close, 0) + " DTE");
+    changed("dte_min", "entry " + num(a.dte_min, 0) + "–" + num(a.dte_max, 0) + " DTE");
+    changed("max_open_positions", "max open " + num(a.max_open_positions, 0));
+    changed("max_trades_per_day", num(a.max_trades_per_day, 0) + "/day");
+    if (a.widths && a.widths.length && JSON.stringify(a.widths) !== JSON.stringify(c.widths || [])) {
+      bits.push("width " + a.widths.join("/"));
+    }
+    if (bits.length) notes.push(shortName(b) + " changes " + shortName(control) + " by " + [...new Set(bits)].join(", ") + ".");
+  });
+  return notes;
+}
+function svgEl(name, attrs) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+  Object.entries(attrs).forEach(([k, v]) => node.setAttribute(k, v));
+  return node;
+}
+function barChart(title, rows, note, leftPad) {
+  const card = el("div", { className: "chart-card" });
+  card.appendChild(el("div", { className: "k" }, title));
+  const w = 640, top = 12, bottom = 18, left = leftPad || 118, right = 78;
+  const h = Math.max(180, rows.length * 28 + top + bottom);
+  const max = Math.max(0.01, ...rows.map((r) => Math.abs(r.value || 0)));
+  const svg = svgEl("svg", { viewBox: "0 0 " + w + " " + h, class: "chart" });
+  const plotW = w - left - right;
+  const mid = left + plotW / 2;
+  svg.appendChild(svgEl("line", { x1: mid, x2: mid, y1: top, y2: h - bottom, stroke: "#313628" }));
+  const gap = (h - top - bottom) / Math.max(rows.length, 1);
+  rows.forEach((r, i) => {
+    const y = top + i * gap + 4;
+    const bh = Math.max(8, gap - 10);
+    const mag = (Math.abs(r.value || 0) / max) * (plotW / 2 - 4);
+    const x = (r.value || 0) >= 0 ? mid : mid - mag;
+    svg.appendChild(svgEl("rect", {
+      x, y, width: Math.max(mag, 1), height: bh, rx: 3,
+      fill: r.color || ((r.value || 0) >= 0 ? "#8fceab" : "#e08b7a")
+    }));
+    const label = svgEl("text", { x: 4, y: y + bh * 0.72, fill: "#c4bfb0", "font-size": "14" });
+    label.textContent = r.label;
+    svg.appendChild(label);
+    const val = svgEl("text", {
+      x: (r.value || 0) >= 0 ? Math.min(w - 4, x + mag + 6) : Math.max(left, x - 6),
+      y: y + bh * 0.72, fill: "#e7e4d8",
+      "text-anchor": (r.value || 0) >= 0 ? "start" : "end",
+      "font-size": "13"
+    });
+    val.textContent = r.text;
+    svg.appendChild(val);
+  });
+  card.appendChild(svg);
+  if (note) card.appendChild(el("p", { className: "note" }, note));
+  return card;
+}
+function lineChart(title, series, note) {
+  const card = el("div", { className: "chart-card" });
+  card.appendChild(el("div", { className: "k" }, title));
+  const usable = series.filter((s) => (s.points || []).length);
+  if (!usable.length) {
+    card.appendChild(el("p", { className: "empty" }, "No completed closes yet. The open marks above are the live result."));
+    return card;
+  }
+  const w = 640, h = 220, left = 52, right = 12, top = 12, bottom = 28;
+  const pts = usable.flatMap((s) => s.points);
+  const xs = pts.map((p) => p.x);
+  const ys = pts.map((p) => p.y).concat([0]);
+  let minX = Math.min(...xs), maxX = Math.max(...xs);
+  if (maxX === minX) { minX -= 86400000; maxX += 86400000; }
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const ySpan = maxY - minY || 1;
+  const svg = svgEl("svg", {
+    viewBox: "0 0 " + w + " " + h,
+    class: "chart line-chart",
+    preserveAspectRatio: "none"
+  });
+  const X = (x) => left + ((x - minX) / (maxX - minX)) * (w - left - right);
+  const Y = (y) => top + (1 - (y - minY) / ySpan) * (h - top - bottom);
+  svg.appendChild(svgEl("line", { x1: left, x2: w - right, y1: Y(0), y2: Y(0), stroke: "#313628", "stroke-width": "1" }));
+  const plot = el("div", { className: "line-plot" });
+  plot.appendChild(svg);
+  usable.forEach((s) => {
+    const d = s.points.map((p, i) => (i ? "L" : "M") + X(p.x).toFixed(1) + " " + Y(p.y).toFixed(1)).join(" ");
+    svg.appendChild(svgEl("path", { d, fill: "none", stroke: s.color, "stroke-width": "2" }));
+    const last = s.points[s.points.length - 1];
+    const dot = el("span", { className: "line-dot" });
+    dot.style.left = (X(last.x) / w * 100) + "%";
+    dot.style.top = (Y(last.y) / h * 100) + "%";
+    dot.style.background = s.color;
+    plot.appendChild(dot);
+  });
+  card.appendChild(plot);
+  const legend = el("div", { className: "legend" });
+  usable.forEach((s) => {
+    const item = el("span");
+    const sw = el("span", { className: "swatch" });
+    sw.style.background = s.color;
+    item.appendChild(sw);
+    item.appendChild(document.createTextNode(s.label));
+    legend.appendChild(item);
+  });
+  card.appendChild(legend);
+  if (note) card.appendChild(el("p", { className: "note" }, note));
+  return card;
+}
+function positionCard(book, p) {
+  const card = el("div", { className: "pos" });
+  const days = dte(p.expiry);
+  const held = heldDays(p.opened_at);
+  card.appendChild(el("div", { className: "who" }, shortName(book) + " · " + (p.underlying || "—") + " " + structure(p)));
+  const bits = [p.expiry, days != null ? days + "d" : "", held != null ? "held " + held + "d" : ""].filter(Boolean).join(" · ");
+  card.appendChild(el("div", { className: "meta" }, bits));
+  const pnl = el("div", { className: "pnl " + cls(p.unrealized_usd) });
+  pnl.textContent = usd2(p.unrealized_usd) + (p.unrealized_pct != null ? "  " + pct(p.unrealized_pct) + " of credit" : "");
+  card.appendChild(pnl);
+  const model = railModel(p, book.experiment);
+  if (model) {
+    const rail = el("div", { className: "rail" });
+    const tick = el("div", { className: "tick" });
+    tick.style.left = (model.entry * 100) + "%";
+    rail.appendChild(tick);
+    const mark = el("div", { className: "mark" });
+    mark.style.left = (model.mark * 100) + "%";
+    mark.style.background = model.winning ? "#8fceab" : "#e08b7a";
+    rail.appendChild(mark);
+    card.appendChild(rail);
+    const caps = el("div", { className: "rail-caps" });
+    caps.appendChild(el("span", null, "stop " + model.stop.toFixed(2)));
+    caps.appendChild(el("span", null, "target " + model.target.toFixed(2)));
+    card.appendChild(caps);
+    card.appendChild(el("div", { className: "meta" }, "debit " + model.debit.toFixed(2) + " · entry " + model.credit.toFixed(2) + " · " + model.progress));
+  } else {
+    card.appendChild(el("div", { className: "meta" }, "waiting for a mark"));
+  }
+  const extra = [
+    p.entry_short_delta != null ? "delta " + p.entry_short_delta.toFixed(2) : "",
+    p.entry_pop_pct != null ? "POP " + p.entry_pop_pct.toFixed(0) + "%" : "",
+    p.max_loss_usd != null ? "max loss " + usd2(p.max_loss_usd) : "",
+    p.last_good_streak > 2 ? "mark frozen " + p.last_good_streak + " ticks" : ""
+  ].filter(Boolean).join(" · ");
+  if (extra) card.appendChild(el("div", { className: "meta" }, extra));
+  return card;
+}
+function labFreshness(art) {
+  if (!art || !art.present) return "not generated yet";
+  const h = art.age_hours;
+  const age = h == null ? "age unknown" : (h < 1 ? Math.round(h * 60) + "m" : h.toFixed(1) + "h") + " old";
+  return art.stale ? "STALE, " + age : age;
+}
+function labGate(g) {
+  const v = String(g || "").toLowerCase();
+  return v === "pass" ? "up" : v === "fail" ? "down" : "";
+}
+function appendEvidence(card, lab, options) {
+  if (!lab) return;
+  card.appendChild(el("h2", null, "Evidence status"));
+  const sc = lab.scorecard;
+  const arms = sc && sc.present && sc.data ? sc.data.options_arms : null;
+  const m = el("div", { className: "metrics" });
+  if (arms) {
+    m.appendChild(metric("Entries, nominal", String(arms.nominal_entries)));
+    m.appendChild(metric("Distinct trades", String(arms.effective_entries), arms.effective_entries * 2 <= arms.nominal_entries ? "down" : ""));
+  }
+  m.appendChild(metric("Scorecard", labFreshness(sc)));
+  m.appendChild(metric("Benchmarks", labFreshness(lab.benchmarks)));
+  m.appendChild(metric("Slippage study", labFreshness(lab.slippage)));
+  m.appendChild(metric("Promotion gate", labFreshness(lab.promotion_gate)));
+  card.appendChild(m);
+  const alerts = sc && sc.present && sc.data && sc.data.drift_alerts ? sc.data.drift_alerts : [];
+  if (alerts.length) {
+    const ul = el("ul", { className: "learnings" });
+    alerts.forEach((a) => ul.appendChild(el("li", null, a)));
+    card.appendChild(ul);
+  }
+  if (arms && arms.effective_entries < arms.nominal_entries) {
+    card.appendChild(el("p", { className: "empty" }, "Arms that open the same spread on the same day are one bet. Judge by distinct trades, not by entries."));
+  }
+
+  const tested = options.filter((b) => b.hypothesis || b.falsifier);
+  if (tested.length) {
+    card.appendChild(el("h2", null, "Hypotheses"));
+    card.appendChild(table(
+      [{ label: "Book" }, { label: "Hypothesis", wrap: true }, { label: "Falsified if", wrap: true }],
+      tested.map((b) => [cell(shortName(b)), cell(b.hypothesis), cell(b.falsifier)])
+    ));
+  }
+
+  const bm = lab.benchmarks;
+  if (bm && bm.present && bm.data) {
+    card.appendChild(el("h2", null, "Returns and benchmarks"));
+    const agents = Object.entries(bm.data.agents || {}).filter(([, a]) => !a.error);
+    card.appendChild(table(
+      [{ label: "Agent" }, { label: "Closed", num: true }, { label: "Open", num: true }, { label: "Total", num: true },
+       { label: "Return on max risk", num: true }, { label: "Return on IRA", num: true },
+       { label: "Delta-equivalent", num: true }, { label: "Alpha", num: true }],
+      agents.map(([name, a]) => [
+        cell(name), cell(a.closed_trades), cell(a.open_positions),
+        cell(usd2(a.total_usd), cls(a.total_usd)),
+        cell(a.return_on_max_risk_pct == null ? "—" : pct2(a.return_on_max_risk_pct), cls(a.return_on_max_risk_pct)),
+        cell(a.return_on_ira_pct == null ? "—" : pct2(a.return_on_ira_pct), cls(a.return_on_ira_pct)),
+        cell(a.delta_equiv_pnl_usd == null ? "—" : usd2(a.delta_equiv_pnl_usd), cls(a.delta_equiv_pnl_usd)),
+        cell(a.beta_adjusted_alpha_usd == null ? "—" : usd2(a.beta_adjusted_alpha_usd), cls(a.beta_adjusted_alpha_usd))
+      ])
+    ));
+    const pw = Object.entries(bm.data.putwrite || {});
+    if (pw.length) {
+      card.appendChild(el("p", { className: "empty" }, "Cash-secured SPY put-write benchmark, filled at " + num((bm.data.manual_constants || {}).putwrite_fill_fraction, 2) + " of the half spread, collateral charged at " + num((bm.data.manual_constants || {}).tbill_pct, 1) + "% (manual setting)."));
+      card.appendChild(table(
+        [{ label: "Variant" }, { label: "Settled", num: true }, { label: "Total", num: true }, { label: "Return on collateral", num: true }, { label: "Excess over T-bill", num: true }],
+        pw.map(([name, w]) => [
+          cell(name + " (|delta| " + num(w.target_abs_delta, 2) + ")"), cell(w.cycles_settled),
+          cell(usd2(w.total_usd), cls(w.total_usd)),
+          cell(w.return_on_collateral_pct == null ? "—" : pct2(w.return_on_collateral_pct), cls(w.return_on_collateral_pct)),
+          cell(w.excess_over_tbill_usd == null ? "—" : usd2(w.excess_over_tbill_usd), cls(w.excess_over_tbill_usd))
+        ])
+      ));
+    }
+    const und = Object.entries(bm.data.underlying || {});
+    if (und.length) {
+      card.appendChild(el("p", { className: "empty" }, "Underlying over the recorded window: " + und.map(([s, u]) => s + " " + pct2(u.return_pct)).join(", ") + ". Delta-equivalent is first order; alpha is what is left."));
+    }
+  }
+
+  const sl = lab.slippage;
+  if (sl && sl.present && sl.data) {
+    card.appendChild(el("h2", null, "Fill costs from recorded quotes"));
+    const rec = sl.data.recommended || {};
+    const sm = el("div", { className: "metrics" });
+    sm.appendChild(metric("Paper setting (8709)", sl.data.current_8709_fill_slippage_pct == null ? "—" : sl.data.current_8709_fill_slippage_pct + "%"));
+    sm.appendChild(metric("Measured entry cost", rec["entry_fill_slippage_pct_at_f0.5"] == null ? "—" : rec["entry_fill_slippage_pct_at_f0.5"] + "%"));
+    sm.appendChild(metric("Measured exit cost", rec["exit_fill_slippage_pct_at_f0.5"] == null ? "—" : rec["exit_fill_slippage_pct_at_f0.5"] + "%"));
+    sm.appendChild(metric("Verdict", rec.verdict || "—"));
+    card.appendChild(sm);
+    const rows = [];
+    Object.entries(sl.data.by_symbol_and_dte || {}).forEach(([sym, buckets]) => {
+      Object.entries(buckets).forEach(([bucket, e]) => {
+        const half = e["f0.5"], wide = e["f0.66"] || e["f0.5"];
+        if (!half) return;
+        rows.push([cell(sym), cell(bucket + " DTE"), cell(e.n),
+          cell(num(half.entry_cost_pct_of_credit.median, 1) + "%"),
+          cell(num(wide.entry_cost_pct_of_credit.median, 1) + "%"),
+          cell(usd2(wide.round_trip_usd_per_contract.median))]);
+      });
+    });
+    card.appendChild(table(
+      [{ label: "Symbol" }, { label: "Window" }, { label: "Spreads", num: true }, { label: "Entry cost, half spread", num: true }, { label: "Entry cost, 0.66 spread", num: true }, { label: "Round trip per contract", num: true }],
+      rows
+    ));
+    const fills = (sl.data.paper_fills_vs_quotes || []).filter((r) => String(r.quotes_from || "").includes("fill-time") && r.implied_fraction_of_spread != null);
+    if (fills.length) {
+      const fs = fills.map((r) => r.implied_fraction_of_spread).sort((a, b) => a - b);
+      const med = fs[Math.floor(fs.length / 2)];
+      card.appendChild(el("p", { className: "empty" }, fills.length + " paper entries have quotes from the moment of the fill. Median share of the quoted half spread given up: " + num(med, 2) + " (0 is the midpoint, 1 is the natural price). Includes the paper slippage setting."));
+    } else {
+      card.appendChild(el("p", { className: "empty" }, "Table is from recorded quotes in the middle of the session. No paper entry has fill-time quotes yet; they start with the next entry."));
+    }
+  }
+
+  const pg = lab.promotion_gate;
+  if (pg && pg.present && pg.data) {
+    card.appendChild(el("h2", null, "Promotion gate"));
+    const rows = Object.entries(pg.data.arms || {}).map(([name, a]) => [
+      cell(name), cell(a.n_distinct), cell(a.expectancy_usd == null ? "—" : usd2(a.expectancy_usd), cls(a.expectancy_usd)),
+      cell(a.verdict, labGate(a.verdict)), cell((a.failed || []).join("; "))
+    ]);
+    card.appendChild(table(
+      [{ label: "Arm" }, { label: "Distinct trades", num: true }, { label: "Expectancy per trade", num: true }, { label: "Verdict" }, { label: "Not met", wrap: true }],
+      rows
+    ));
+    card.appendChild(el("p", { className: "empty" }, pg.data.note || "A pass is not a production change. Operator OK is required."));
+  }
+}
+function renderLab(options, lab) {
+  const card = el("section", { className: "book lab" });
+  card.appendChild(el("h2", null, "Options tests"));
+  const openUsd = options.reduce((n, b) => n + (b.unrealized_pnl_usd || 0), 0);
+  const realized = options.reduce((n, b) => n + (b.realized_pnl_usd || 0), 0);
+  const metrics = el("div", { className: "metrics" });
+  metrics.appendChild(metric("Books", String(options.length)));
+  metrics.appendChild(metric("Open contracts", String(options.reduce((n, b) => n + (b.open_count || 0), 0))));
+  metrics.appendChild(metric("Open mark", usd2(openUsd), cls(openUsd)));
+  metrics.appendChild(metric("Realized", usd2(realized), cls(realized)));
+  card.appendChild(metrics);
+  appendEvidence(card, lab, options);
+
+  card.appendChild(el("h2", null, "What each book is testing"));
+  card.appendChild(table(
+    [{label:"Book"},{label:"Open", num:true},{label:"Sleeve return", num:true},{label:"Realized", num:true},{label:"Open mark", num:true},{label:"Closed", num:true},{label:"Gates", wrap:true}],
+    options.map((b) => {
+      const ret = sleeveReturn(b);
+      return [
+        cell(shortName(b)),
+        cell(b.open_count),
+        cell(ret == null ? "—" : pct2(ret), cls(ret)),
+        cell(usd2(b.realized_pnl_usd), cls(b.realized_pnl_usd)),
+        cell(usd2(b.unrealized_pnl_usd), cls(b.unrealized_pnl_usd)),
+        cell(b.closed_count),
+        cell(experimentLine(b.experiment))
+      ];
+    })
+  ));
+
+  const charts = el("div", { className: "charts" });
+  charts.appendChild(barChart(
+    "Open mark by book",
+    options.map((b, i) => ({
+      label: shortName(b),
+      value: b.unrealized_pnl_usd || 0,
+      text: usd2(b.unrealized_pnl_usd || 0),
+      color: (b.unrealized_pnl_usd || 0) >= 0 ? "#8fceab" : "#e08b7a"
+    })),
+    "Dollars if every open spread were closed at the last mark. Sleeve return is in the table, because the sleeves are different sizes."
+  ));
+  charts.appendChild(lineChart(
+    "Realized P/L after each close",
+    options.map((b, i) => ({
+      label: shortName(b),
+      color: COLORS[i % COLORS.length],
+      points: (b.pnl_series || []).filter((p) => p.at).map((p) => ({ x: new Date(p.at).getTime(), y: p.realized_usd }))
+    })),
+    "Open marks are not on this line. A book stays off the chart until it closes a trade."
+  ));
+  card.appendChild(charts);
+
+  const positions = options.flatMap((b) => (b.positions || []).map((p) => ({ book: b, p })));
+  card.appendChild(el("h2", null, "Open positions"));
+  if (!positions.length) {
+    card.appendChild(el("p", { className: "empty" }, "Flat. No open contracts."));
+  } else {
+    const grid = el("div", { className: "pos-grid" });
+    positions.forEach((row) => grid.appendChild(positionCard(row.book, row.p)));
+    card.appendChild(grid);
+  }
+
+  const funnelRows = [];
+  options.forEach((b) => {
+    const f = b.entry_funnel;
+    if (!f || !f.candidates_seen) return;
+    Object.entries(f.rejects || {}).sort((a, c) => c[1] - a[1]).slice(0, 3).forEach(([gate, n]) => {
+      funnelRows.push({ label: shortName(b) + " " + gateName(gate), value: n, text: String(n), color: "#e08b7a" });
+    });
+    if (f.admitted) funnelRows.push({ label: shortName(b) + " admitted", value: f.admitted, text: String(f.admitted), color: "#8fceab" });
+  });
+  if (funnelRows.length) {
+    card.appendChild(el("h2", null, "Today's entry search"));
+    card.appendChild(barChart("First failing gate", funnelRows, "A full book does not scan, so a quiet funnel means the slots are already filled.", 210));
+  }
+
+  card.appendChild(el("h2", null, "What the books show"));
+  const list = el("ul", { className: "learnings" });
+  learnings(options).forEach((text) => list.appendChild(el("li", null, text)));
+  card.appendChild(list);
+  return card;
+}
 
 function renderBook(book) {
   const card = el("section", { className: "book" });
@@ -188,27 +726,52 @@ function renderBook(book) {
     return card;
   }
   if (book.halted) card.appendChild(el("p", { className: "halt" }, "Halted: " + book.halted));
+  const gates = experimentLine(book.experiment);
+  if (gates) card.appendChild(el("div", { className: "gates" }, gates));
   const metrics = el("div", { className: "metrics" });
   metrics.appendChild(metric("Equity", usd(book.equity_usd)));
   metrics.appendChild(metric("Cash", usd(book.cash_usd)));
   metrics.appendChild(metric("Realized", usd2(book.realized_pnl_usd), cls(book.realized_pnl_usd)));
+  if (book.unrealized_pnl_usd != null) {
+    metrics.appendChild(metric("Open mark", usd2(book.unrealized_pnl_usd), cls(book.unrealized_pnl_usd)));
+  }
   metrics.appendChild(metric("Win rate", book.closed_count ? (book.win_rate_pct.toFixed(1) + "%") : "—"));
   metrics.appendChild(metric("Open", String(book.open_count ?? 0)));
   metrics.appendChild(metric("Closed", String(book.closed_count ?? 0)));
   if (book.sleeve_cap_usd) metrics.appendChild(metric("Sleeve", usd(book.sleeve_cap_usd)));
   if (book.deployed_pct != null) metrics.appendChild(metric("Deployed", book.deployed_pct.toFixed(0) + "%"));
   card.appendChild(metrics);
+  if (book.kind !== "options" && (book.pnl_series || []).length > 1) {
+    card.appendChild(lineChart(
+      "Realized P/L",
+      [{
+        label: book.name || "book",
+        color: "#e2b15a",
+        points: book.pnl_series.filter((p) => p.at).map((p) => ({ x: new Date(p.at).getTime(), y: p.realized_usd }))
+      }],
+      null
+    ));
+  }
+  if (book.shadows) card.appendChild(shadowSection(book));
 
   card.appendChild(el("h2", null, "Open positions"));
   if (book.kind === "options") {
     card.appendChild(table(
-      [{label:"Underlying"},{label:"Strategy"},{label:"Expiry"},{label:"Contracts", num:true},{label:"Credit", num:true},{label:"Max loss", num:true}],
+      [{label:"Underlying"},{label:"Structure"},{label:"Expiry"},{label:"Delta", num:true},{label:"POP", num:true},{label:"Credit", num:true},{label:"Debit", num:true},{label:"Open P/L", num:true},{label:"Max loss", num:true}],
       (book.positions || []).map((p) => [
-        cell(p.underlying), cell(p.strategy), cell(p.expiry),
-        cell(p.contracts), cell(p.entry_credit != null ? p.entry_credit.toFixed(2) : null),
+        cell(p.underlying),
+        cell(structure(p)),
+        cell(p.expiry),
+        cell(p.entry_short_delta != null ? p.entry_short_delta.toFixed(2) : null),
+        cell(p.entry_pop_pct != null ? p.entry_pop_pct.toFixed(0) + "%" : null),
+        cell(p.entry_credit != null ? p.entry_credit.toFixed(2) : null),
+        cell(p.debit_to_close != null ? p.debit_to_close.toFixed(2) : null),
+        cell(usd2(p.unrealized_usd), cls(p.unrealized_usd)),
         cell(usd2(p.max_loss_usd), "down")
       ])
     ));
+    const funnel = funnelLine(book);
+    if (funnel) card.appendChild(el("p", { className: "meta" }, funnel));
   } else {
     card.appendChild(table(
       [{label:"Symbol"},{label:"Qty", num:true},{label:"Entry", num:true},{label:"Stop", num:true},{label:"Target", num:true},{label:"Value", num:true},{label:"Unrealized", num:true}],
@@ -248,11 +811,45 @@ function renderBook(book) {
   });
   card.appendChild(j);
 
-  if (book.shadows) {
-    card.appendChild(el("h2", null, "Shadow arms"));
-    card.appendChild(table(
+  return card;
+}
+
+function hbars(title, rows, note) {
+  const card = el("div", { className: "chart-card" });
+  card.appendChild(el("div", { className: "k" }, title));
+  const max = Math.max(0.01, ...rows.map((r) => Math.abs(r.value || 0)));
+  rows.forEach((r) => {
+    const row = el("div", { className: "hbar" });
+    row.appendChild(el("span", { className: "hbar-name" }, r.label));
+    const track = el("span", { className: "hbar-track" });
+    const fill = el("span", { className: "hbar-fill " + ((r.value || 0) >= 0 ? "up" : "down") });
+    const half = Math.abs(r.value || 0) / max * 50;
+    fill.style.width = Math.max(half, r.value ? 0.8 : 0) + "%";
+    fill.style.left = ((r.value || 0) >= 0 ? 50 : 50 - half) + "%";
+    track.appendChild(fill);
+    row.appendChild(track);
+    row.appendChild(el("span", { className: "hbar-val " + cls(r.value) }, r.text));
+    card.appendChild(row);
+  });
+  if (note) card.appendChild(el("p", { className: "note" }, note));
+  return card;
+}
+function shadowSection(book) {
+  const wrap = el("div");
+  wrap.appendChild(el("h2", null, "Shadow arms"));
+  const shadows = book.shadows.slice().sort((a, b) => Math.abs(b.realized_pnl_usd || 0) - Math.abs(a.realized_pnl_usd || 0) || String(a.id).localeCompare(String(b.id)));
+  wrap.appendChild(hbars(
+    "Shadow realized P/L",
+    shadows.map((s) => ({
+      label: s.id,
+      value: s.realized_pnl_usd || 0,
+      text: usd2(s.realized_pnl_usd || 0)
+    })),
+    "Arms with a close are listed first. The scale is the largest realized gain or loss."
+  ));
+  wrap.appendChild(table(
       [{label:"Arm"},{label:"Start", num:true},{label:"Equity", num:true},{label:"Open", num:true},{label:"Closed", num:true},{label:"Win", num:true},{label:"Realized", num:true},{label:"Tick"}],
-      book.shadows.map((s) => [
+      shadows.map((s) => [
         cell(s.id), cell(usd(s.starting_cash_usd)), cell(usd(s.equity_usd)),
         cell(s.open_count), cell(s.closed_count),
         cell(s.closed_count ? s.win_rate_pct.toFixed(0) + "%" : "—"),
@@ -260,16 +857,50 @@ function renderBook(book) {
         cell(s.last_tick ? ago(s.last_tick) : "waiting")
       ])
     ));
-  }
-  return card;
+  return wrap;
 }
+
+let tab = location.hash === "#swing" ? "swing" : "options";
+let latest = null;
+
+function paint() {
+  document.querySelectorAll("button.tab").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+  if (!latest) return;
+  const all = latest.books || [];
+  const options = all.filter((b) => b.kind === "options");
+  const swing = all.filter((b) => b.kind !== "options");
+  const optBtn = document.querySelector('button[data-tab="options"]');
+  const swBtn = document.querySelector('button[data-tab="swing"]');
+  if (optBtn) optBtn.textContent = "Options" + (options.length ? " · " + options.length : "");
+  if (swBtn) swBtn.textContent = "Swing" + (swing.length ? " · " + swing.length : "");
+  const y = window.scrollY;
+  const nodes = [];
+  const shown = tab === "swing" ? swing : options;
+  if (tab === "options") {
+    const ok = options.filter((b) => !b.error);
+    if (ok.length) nodes.push(renderLab(ok, latest.lab));
+  }
+  if (!shown.length) nodes.push(el("p", { className: "empty" }, "No " + tab + " books are loaded."));
+  nodes.push(...shown.map(renderBook));
+  books.replaceChildren(...nodes);
+  window.scrollTo(0, y);
+}
+
+document.getElementById("tabs").addEventListener("click", (ev) => {
+  const button = ev.target.closest("button[data-tab]");
+  if (!button || button.dataset.tab === tab) return;
+  tab = button.dataset.tab;
+  history.replaceState(null, "", tab === "swing" ? "#swing" : "#options");
+  window.scrollTo(0, 0);
+  paint();
+});
 
 async function refresh() {
   try {
     const res = await fetch("/api/status", { cache: "no-store" });
-    const data = await res.json();
-    updated.textContent = "Updated " + new Date(data.generated_at).toLocaleTimeString() + " · refreshes every 5s";
-    books.replaceChildren(...(data.books || []).map(renderBook));
+    latest = await res.json();
+    updated.textContent = "Updated " + new Date(latest.generated_at).toLocaleTimeString() + " · refreshes every 5s";
+    paint();
   } catch (err) {
     updated.textContent = "Refresh failed: " + err;
   }
