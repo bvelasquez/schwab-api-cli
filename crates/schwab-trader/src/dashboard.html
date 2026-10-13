@@ -881,6 +881,116 @@ function renderLab(options, lab) {
   return card;
 }
 
+function heldDays(opened) {
+  if (!opened) return null;
+  const t = new Date(opened).getTime();
+  if (!Number.isFinite(t)) return null;
+  return Math.max(0, Math.floor((Date.now() - t) / 86400000));
+}
+
+function swingHealth(p, plan) {
+  const entry = p.entry_price;
+  const stop = p.stop_price;
+  const last = p.last_price;
+  const target = p.profit_limit;
+  if (!(entry > 0) || !(stop > 0) || !(last > 0)) return null;
+  const held = heldDays(p.opened_at);
+  const limit = plan && (plan.time_stop_days || plan.max_hold_days);
+  const trailAt = plan && plan.trail_activate_pct;
+  const peak = p.peak_profit_pct;
+  const locked = stop >= entry;
+  const trailOn = trailAt != null && peak != null && peak >= trailAt;
+  const through = last <= stop;
+  const pastTime = limit != null && held != null && held >= limit;
+  let label = "On track";
+  let tone = "up";
+  if (through || pastTime) {
+    label = "Under pressure";
+    tone = "down";
+  } else if (!locked && last < entry) {
+    label = "Watch";
+    tone = "watch";
+  }
+  const pnl = (last - entry) / entry * 100;
+  const bits = [
+    "Last " + last.toFixed(2) + " is " + Math.abs(pnl).toFixed(1) + "% " + (pnl >= 0 ? "above" : "below") + " the " + entry.toFixed(2) + " entry."
+  ];
+  if (locked) {
+    bits.push("The stop at " + stop.toFixed(2) + " is above entry, so the planned exit keeps a gain.");
+  } else {
+    const room = (entry - stop) / entry * 100;
+    const cap = plan && plan.stop_loss_pct != null ? plan.stop_loss_pct.toFixed(1) + "% rule" : "stop rule";
+    bits.push("The stop at " + stop.toFixed(2) + " is " + room.toFixed(1) + "% under entry, inside the " + cap + ".");
+  }
+  if (target > 0) bits.push("Target " + target.toFixed(2) + ".");
+  if (trailOn) bits.push("The trail is on: peak was " + peak.toFixed(1) + "%, and it arms after " + trailAt.toFixed(1) + "%.");
+  else if (trailAt != null && peak != null) bits.push("Peak is " + peak.toFixed(1) + "%. The trail arms after " + trailAt.toFixed(1) + "%.");
+  if (held != null && limit != null) bits.push("Held " + held + " of " + Math.round(limit) + " days.");
+  return { label, tone, say: bits.join(" ") };
+}
+
+function swingChart(p) {
+  const entry = p.entry_price;
+  const stop = p.stop_price;
+  const last = p.last_price;
+  const target = p.profit_limit;
+  if (!(entry > 0) || !(stop > 0) || !(last > 0) || !(target > 0)) return null;
+  const lo = Math.min(stop, entry, last, target);
+  const hi = Math.max(stop, entry, last, target);
+  const span = Math.max(hi - lo, entry * 0.01);
+  const pad = span * 0.12;
+  const min = lo - pad;
+  const max = hi + pad;
+  const xOf = (v) => 36 + (v - min) / (max - min) * 288;
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 360 128");
+  svg.setAttribute("class", "mini");
+  const add = (name, attrs, text) => {
+    const node = document.createElementNS(ns, name);
+    Object.entries(attrs).forEach(([k, v]) => node.setAttribute(k, v));
+    if (text != null) node.textContent = text;
+    svg.appendChild(node);
+    return node;
+  };
+  add("line", { x1: "36", x2: "324", y1: "62", y2: "62", stroke: "#2a3142", "stroke-width": "6", "stroke-linecap": "round" });
+  [
+    { v: stop, label: "stop " + stop.toFixed(2), color: "#e08b7a", textY: 28 },
+    { v: entry, label: "entry " + entry.toFixed(2), color: "#8b93a7", textY: 96 },
+    { v: target, label: "target " + target.toFixed(2), color: "#8fceab", textY: 28 }
+  ].forEach((mark) => {
+    const x = xOf(mark.v);
+    add("line", { x1: x, x2: x, y1: "48", y2: "76", stroke: mark.color, "stroke-width": "2" });
+    add("text", { x: x, y: mark.textY, "text-anchor": "middle", fill: mark.color, "font-size": "11" }, mark.label);
+  });
+  add("circle", { cx: xOf(last), cy: "62", r: "6", fill: "#d7dbe6" });
+  add("text", { x: xOf(last), y: "118", "text-anchor": "middle", fill: "#d7dbe6", "font-size": "11" }, "now " + last.toFixed(2));
+  return svg;
+}
+
+function swingCard(book, p) {
+  const health = swingHealth(p, book.plan);
+  const card = el("article", { className: "pos" });
+  const head = el("div", { className: "row" });
+  head.appendChild(el("div", { className: "title" }, p.symbol || "—"));
+  if (health) head.appendChild(el("span", { className: "verdict " + health.tone }, health.label));
+  card.appendChild(head);
+  if (health) card.appendChild(el("p", { className: "say" }, health.say));
+  const chart = swingChart(p);
+  if (chart) {
+    const wrap = el("div");
+    wrap.appendChild(el("div", { className: "chart-label" }, "Stop, entry, and target"));
+    wrap.appendChild(chart);
+    card.appendChild(wrap);
+  }
+  const parts = [];
+  if (p.unrealized_usd != null) parts.push(usd2(p.unrealized_usd) + " open");
+  if (p.stop_risk_usd != null) parts.push(usd2(p.stop_risk_usd) + " planned risk at the stop");
+  if (p.quantity != null) parts.push(Number(p.quantity).toFixed(2) + " shares");
+  card.appendChild(el("p", { className: "meta" }, parts.join(" · ")));
+  return card;
+}
+
 function renderBook(book) {
   const card = el("section", { className: "book" });
   const head = el("div", { className: "row" });
@@ -918,6 +1028,16 @@ function renderBook(book) {
   metrics.appendChild(metric("Win rate", book.closed_count ? (book.win_rate_pct.toFixed(1) + "%") : "—"));
   metrics.appendChild(metric("Open", String(book.open_count ?? 0)));
   metrics.appendChild(metric("Closed", String(book.closed_count ?? 0)));
+  if (book.kind !== "options") {
+    const healths = (book.positions || []).map((p) => swingHealth(p, book.plan)).filter(Boolean);
+    if (healths.length) {
+      const bad = healths.filter((h) => h.tone === "down").length;
+      const watch = healths.filter((h) => h.tone === "watch").length;
+      const tone = bad ? "down" : watch ? "watch" : "up";
+      const label = bad ? "No" : watch ? "Watch" : "Yes";
+      metrics.appendChild(metric("On track", label, tone));
+    }
+  }
   if (book.sleeve_cap_usd) metrics.appendChild(metric("Sleeve", usd(book.sleeve_cap_usd)));
   if (book.deployed_pct != null) metrics.appendChild(metric("Deployed", book.deployed_pct.toFixed(0) + "%"));
   card.appendChild(metrics);
@@ -956,17 +1076,12 @@ function renderBook(book) {
     ));
     const funnel = funnelLine(book);
     if (funnel) card.appendChild(el("p", { className: "meta" }, funnel));
+  } else if (!(book.positions || []).length) {
+    card.appendChild(el("p", { className: "empty" }, "Flat. No open shares."));
   } else {
-    card.appendChild(table(
-      [{label:"Symbol"},{label:"Qty", num:true},{label:"Entry", num:true},{label:"Stop", num:true},{label:"Target", num:true},{label:"Value", num:true},{label:"Unrealized", num:true}],
-      (book.positions || []).map((p) => [
-        cell(p.symbol), cell(p.quantity), cell(p.entry_price != null ? p.entry_price.toFixed(2) : null),
-        cell(p.stop_price != null ? p.stop_price.toFixed(2) : null),
-        cell(p.profit_limit != null ? p.profit_limit.toFixed(2) : null),
-        cell(usd2(p.market_value_usd)),
-        cell(pct(p.unrealized_pct), cls(p.unrealized_pct))
-      ])
-    ));
+    const grid = el("div", { className: "pos-grid" });
+    book.positions.forEach((p) => grid.appendChild(swingCard(book, p)));
+    card.appendChild(grid);
   }
 
   card.appendChild(el("h2", null, "Recent closes"));
@@ -1018,6 +1133,18 @@ function hbars(title, rows, note) {
   if (note) card.appendChild(el("p", { className: "note" }, note));
   return card;
 }
+function shadowNote(shadows) {
+  const losers = shadows.filter((s) => (s.realized_pnl_usd || 0) < -500 && s.worst_close && s.worst_close.symbol);
+  if (!losers.length) return "Arms with a close are listed first. The scale is the largest realized gain or loss.";
+  const first = losers[0].worst_close;
+  const same = losers.every((s) => Math.abs((s.realized_pnl_usd || 0) - (losers[0].realized_pnl_usd || 0)) < 1);
+  let text = first.symbol + " closed " + (first.pnl_pct || 0).toFixed(1) + "% on a " + String(first.exit_reason || "exit").replaceAll("_", " ");
+  if (first.notional_usd) text += ", about " + usd(first.notional_usd) + " notional";
+  text += ". That is a research arm, not the live sleeve.";
+  if (same && losers.length > 1) text += " " + losers.map((s) => s.id).join(" and ") + " recorded the same close, so the dollars show once per arm.";
+  return text;
+}
+
 function shadowSection(book) {
   const wrap = el("div");
   wrap.appendChild(el("h2", null, "Shadow arms"));
@@ -1029,7 +1156,7 @@ function shadowSection(book) {
       value: s.realized_pnl_usd || 0,
       text: usd2(s.realized_pnl_usd || 0)
     })),
-    "Arms with a close are listed first. The scale is the largest realized gain or loss."
+    shadowNote(shadows)
   ));
   wrap.appendChild(table(
       [{label:"Arm"},{label:"Start", num:true},{label:"Equity", num:true},{label:"Open", num:true},{label:"Closed", num:true},{label:"Win", num:true},{label:"Realized", num:true},{label:"Tick"}],

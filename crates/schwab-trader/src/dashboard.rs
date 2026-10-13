@@ -199,8 +199,20 @@ fn swing_book(rules_path: &Path) -> Value {
     };
     let state = inner_state(&state).clone();
     let mut book = book_from_equity_state("swing", &name, rules_path, &state, sleeve);
+    book["plan"] = swing_plan(&yaml);
     book["shadows"] = json!(shadow_rows(rules_path, &yaml));
     book
+}
+
+fn swing_plan(yaml: &Value) -> Value {
+    json!({
+        "stop_loss_pct": yaml_f64(yaml, &["playbook", "exit", "stop_loss_pct"]),
+        "profit_target_pct": yaml_f64(yaml, &["playbook", "exit", "profit_target_pct"]),
+        "trail_activate_pct": yaml_f64(yaml, &["playbook", "exit", "trailing", "activate_after_profit_pct"]),
+        "time_stop_days": yaml_f64(yaml, &["playbook", "exit", "time_stop_days"]),
+        "max_hold_days": yaml_f64(yaml, &["playbook", "holding_period", "max_days"]),
+        "target_hold_days": yaml_f64(yaml, &["playbook", "holding_period", "target_days"]),
+    })
 }
 
 fn options_book(rules_path: &Path) -> Value {
@@ -334,10 +346,11 @@ fn swing_positions(state: &Value) -> Vec<Value> {
             let qty = p.get("quantity").and_then(Value::as_f64).unwrap_or(0.0);
             let entry = p.get("entry_price").and_then(Value::as_f64).unwrap_or(0.0);
             let value = p.get("market_value_usd").and_then(Value::as_f64);
-            let unrealized_pct = match (value, qty > 0.0, entry > 0.0) {
-                (Some(value), true, true) => Some(((value / qty) - entry) / entry * 100.0),
-                _ => None,
-            };
+            let last = value.filter(|_| qty > 0.0).map(|v| v / qty);
+            let unrealized_pct = last
+                .filter(|_| entry > 0.0)
+                .map(|last| (last - entry) / entry * 100.0);
+            let unrealized_usd = value.map(|v| v - entry * qty);
             json!({
                 "symbol": p.get("symbol").cloned().unwrap_or(Value::Null),
                 "quantity": qty,
@@ -345,7 +358,13 @@ fn swing_positions(state: &Value) -> Vec<Value> {
                 "stop_price": p.get("stop_price").cloned().unwrap_or(Value::Null),
                 "profit_limit": p.get("profit_limit").cloned().unwrap_or(Value::Null),
                 "market_value_usd": value,
+                "last_price": last,
+                "unrealized_usd": unrealized_usd,
                 "unrealized_pct": unrealized_pct,
+                "opened_at": p.get("opened_at").cloned().unwrap_or(Value::Null),
+                "peak_profit_pct": p.get("peak_profit_pct").cloned().unwrap_or(Value::Null),
+                "trough_profit_pct": p.get("trough_profit_pct").cloned().unwrap_or(Value::Null),
+                "stop_risk_usd": p.get("stop_risk_usd").cloned().unwrap_or(Value::Null),
             })
         })
         .collect();
@@ -503,7 +522,28 @@ fn shadow_summary(id: &str, state: &Value) -> Value {
         "closed_count": closed_count,
         "win_rate_pct": win_rate,
         "realized_pnl_usd": realized,
+        "worst_close": worst_close(&closed),
         "last_tick": state.get("last_tick").cloned().unwrap_or(Value::Null),
+    })
+}
+
+fn worst_close(closed: &[Value]) -> Value {
+    let worst = closed.iter().min_by(|a, b| {
+        let left = a.get("pnl_usd").and_then(Value::as_f64).unwrap_or(0.0);
+        let right = b.get("pnl_usd").and_then(Value::as_f64).unwrap_or(0.0);
+        left.partial_cmp(&right).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let Some(trade) = worst else {
+        return Value::Null;
+    };
+    let qty = trade.get("quantity").and_then(Value::as_f64).unwrap_or(0.0);
+    let entry = trade.get("entry_price").and_then(Value::as_f64).unwrap_or(0.0);
+    json!({
+        "symbol": trade.get("symbol").cloned().unwrap_or(Value::Null),
+        "pnl_usd": trade.get("pnl_usd").cloned().unwrap_or(Value::Null),
+        "pnl_pct": trade.get("pnl_pct").cloned().unwrap_or(Value::Null),
+        "exit_reason": trade.get("exit_reason").cloned().unwrap_or(Value::Null),
+        "notional_usd": if qty > 0.0 && entry > 0.0 { json!(qty * entry) } else { Value::Null },
     })
 }
 
@@ -864,6 +904,8 @@ mod tests {
         assert_eq!(book["realized_pnl_usd"], 30.0);
         assert_eq!(book["recent_closes"][0]["symbol"], "NVDA");
         assert_eq!(book["positions"][0]["unrealized_pct"], 5.0);
+        assert_eq!(book["positions"][0]["last_price"], 105.0);
+        assert!(book["plan"]["stop_loss_pct"].is_null());
         assert_eq!(book["journal"].as_array().unwrap().len(), 1);
         assert_eq!(book["journal"][0]["type"], "sim_entry_filled");
         assert_eq!(book["shadows"][0]["id"], "big-base");
