@@ -4,6 +4,8 @@ version: 1
 # 3.5% to break-even. Vertical max_open is 3, but QQQ and SPY share one
 # correlation group capped at 2, so two slots is the real limit.
 # No duplicate expiry (engine already rejects a second short on an open expiry).
+# HYPOTHESIS: a second slot adds trades without lowering per-trade edge.
+# FALSIFIER: per-trade expectancy below O0's, or entries mostly duplicate O0's same-day spread.
 agent_id: options-arm-o1
 
 # 2026-09-28 (Barry OK, audit analysis-20260928): credit floors raised to 10% of width /

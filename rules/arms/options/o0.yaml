@@ -3,6 +3,8 @@ version: 1
 # O0 control. Same gates as 8709 after the mark and IV fixes, with the
 # pre-2026-09-28 floors (credit 0.30, 6% of width). One slot. SPY keeps
 # the 4% OTM and 6% break-even gates, so this arm is QQQ in practice.
+# HYPOTHESIS: 12-20 delta credit spreads collect enough variance premium to beat costs.
+# FALSIFIER: expectancy per trade at or below zero after 20 distinct closed trades.
 agent_id: options-arm-o0
 
 # 2026-09-28 (Barry OK, audit analysis-20260928): credit floors raised to 10% of width /

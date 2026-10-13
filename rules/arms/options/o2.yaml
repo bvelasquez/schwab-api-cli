@@ -2,6 +2,8 @@ version: 1
 # Paper arm o2 ($30k sleeve, LLM off, 300s tick). Does not change 8709.
 # O2 wide. $10-wide, delta 0.12-0.20, credit at least 0.80 and 8% of width.
 # Two slots. SPY uses 3% OTM, 3.5% to break-even, and the 8% credit floor.
+# HYPOTHESIS: wider spreads keep more credit dollars per dollar of fixed trading cost.
+# FALSIFIER: return on max risk below O0's after 20 distinct closed trades.
 agent_id: options-arm-o2
 
 # 2026-09-28 (Barry OK, audit analysis-20260928): credit floors raised to 10% of width /

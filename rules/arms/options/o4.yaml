@@ -1,7 +1,12 @@
 version: 1
 # Paper arm o4 ($30k sleeve, LLM off, 300s tick). Does not change 8709.
-# O4 higher-delta negative control. Delta 0.20-0.25, $5 wide, credit 0.50
-# and 10% of width. QQQ can meet that; SPY cannot. One slot, same exits as O0.
+# O4 higher-delta sensitivity arm. Delta 0.20-0.25, $5 wide, credit 0.50
+# and 10% of width. One slot, same exits as O0. Distance gates are relaxed to
+# 2.5% OTM / 2.5% to break-even / POP 60 because a 20-25 delta short cannot clear the
+# 6% break-even cushion the other arms use (the first version admitted 0 of 2047
+# candidates on 2026-10-09).
+# HYPOTHESIS: more premium per trade offsets the lower win rate.
+# FALSIFIER: expectancy per trade below O0 after 20 distinct closed trades.
 agent_id: options-arm-o4
 
 # 2026-09-28 (Barry OK, audit analysis-20260928): credit floors raised to 10% of width /
@@ -82,11 +87,11 @@ entry_rules:
     # Engine picks ONLY by delta band (no 5% OTM fallback).
     short_delta_min: 0.20
     short_delta_max: 0.25
-    min_pop_pct: 68
-    min_distance_to_be_pct: 6.0
+    min_pop_pct: 60
+    min_distance_to_be_pct: 2.5
     min_credit_to_width_pct: 10.0
     # Thesis exit remains 3.0%; entry cushion slightly eased for frequency.
-    min_short_otm_pct: 4.0
+    min_short_otm_pct: 2.5
     # P2.6 RSI(2) timing gates — DISABLED after backtest sensitivity (45/60/65/70/off):
     # the gate removed ~4 winners to avoid 1 extra stop (net −$55; off = +$353 vs +$298
     # at 45). The put-credit guard does the breakdown protection; RSI(2) just throttled

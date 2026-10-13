@@ -24,7 +24,8 @@ SCHWAB="${SCHWAB:-${HOME}/.cargo/bin/schwab}"
 OUT_DIR="${OUT_DIR:-rules/chains}"
 STRIKE_COUNT="${STRIKE_COUNT:-150}"
 DTE_FROM="${DTE_FROM:-14}"
-DTE_TO="${DTE_TO:-60}"
+# 75 so the 55-70 DTE paper arm (o5) and put-write benchmarks have real quotes.
+DTE_TO="${DTE_TO:-75}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"

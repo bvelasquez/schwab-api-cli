@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Install the five $30k options paper arms on this machine.
+# Install the $30k options paper arms on this machine.
 #
 # Reads the account hash from rules/options-pilot-8709.yaml, writes gitignored
 # rules/options-arm-oN.yaml, and starts schwab-options-arm-oN.service.
 # Paper only. Never passes --trust or --yes. Does not restart the 8709 agent.
 #
-# Run on the paper host after a fast-forward pull:
-#   ./scripts/install-options-arms.sh
+# Run on the paper host after syncing the repo:
+#   ./scripts/install-options-arms.sh            # every arm in rules/arms/options/*.yaml
+#   ./scripts/install-options-arms.sh o5 o6      # only the named arms (others are not restarted)
 
 set -euo pipefail
 
@@ -39,11 +40,21 @@ else:
 PY
 )"
 
+if [[ $# -gt 0 ]]; then
+  arms=("$@")
+else
+  arms=()
+  for template in rules/arms/options/o*.yaml; do
+    name="$(basename "$template" .yaml)"
+    arms+=("$name")
+  done
+fi
+
 unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 drop_src="$unit_dir/schwab-options-8709.service.d"
 mkdir -p "$unit_dir"
 
-for arm in o0 o1 o2 o3 o4; do
+for arm in "${arms[@]}"; do
   template="rules/arms/options/${arm}.yaml"
   dest="rules/options-arm-${arm}.yaml"
   if [[ ! -f "$template" ]]; then
@@ -76,17 +87,14 @@ PY
 done
 
 systemctl --user daemon-reload
-for arm in o0 o1 o2 o3 o4; do
+for arm in "${arms[@]}"; do
   systemctl --user enable "schwab-options-arm-${arm}.service"
   systemctl --user restart "schwab-options-arm-${arm}.service"
   sleep 15
 done
 
 echo "==> arm units"
-systemctl --user is-active \
-  schwab-options-arm-o0.service \
-  schwab-options-arm-o1.service \
-  schwab-options-arm-o2.service \
-  schwab-options-arm-o3.service \
-  schwab-options-arm-o4.service
+for arm in "${arms[@]}"; do
+  echo "${arm}: $(systemctl --user is-active "schwab-options-arm-${arm}.service")"
+done
 echo "==> 8709 left as-is: $(systemctl --user is-active schwab-options-8709.service)"

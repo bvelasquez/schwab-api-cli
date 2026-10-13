@@ -2,6 +2,8 @@ version: 1
 # Paper arm o3 ($30k sleeve, LLM off, 300s tick). Does not change 8709.
 # O3 short cycle. 21-30 DTE, 50% profit target, calendar close at 10 DTE.
 # Floors 0.30 / 6%, delta 0.12-0.20, $5 wide, two slots. SPY is not relaxed.
+# HYPOTHESIS: shorter cycles are a negative control; they cost more turnover for the same edge.
+# FALSIFIER: per-trade expectancy above O0's after 20 distinct closed trades.
 agent_id: options-arm-o3
 
 # 2026-09-28 (Barry OK, audit analysis-20260928): credit floors raised to 10% of width /
