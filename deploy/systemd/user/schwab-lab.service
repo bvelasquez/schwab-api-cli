@@ -1,0 +1,17 @@
+# Nightly options strategy-lab evidence for the paper dashboard.
+#
+# Slippage calibration, benchmarks (delta-equivalent alpha, put-write), and the options
+# promotion gate. Read-only with respect to trading: reads rules/ state, journals and
+# recorded chains; writes rules/analysis/ and rules/benchmarks/ only.
+
+[Unit]
+Description=Schwab options strategy-lab evidence (paper)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/schwabinvestbot
+ExecStart=/usr/bin/env bash %h/projects/schwabinvestbot/scripts/lab-nightly.sh
+
+[Install]
+WantedBy=default.target

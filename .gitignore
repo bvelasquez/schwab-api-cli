@@ -51,6 +51,11 @@ rules/scorecards/
 # Intraday option chain snapshots (scripts/chain-snapshot.sh on paper-host)
 rules/chains/
 
+# Nightly options lab outputs (scripts/lab-nightly.sh on paper-host)
+rules/benchmarks/
+rules/analysis/slippage-calibration.json
+rules/analysis/options-promotion-gate.json
+
 # Backtest artifacts (regenerate: schwab-trader / schwab agent backtest prefetch / run)
 rules/analysis-*/.backtest-cache-*.json
 rules/.backtest-cache-*.json
