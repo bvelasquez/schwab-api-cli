@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.9 — 2026-10-13
+
+`schwab-api-cli` and `schwab-trader`. Same library crates as 0.1.8 (`schwab-api-cli-core` 0.1.2, `schwab-api-cli-market-data` 0.1.1).
+
+- Options agent searches the chain for the short strike, records the bid and ask at entry, and can use a HAR-RV forecast or a VIX term-structure pause. Both gates stay off unless a rules file turns them on.
+- `schwab-trader dashboard` serves the paper books page: options payoff and health, and a swing chart of entry, stop, and target for each open share.
+
 ## 0.1.8 — 2026-10-08
 
 `schwab-api-cli` and `schwab-trader`. Same library crates as 0.1.7 (`schwab-api-cli-core` 0.1.2, `schwab-api-cli-market-data` 0.1.1).
