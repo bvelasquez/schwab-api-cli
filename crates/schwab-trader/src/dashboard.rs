@@ -72,20 +72,32 @@ pub fn snapshot(paths: &DashboardPaths) -> Value {
     json!({
         "generated_at": Utc::now().to_rfc3339(),
         "books": books,
+        "underlyings": underlying_prices(rules_dir(paths)),
         "lab": lab_section(paths),
     })
+}
+
+/// Directory that holds the options rules files, and beside them `chains/` and `scorecards/`.
+fn rules_dir(paths: &DashboardPaths) -> &Path {
+    paths
+        .options
+        .first()
+        .and_then(|p| p.parent())
+        .map(|p| if p.as_os_str().is_empty() { Path::new(".") } else { p })
+        .unwrap_or_else(|| Path::new("."))
+}
+
+/// Last recorded underlying prices from chain snapshots (`rules/chains/latest-underlyings.json`).
+/// Missing file is an empty object. The dashboard never fetches a quote itself.
+fn underlying_prices(rules_dir: &Path) -> Value {
+    read_json(&rules_dir.join("chains").join("latest-underlyings.json")).unwrap_or(json!({}))
 }
 
 /// Nightly evidence files (scorecard, benchmarks, slippage calibration, promotion gate).
 /// They live under the rules directory that holds the options rules files. Missing
 /// files are reported as `present: false`; they are never an error.
 fn lab_section(paths: &DashboardPaths) -> Value {
-    let rules_dir = paths
-        .options
-        .first()
-        .and_then(|p| p.parent())
-        .map(|p| if p.as_os_str().is_empty() { Path::new(".") } else { p })
-        .unwrap_or_else(|| Path::new("."));
+    let rules_dir = rules_dir(paths);
     json!({
         "scorecard": lab_artifact(&rules_dir.join("scorecards").join("latest.json"), |doc| {
             json!({
@@ -879,10 +891,30 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let rules = dir.path().join("options-a.yaml");
         std::fs::write(&rules, "agent_id: a\n").unwrap();
-        let lab = lab_section(&DashboardPaths { swing: vec![], options: vec![rules] });
+        let lab = lab_section(&DashboardPaths { swing: vec![], options: vec![rules.clone()] });
         for key in ["scorecard", "benchmarks", "slippage", "promotion_gate"] {
             assert_eq!(lab[key]["present"], false, "{key}");
         }
+        assert!(snapshot(&DashboardPaths { swing: vec![], options: vec![rules] })["underlyings"]
+            .as_object()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn underlying_prices_come_from_the_chain_summary() {
+        let dir = tempfile::tempdir().unwrap();
+        let rules = dir.path().join("options-a.yaml");
+        std::fs::write(&rules, "agent_id: a\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("chains")).unwrap();
+        std::fs::write(
+            dir.path().join("chains/latest-underlyings.json"),
+            r#"{"QQQ":{"price":743.3,"as_of":"2026-10-13 10:00 ET"}}"#,
+        )
+        .unwrap();
+        let snap = snapshot(&DashboardPaths { swing: vec![], options: vec![rules] });
+        assert_eq!(snap["underlyings"]["QQQ"]["price"], 743.3);
+        assert_eq!(snap["underlyings"]["QQQ"]["as_of"], "2026-10-13 10:00 ET");
     }
 
     #[test]

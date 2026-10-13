@@ -173,6 +173,32 @@ PY
   raw_bytes="$(wc -c <"${merged_tmp}" | tr -d ' ')"
   gz_bytes="$(wc -c <"${out_gz}" | tr -d ' ')"
   log "chain-snapshot: ${sym} -> ${out_gz} (${gz_bytes} bytes gzip, ${raw_bytes} bytes raw)"
+  # A one-line price file so the dashboard can mark spot on a payoff chart without
+  # reading the chain. OUT_DIR/latest-underlyings.json, merged per symbol.
+  python3 - "${merged_tmp}" "${OUT_DIR}/latest-underlyings.json" "${sym}" "${DAY}" "${STAMP}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+src, dest, sym, day, stamp = sys.argv[1:]
+try:
+    price = json.loads(Path(src).read_text()).get("data", {}).get("underlyingPrice")
+except (OSError, json.JSONDecodeError):
+    price = None
+if not isinstance(price, (int, float)) or price <= 0:
+    sys.exit(0)
+path = Path(dest)
+try:
+    cur = json.loads(path.read_text())
+except (OSError, json.JSONDecodeError):
+    cur = {}
+if not isinstance(cur, dict):
+    cur = {}
+cur[sym] = {"price": price, "as_of": f"{day} {stamp[:2]}:{stamp[2:]} ET"}
+tmp = path.with_suffix(".json.tmp")
+tmp.write_text(json.dumps(cur, sort_keys=True))
+tmp.replace(path)
+PY
 }
 
 for sym in QQQ SPY; do
