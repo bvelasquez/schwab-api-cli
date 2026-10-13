@@ -8,6 +8,8 @@ different state-file names:
   options (schwab)         -> rules/agent-sim-state-<rules-stem>.json
   swing   (schwab-trader)  -> rules/trader-state-<rules-stem>.json
 
+Options paper arms (O0..On) are discovered from rules/ and checked the same way.
+
 Override paths with SCHWAB_REPO, SCHWAB_OPTIONS_RULES, SCHWAB_SWING_RULES,
 SCHWAB_OPTIONS_UNIT, and SCHWAB_SWING_UNIT.
 """
@@ -24,20 +26,31 @@ def _stem(rel: str) -> str:
     return pathlib.Path(rel).stem
 
 
-OPTIONS_RULES = os.environ.get("SCHWAB_OPTIONS_RULES", "rules/options-pilot.yaml")
-SWING_RULES = os.environ.get("SCHWAB_SWING_RULES", "rules/trader-swing.yaml")
+# Defaults match the paper-host files. They were "options-pilot" / "trader-swing" until
+# 2026-10-12, which do not exist on the host, so the check reported both agents stale.
+OPTIONS_RULES = os.environ.get("SCHWAB_OPTIONS_RULES", "rules/options-pilot-8709.yaml")
+SWING_RULES = os.environ.get("SCHWAB_SWING_RULES", "rules/trader-swing-9947.yaml")
 OPTIONS_NAME = "options"
 SWING_NAME = "swing"
 AGENTS = {
     OPTIONS_NAME: (
         BASE / f"rules/agent-sim-state-{_stem(OPTIONS_RULES)}.json",
-        os.environ.get("SCHWAB_OPTIONS_UNIT", "schwab-options.service"),
+        os.environ.get("SCHWAB_OPTIONS_UNIT", "schwab-options-8709.service"),
     ),
     SWING_NAME: (
         BASE / f"rules/trader-state-{_stem(SWING_RULES)}.json",
-        os.environ.get("SCHWAB_SWING_UNIT", "schwab-swing.service"),
+        os.environ.get("SCHWAB_SWING_UNIT", "schwab-swing-9947.service"),
     ),
 }
+# Options paper arms: rules/agent-sim-state-options-arm-oN.json <-> schwab-options-arm-oN.service.
+# They share the options state schema, so they are reported like the pilot.
+ARM_KIND = {}
+for _p in sorted((BASE / "rules").glob("agent-sim-state-options-arm-o*.json")):
+    if ".bak" in _p.name:
+        continue
+    _arm = _p.stem.removeprefix("agent-sim-state-options-")
+    AGENTS[_arm] = (_p, f"schwab-options-{_arm}.service")
+    ARM_KIND[_arm] = OPTIONS_NAME
 
 
 # Per-agent fields worth printing: the agents do NOT share a schema, and there is no
@@ -51,8 +64,13 @@ EXTRAS = {
 SWING_STARTING_CASH_USD = float(os.environ.get("SCHWAB_SWING_STARTING_CASH", "0") or 0)
 
 
+def kind_of(name):
+    return ARM_KIND.get(name, name)
+
+
 def enrich_metrics(name, state, extra):
     """Add PnL / deployment fields; agents do not share a schema."""
+    name = kind_of(name)
     if name == OPTIONS_NAME:
         sim = state.get("sim") or {}
         if isinstance(sim, dict) and "realized_pnl_usd" in sim:
@@ -101,7 +119,7 @@ def main():
         lt = d.get("last_tick")
         age = iso_age(lt) if lt else None
         flagged = age is None or age > 15          # a market-hours tick is minutes apart
-        extra = {k: d[k] for k in EXTRAS.get(name, []) if k in d}
+        extra = {k: d[k] for k in EXTRAS.get(kind_of(name), []) if k in d}
         open_n = len(extra.get("open_positions") or []) if "open_positions" in extra else None
         if open_n is not None:
             extra["open_n"] = open_n

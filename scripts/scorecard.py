@@ -25,8 +25,11 @@ from pathlib import Path
 def _stem(env_name: str, default: str) -> str:
     return Path(os.environ.get(env_name, default)).stem
 
-_SWING_STEM = _stem("SCHWAB_SWING_RULES", "trader-swing.yaml")
-_OPTIONS_STEM = _stem("SCHWAB_OPTIONS_RULES", "options-pilot.yaml")
+# Defaults match the paper-host rules files. Before 2026-10-12 these were
+# "trader-swing" / "options-pilot", which do not exist on the host, so every
+# scorecard silently reported zero trades and the drift alerts were blind.
+_SWING_STEM = _stem("SCHWAB_SWING_RULES", "trader-swing-9947.yaml")
+_OPTIONS_STEM = _stem("SCHWAB_OPTIONS_RULES", "options-pilot-8709.yaml")
 SWING_STATE = f"trader-state-{_SWING_STEM}.json"
 SWING_JOURNAL = f"trader-journal-{_SWING_STEM}.jsonl"
 OPTIONS_STATE = f"agent-sim-state-{_OPTIONS_STEM}.json"
@@ -56,6 +59,12 @@ def parse_args():
     p.add_argument("--telegram", action="store_true", help="Send compact summary via Telegram")
     p.add_argument("--json", action="store_true", help="Print full JSON to stdout")
     return p.parse_args()
+
+
+def write_atomic(path: Path, text: str) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    tmp.replace(path)
 
 
 def load_json(path: Path):
@@ -217,6 +226,34 @@ def swing_section(state_path: Path, journal_paths: list[Path]) -> dict:
 
     state = load_json(state_path) or {}
     sim = state.get("sim") if isinstance(state.get("sim"), dict) else {}
+    # Journals rotate, so the live journal can hold far fewer exits than the ledger
+    # (jarvis 2026-10-12: 4 journal exits versus 41 in sim.closed_trades). Prefer
+    # the state ledger whenever it is the larger record.
+    state_closed = [t for t in (sim.get("closed_trades") or []) if isinstance(t, dict)]
+    if len(state_closed) > len(exits):
+        exits = [
+            {
+                "ts": t.get("closed_at") or t.get("ts") or "",
+                "session": session_date(str(t.get("closed_at") or t.get("ts") or "")),
+                **t,
+            }
+            for t in state_closed
+        ]
+        pnls_pct = [float(e["pnl_pct"]) for e in exits if e.get("pnl_pct") is not None]
+        pnls_usd = [float(e["pnl_usd"]) for e in exits if e.get("pnl_usd") is not None]
+        wins = [p for p in pnls_pct if p > 0]
+        losses = [p for p in pnls_pct if p <= 0]
+        gross_win = sum(p for p in pnls_usd if p > 0)
+        gross_loss = abs(sum(p for p in pnls_usd if p < 0))
+        profit_factor = (gross_win / gross_loss) if gross_loss > 0 else None
+        mean_pct, ci_lo, ci_hi = bootstrap_mean_ci(pnls_pct)
+        exit_mix = collections.Counter(e.get("exit_reason") or "unknown" for e in exits)
+        last20 = pnls_pct[-20:]
+        slippages = [
+            s
+            for e in exits
+            if e.get("exit_reason") == "stop_loss" and (s := stop_gap_slippage_pct(e)) is not None
+        ]
     start_eq = float(sim.get("starting_cash_usd") or 0) or SWING_STARTING_CASH
     cash_base = SWING_STARTING_CASH or start_eq
     snaps = sim.get("equity_snapshots") or []
@@ -473,6 +510,57 @@ def options_section(state_path: Path, journal_path: Path) -> dict:
     }
 
 
+def _entry_key(entry: dict) -> tuple[str, str, str]:
+    """Identity of a trade across agents: underlying, entry day, and leg strikes.
+
+    Two paper arms that open the same spread on the same day are one bet, not
+    two independent observations, so effective n counts distinct keys.
+    """
+    pid = entry.get("position_id") or ""
+    parts = pid.split("|")
+    und = entry.get("underlying") or (parts[1] if len(parts) > 1 else "")
+    legs = parts[-1] if parts else ""
+    return (str(und), str(entry.get("ts", ""))[:10], legs)
+
+
+def options_arms_section(rules: Path) -> dict:
+    """Scorecard for every options paper agent (8709 pilot plus arms O0..On).
+
+    Reports per-agent results plus effective n (distinct trades across agents)
+    next to nominal n (sum of entries), so correlated clones are not mistaken
+    for independent experiments.
+    """
+    agents: dict[str, dict] = {}
+    all_keys: collections.Counter = collections.Counter()
+    state_files = sorted(rules.glob("agent-sim-state-options-*.json"))
+    for sp in state_files:
+        name = sp.stem.removeprefix("agent-sim-state-options-")
+        if name.endswith(".bak") or ".bak" in sp.name:
+            continue
+        jp = rules / f"agent-sim-journal-options-{name}.jsonl"
+        sec = options_section(sp, jp)
+        _, entries, _ = scan_options_journal(jp)
+        sec.pop("_alerts_inputs", None)
+        sec["entries"] = len(entries)
+        sec["open_positions"] = len((load_json(sp) or {}).get("open_positions") or {})
+        keys = [_entry_key(e) for e in entries]
+        for k in set(keys):
+            all_keys[k] += 1
+        sec["_keys"] = keys
+        agents[name] = sec
+    nominal = sum(a["entries"] for a in agents.values())
+    effective = len(all_keys)
+    shared = sum(1 for c in all_keys.values() if c > 1)
+    for a in agents.values():
+        a.pop("_keys", None)
+    return {
+        "agents": agents,
+        "nominal_entries": nominal,
+        "effective_entries": effective,
+        "entries_shared_by_multiple_agents": shared,
+    }
+
+
 def _underlying_from_position(pid: str) -> str | None:
     parts = pid.split("|")
     return parts[1] if len(parts) > 1 else None
@@ -517,6 +605,29 @@ def build_drift_alerts(swing: dict, options: dict) -> list[str]:
     return alerts
 
 
+def build_missing_file_alerts(rules: Path) -> list[str]:
+    """A wrong default stem once made the scorecard report zero trades for weeks."""
+    alerts: list[str] = []
+    for label, name in (("swing", SWING_STATE), ("options", OPTIONS_STATE)):
+        if not (rules / name).is_file():
+            msg = f"scorecard: {label} state file missing: {name}"
+            print(msg, file=sys.stderr)
+            alerts.append(msg)
+    return alerts
+
+
+def build_arm_alerts(arms: dict) -> list[str]:
+    alerts: list[str] = []
+    nominal = arms.get("nominal_entries") or 0
+    effective = arms.get("effective_entries") or 0
+    if nominal >= 4 and effective * 2 <= nominal:
+        alerts.append(
+            f"options arms: {nominal} entries are only {effective} distinct trades "
+            "(arms are correlated clones; effective n is what counts)"
+        )
+    return alerts
+
+
 def compact_summary(report: dict) -> str:
     sw = report["swing"]
     op = report["options"]
@@ -538,6 +649,12 @@ def compact_summary(report: dict) -> str:
             f"open mark {usd(op.get('open_position_mark_usd'))}, degraded exits {op.get('exits_on_degraded_quotes')}"
         ),
     ]
+    arms = report.get("options_arms") or {}
+    if arms.get("agents"):
+        lines.append(
+            f"Options agents: {len(arms['agents'])}, entries {arms['nominal_entries']} "
+            f"nominal / {arms['effective_entries']} distinct"
+        )
     alerts = report.get("drift_alerts") or []
     if alerts:
         lines.append("Alerts: " + "; ".join(alerts[:5]))
@@ -591,7 +708,10 @@ def main() -> int:
     journal_paths = swing_journal_paths(rules)
     swing = swing_section(rules / SWING_STATE, journal_paths)
     options = options_section(rules / OPTIONS_STATE, rules / OPTIONS_JOURNAL)
+    options_arms = options_arms_section(rules)
     drift_alerts = build_drift_alerts(swing, options)
+    drift_alerts.extend(build_arm_alerts(options_arms))
+    drift_alerts.extend(build_missing_file_alerts(rules))
     swing.pop("_alerts_inputs", None)
     options.pop("_alerts_inputs", None)
 
@@ -600,11 +720,14 @@ def main() -> int:
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "swing": swing,
         "options": options,
+        "options_arms": options_arms,
         "drift_alerts": drift_alerts,
     }
 
     out_path = out_dir / f"{today}.json"
-    out_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    payload = json.dumps(report, indent=2, sort_keys=True) + "\n"
+    out_path.write_text(payload)
+    write_atomic(out_dir / "latest.json", payload)
 
     summary = compact_summary(report)
     print(summary)
