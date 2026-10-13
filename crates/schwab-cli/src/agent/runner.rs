@@ -56,7 +56,7 @@ use super::spread_analytics::{
     analytics_from_json, entry_analytics_pass, entry_analytics_reject_reason,
     passes_min_iv_rv_ratio,
 };
-use super::volatility::{fetch_realized_vol_pct, iv_rv_ratio};
+use super::volatility::{fetch_realized_vol_pct, fetch_vol_estimate_pct, iv_rv_ratio};
 use super::paths::{active_state_path, load_agent_state, load_sim_agent_state};
 use super::protective;
 use super::resilience;
@@ -2486,7 +2486,7 @@ async fn evaluate_vertical_entry(
     .await?;
 
     let lookback = rules.regime.realized_vol_lookback.max(5);
-    let realized_vol_pct = fetch_realized_vol_pct(market, underlying, lookback)
+    let realized_vol_pct = fetch_vol_estimate_pct(market, underlying, lookback, entry.rv_estimator)
         .await
         .ok()
         .flatten();

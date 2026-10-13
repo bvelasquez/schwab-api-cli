@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use schwab_market_data::MarketDataApi;
 
-use crate::rules::OptionsRegimeConfig;
+use crate::rules::{OptionsRegimeConfig, TermStructureGate};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -103,6 +103,15 @@ pub fn regime_pause_entries(
         || (cfg.pause_on_missing_vix && vix.is_none())
 }
 
+/// Term-structure pause: `vix / far >= pause_ratio_at_or_above`. Fail-closed when either
+/// quote is missing, because a configured gate must never silently pass.
+pub fn term_structure_pause(gate: &TermStructureGate, vix: Option<f64>, far: Option<f64>) -> bool {
+    match (vix, far) {
+        (Some(near), Some(far)) if near > 0.0 && far > 0.0 => near / far >= gate.pause_ratio_at_or_above,
+        _ => true,
+    }
+}
+
 pub async fn detect_options_regime(
     market: &MarketDataApi,
     cfg: &OptionsRegimeConfig,
@@ -117,7 +126,13 @@ pub async fn detect_options_regime(
     let vix = fetch_vix(market, &cfg.vix_symbol).await.ok();
 
     let class = classify_options_regime(cfg, vix, above_sma_50, above_sma_200);
-    let pause_entries = regime_pause_entries(cfg, class, vix);
+    let mut pause_entries = regime_pause_entries(cfg, class, vix);
+    let mut term_ratio = None;
+    if let Some(gate) = &cfg.term_structure {
+        let far = fetch_vix(market, &gate.far_symbol).await.ok();
+        term_ratio = vix.zip(far).map(|(near, far)| near / far);
+        pause_entries |= term_structure_pause(gate, vix, far);
+    }
     let preferred = preferred_strategy(cfg, class);
 
     Ok(OptionsRegimeSnapshot {
@@ -137,6 +152,7 @@ pub async fn detect_options_regime(
             "pause_entries_vix_above": cfg.pause_entries_vix_above,
             "pause_entries_vix_below": cfg.pause_entries_vix_below,
             "realized_vol_lookback": cfg.realized_vol_lookback,
+            "vix_term_ratio": term_ratio,
         }),
     })
 }
@@ -340,6 +356,28 @@ mod tests {
         ));
         // Bands still apply when the quote is present.
         assert!(regime_pause_entries(&open, OptionsRegimeClass::Hostile, Some(31.0)));
+    }
+
+    #[test]
+    fn term_structure_pauses_on_inversion_and_fails_closed() {
+        let gate = TermStructureGate::default();
+        assert!(!term_structure_pause(&gate, Some(15.0), Some(18.0)), "contango passes");
+        assert!(term_structure_pause(&gate, Some(20.0), Some(18.0)), "inverted pauses");
+        assert!(term_structure_pause(&gate, Some(18.0), Some(18.0)), "flat is at the threshold");
+        assert!(term_structure_pause(&gate, None, Some(18.0)), "missing VIX fails closed");
+        assert!(term_structure_pause(&gate, Some(15.0), None), "missing far quote fails closed");
+        assert!(term_structure_pause(&gate, Some(15.0), Some(0.0)), "bad quote fails closed");
+        let tight = TermStructureGate { pause_ratio_at_or_above: 0.9, ..Default::default() };
+        assert!(term_structure_pause(&tight, Some(17.0), Some(18.0)));
+    }
+
+    #[test]
+    fn term_structure_is_off_by_default_and_parses_from_yaml() {
+        assert!(OptionsRegimeConfig::default().term_structure.is_none());
+        let cfg: OptionsRegimeConfig = serde_yaml::from_str("enabled: true\nterm_structure:\n  pause_ratio_at_or_above: 0.95\n").unwrap();
+        let gate = cfg.term_structure.unwrap();
+        assert_eq!(gate.far_symbol, "$VIX3M");
+        assert_eq!(gate.pause_ratio_at_or_above, 0.95);
     }
 
     #[test]

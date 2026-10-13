@@ -373,6 +373,18 @@ pub struct EntryRules {
     pub iron_condor: IronCondorEntryRules,
 }
 
+/// How realized volatility is estimated for the `min_iv_rv_ratio` entry gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RvEstimator {
+    /// Close-to-close vol over `regime.realized_vol_lookback` days (current behavior).
+    #[default]
+    Lookback,
+    /// Fixed-weight HAR-RV forecast (daily, weekly, monthly variance components) of the
+    /// vol to expect over the next stretch. See `agent::volatility::har_rv_forecast_annualized_pct`.
+    Har,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VerticalEntryRules {
@@ -405,6 +417,10 @@ pub struct VerticalEntryRules {
     /// When set, missing IV or RV **fails closed** (rejects). Typical starting value: 1.15.
     #[serde(default)]
     pub min_iv_rv_ratio: Option<f64>,
+    /// Realized-vol estimator behind `min_iv_rv_ratio`. Default `lookback`.
+    /// `har` compares chain IV with a forecast of future vol instead of trailing vol.
+    #[serde(default)]
+    pub rv_estimator: RvEstimator,
     /// Minimum short-strike OTM cushion (% of spot). Omit to skip.
     #[serde(default)]
     pub min_short_otm_pct: Option<f64>,
@@ -441,6 +457,7 @@ impl Default for VerticalEntryRules {
             min_credit_to_width_pct: Some(12.5),
             reject_short_inside_1sigma: false,
             min_iv_rv_ratio: None,
+            rv_estimator: RvEstimator::Lookback,
             min_short_otm_pct: None,
             max_adverse_day_change_pct: None,
             put_credit_max_rsi2: None,
@@ -816,6 +833,29 @@ pub struct OptionsRegimeConfig {
     /// where all the historical stops live (VIX 18-22 zone). Omit/None to disable.
     #[serde(default)]
     pub put_credit_guard: Option<PutCreditGuard>,
+    /// Pause new entries when the VIX term structure is inverted (spot VIX at or above the
+    /// 3-month VIX). Omit/None to disable. Fail-closed when configured and a quote is missing.
+    #[serde(default)]
+    pub term_structure: Option<TermStructureGate>,
+}
+
+/// VIX term-structure pause: stress shows up as `VIX / VIX3M` at or above 1.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TermStructureGate {
+    /// Longer-dated vol index quote symbol.
+    pub far_symbol: String,
+    /// Pause when `vix_symbol quote / far_symbol quote` is at or above this.
+    pub pause_ratio_at_or_above: f64,
+}
+
+impl Default for TermStructureGate {
+    fn default() -> Self {
+        Self {
+            far_symbol: "$VIX3M".into(),
+            pause_ratio_at_or_above: 1.0,
+        }
+    }
 }
 
 /// Put-credit trend guard: no new put credits when VIX is elevated and the benchmark
@@ -867,6 +907,7 @@ impl Default for OptionsRegimeConfig {
             realized_vol_lookback: default_realized_vol_lookback(),
             strategy_map,
             put_credit_guard: None,
+            term_structure: None,
         }
     }
 }
@@ -1391,6 +1432,17 @@ pub fn rules_json_schema() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rv_estimator_defaults_to_lookback_and_parses_har() {
+        assert_eq!(VerticalEntryRules::default().rv_estimator, RvEstimator::Lookback);
+        let v: VerticalEntryRules = serde_yaml::from_str("min_iv_rv_ratio: 1.15\nrv_estimator: har\n").unwrap();
+        assert_eq!(v.rv_estimator, RvEstimator::Har);
+        assert_eq!(v.min_iv_rv_ratio, Some(1.15));
+        let v: VerticalEntryRules = serde_yaml::from_str("min_iv_rv_ratio: 1.15\n").unwrap();
+        assert_eq!(v.rv_estimator, RvEstimator::Lookback);
+        assert!(serde_yaml::from_str::<VerticalEntryRules>("rv_estimator: garch\n").is_err());
+    }
 
     #[test]
     fn watchlist_item_overrides_merge_into_vertical_entry() {

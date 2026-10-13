@@ -85,6 +85,7 @@ pub fn vertical_entry_market_context(
         "long_strike": long_strike,
         "width": width,
         "estimated_credit": credit,
+        "leg_quotes": leg_quotes(strike_map, short_strike, long_strike),
         "credit_to_width_pct": analytics.credit_to_width_pct,
         "short_delta": short_delta,
         "long_delta": long_delta,
@@ -503,6 +504,33 @@ pub fn market_context_summary_for_llm() -> Value {
     })
 }
 
+/// Bid/ask of both legs at the moment an entry is priced, plus the credit at the leg
+/// midpoints and at the natural prices (sell the short at its bid, buy the long at its
+/// ask). Journaled with each entry so paper fill cost can be compared with the real
+/// quoted spread at fill time. Mid and natural credit are `null` unless all four
+/// quotes are present.
+pub fn leg_quotes(strike_map: &Value, short_strike: f64, long_strike: f64) -> Value {
+    let short_bid = strike_field(strike_map, short_strike, "bid");
+    let short_ask = strike_field(strike_map, short_strike, "ask");
+    let long_bid = strike_field(strike_map, long_strike, "bid");
+    let long_ask = strike_field(strike_map, long_strike, "ask");
+    let (mid_credit, natural_credit) = match (short_bid, short_ask, long_bid, long_ask) {
+        (Some(sb), Some(sa), Some(lb), Some(la)) => (
+            Some((sb + sa) / 2.0 - (lb + la) / 2.0),
+            Some(sb - la),
+        ),
+        _ => (None, None),
+    };
+    json!({
+        "short_bid": short_bid,
+        "short_ask": short_ask,
+        "long_bid": long_bid,
+        "long_ask": long_ask,
+        "mid_credit": mid_credit,
+        "natural_credit": natural_credit,
+    })
+}
+
 pub fn strike_field(strike_map: &Value, strike: f64, field: &str) -> Option<f64> {
     let obj = strike_map.as_object()?;
     for key in strike_key_candidates(strike) {
@@ -572,6 +600,32 @@ mod tests {
         assert!((ctx["credit_to_width_pct"].as_f64().unwrap() - 15.0).abs() < 0.01);
         assert!(ctx["spread_pop_pct"].as_f64().unwrap() > 50.0);
         assert!(ctx["analytics"]["break_even_price"].as_f64().is_some());
+        // No bid/ask in this chain: quotes are null, never zero.
+        assert!(ctx["leg_quotes"]["short_bid"].is_null());
+        assert!(ctx["leg_quotes"]["mid_credit"].is_null());
+    }
+
+    #[test]
+    fn leg_quotes_report_mid_and_natural_credit() {
+        let map = json!({
+            "700.0": [{ "bid": 2.00, "ask": 2.10 }],
+            "695.0": [{ "bid": 1.40, "ask": 1.50 }]
+        });
+        let q = leg_quotes(&map, 700.0, 695.0);
+        assert_eq!(q["short_bid"], 2.0);
+        assert_eq!(q["long_ask"], 1.5);
+        assert!((q["mid_credit"].as_f64().unwrap() - 0.60).abs() < 1e-9);
+        assert!((q["natural_credit"].as_f64().unwrap() - 0.50).abs() < 1e-9);
+    }
+
+    #[test]
+    fn leg_quotes_are_null_when_a_leg_is_missing() {
+        let map = json!({ "700.0": [{ "bid": 2.00, "ask": 2.10 }] });
+        let q = leg_quotes(&map, 700.0, 695.0);
+        assert_eq!(q["short_ask"], 2.1);
+        assert!(q["long_bid"].is_null());
+        assert!(q["mid_credit"].is_null());
+        assert!(q["natural_credit"].is_null());
     }
 
     #[test]
