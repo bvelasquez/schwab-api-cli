@@ -1,0 +1,17 @@
+# Simulated agent-trader swing book on the Public API.
+# The paper loop reads PUBLIC_ACCOUNT_ID from the environment and never places an order.
+broker: public
+max_open_positions: 3
+max_hold_days: 30
+capital:
+  fixed_sleeve_cap_usd: 4000
+  min_cash_floor_usd: 0
+exits:
+  profit_pct: 8
+  stop_pct: 4
+  invalidation_pct: 6
+watchlists:
+  core:
+    - AAPL
+    - MSFT
+    - NVDA

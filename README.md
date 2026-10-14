@@ -10,6 +10,10 @@ Agent-first Rust CLI for the [Charles Schwab Trader API](https://developer.schwa
 >
 > Read the full [Disclaimer](#disclaimer) before live trading. Prefer `--dry-run` until you understand every flag and config file.
 
+## agent-trader
+
+A second CLI, `agent-trader`, talks to Schwab and Public.com through one order model. The account on the plan or rules file picks the backend, so both can run together. The `schwab` and `schwab-trader` binaries are unchanged until you cut an arm over. See [docs/AGENT_TRADER.md](docs/AGENT_TRADER.md).
+
 ## Features
 
 - **OAuth 2.0** — browser login, token refresh, secure local storage

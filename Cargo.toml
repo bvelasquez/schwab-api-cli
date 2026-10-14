@@ -5,6 +5,11 @@ members = [
     "crates/schwab-market-data",
     "crates/schwab-cli",
     "crates/schwab-trader",
+    "crates/broker-core",
+    "crates/broker-schwab",
+    "crates/broker-public",
+    "crates/agent-trader-cli",
+    "crates/agent-trader-swing",
 ]
 
 [workspace.package]

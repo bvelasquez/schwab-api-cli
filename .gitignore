@@ -38,6 +38,9 @@ rules/agent-*.log
 rules/.eqo-market-hours-*.json
 
 # Equity trader runtime state (per rules file stem, e.g. trader-swing.yaml)
+rules/agent-trader-public-paper.json
+rules/agent-trader-public-swing-paper.json
+rules/agent-trader-workflow-*.json
 rules/trader-state-*.json
 rules/trader-journal-*.jsonl
 rules/trader-*.pid

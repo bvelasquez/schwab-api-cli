@@ -41,6 +41,9 @@
     border-radius: 10px;
     padding: 14px 16px 16px;
   }
+  .book.agent-trader { border-color: #3d8b7a; box-shadow: inset 0 0 0 1px #3d8b7a; }
+  .badge.stack { color: #9ecbff; border-color: #3d5a80; }
+  .badge.public { color: #8fceab; border-color: #3d8b7a; }
   .book.head-row, .row {
     display: flex;
     justify-content: space-between;
@@ -95,7 +98,7 @@
     transform: translate(-50%, -50%); pointer-events: none;
   }
   .hbar { display: grid; grid-template-columns: 210px 1fr 88px; gap: 10px; align-items: center; margin: 5px 0; }
-  .hbar-name { color: #c4bfb0; font-size: 13px; }
+  .hbar-name { color: #c4bfb0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .hbar-track { position: relative; height: 18px; background: #2a2e22; border-radius: 5px; }
   .hbar-fill { position: absolute; top: 3px; height: 12px; border-radius: 3px; }
   .hbar-fill.up { background: var(--up); }
@@ -150,6 +153,7 @@
 <nav class="tabs" id="tabs">
   <button type="button" class="tab on" data-tab="options">Options</button>
   <button type="button" class="tab" data-tab="swing">Swing</button>
+  <button type="button" class="tab" data-tab="workflows">Workflows</button>
 </nav>
 <main id="books"></main>
 <script>
@@ -245,6 +249,9 @@ function structure(p) {
   return p.short_strike + "/" + p.long_strike + (kind ? " " + kind : "");
 }
 function shortName(book) {
+  if (book.stack === "agent-trader") {
+    return "agent-trader · " + (book.broker === "public" ? "Public" : (book.broker_label || "broker"));
+  }
   return (book.name || "").replace("options-", "");
 }
 function sleeveReturn(book) {
@@ -987,17 +994,32 @@ function swingCard(book, p) {
   if (p.unrealized_usd != null) parts.push(usd2(p.unrealized_usd) + " open");
   if (p.stop_risk_usd != null) parts.push(usd2(p.stop_risk_usd) + " planned risk at the stop");
   if (p.quantity != null) parts.push(Number(p.quantity).toFixed(2) + " shares");
+  if (p.workflow) parts.push(p.workflow);
   card.appendChild(el("p", { className: "meta" }, parts.join(" · ")));
   return card;
 }
 
 function renderBook(book) {
-  const card = el("section", { className: "book" });
+  const agent = book.stack === "agent-trader";
+  const card = el("section", { className: agent ? "book agent-trader" : "book" });
   const head = el("div", { className: "row" });
   const title = el("div", { className: "title" });
-  title.appendChild(document.createTextNode((book.kind === "options" ? "Options" : "Swing") + " · " + (book.name || book.rules_file)));
+  const kind = book.kind === "options" ? "Options" : book.kind === "workflow" ? "Workflow" : "Swing";
+  title.appendChild(document.createTextNode(agent
+    ? "agent-trader · " + (book.broker_label || "Public API") + " · " + kind
+    : kind + " · " + (book.name || book.rules_file)));
   title.appendChild(document.createTextNode(" "));
+  if (agent) {
+    title.appendChild(el("span", { className: "badge stack" }, "agent-trader"));
+    title.appendChild(document.createTextNode(" "));
+    title.appendChild(el("span", { className: "badge public" }, book.broker_label || "Public API"));
+    title.appendChild(document.createTextNode(" "));
+  }
   title.appendChild(el("span", { className: "badge" }, "paper"));
+  if (agent && book.live_orders === false) {
+    title.appendChild(document.createTextNode(" "));
+    title.appendChild(el("span", { className: "badge public" }, "no live orders"));
+  }
   if (stale(book.last_tick)) {
     title.appendChild(document.createTextNode(" "));
     title.appendChild(el("span", { className: "badge stale" }, "stale"));
@@ -1015,6 +1037,9 @@ function renderBook(book) {
     card.appendChild(el("p", { className: "err" }, book.error));
     return card;
   }
+  if (book.note) card.appendChild(el("p", { className: "meta" }, book.note));
+  const decisions = workflowDecisions(book);
+  if (decisions) card.appendChild(decisions);
   if (book.halted) card.appendChild(el("p", { className: "halt" }, "Halted: " + book.halted));
   const gates = experimentLine(book.experiment);
   if (gates) card.appendChild(el("div", { className: "gates" }, gates));
@@ -1171,7 +1196,22 @@ function shadowSection(book) {
   return wrap;
 }
 
-let tab = location.hash === "#swing" ? "swing" : "options";
+function workflowDecisions(book) {
+  if (book.kind !== "workflow" || !(book.workflows || []).length) return null;
+  const wrap = el("div");
+  wrap.appendChild(el("h2", null, "Last decision"));
+  book.workflows.forEach((wf) => {
+    const bits = [wf.id, wf.status].filter(Boolean);
+    (wf.steps || []).forEach((step) => {
+      const piece = [step.id, step.status, step.reason, step.value != null ? String(step.value) : ""].filter(Boolean).join(" ");
+      if (piece) bits.push(piece);
+    });
+    wrap.appendChild(el("p", { className: "meta" }, bits.join(" · ")));
+  });
+  return wrap;
+}
+
+let tab = location.hash === "#swing" ? "swing" : location.hash === "#workflows" ? "workflows" : "options";
 let latest = null;
 
 function paint() {
@@ -1179,20 +1219,25 @@ function paint() {
   if (!latest) return;
   const all = latest.books || [];
   const options = all.filter((b) => b.kind === "options");
-  const swing = all.filter((b) => b.kind !== "options");
+  const workflows = all.filter((b) => b.kind === "workflow");
+  const swing = all.filter((b) => b.kind !== "options" && b.kind !== "workflow");
   const optBtn = document.querySelector('button[data-tab="options"]');
   const swBtn = document.querySelector('button[data-tab="swing"]');
+  const wfBtn = document.querySelector('button[data-tab="workflows"]');
   if (optBtn) optBtn.textContent = "Options" + (options.length ? " · " + options.length : "");
   if (swBtn) swBtn.textContent = "Swing" + (swing.length ? " · " + swing.length : "");
+  if (wfBtn) wfBtn.textContent = "Workflows" + (workflows.length ? " · " + workflows.length : "");
   const y = window.scrollY;
   const nodes = [];
-  const shown = tab === "swing" ? swing : options;
+  const shown = tab === "swing" ? swing : tab === "workflows" ? workflows : options;
+  const agent = shown.filter((b) => b.stack === "agent-trader");
+  const rest = shown.filter((b) => b.stack !== "agent-trader");
   if (tab === "options") {
     const ok = options.filter((b) => !b.error);
     if (ok.length) nodes.push(renderLab(ok, latest.lab));
   }
   if (!shown.length) nodes.push(el("p", { className: "empty" }, "No " + tab + " books are loaded."));
-  nodes.push(...shown.map(renderBook));
+  nodes.push(...agent.map(renderBook), ...rest.map(renderBook));
   books.replaceChildren(...nodes);
   window.scrollTo(0, y);
 }
@@ -1201,7 +1246,7 @@ document.getElementById("tabs").addEventListener("click", (ev) => {
   const button = ev.target.closest("button[data-tab]");
   if (!button || button.dataset.tab === tab) return;
   tab = button.dataset.tab;
-  history.replaceState(null, "", tab === "swing" ? "#swing" : "#options");
+  history.replaceState(null, "", tab === "options" ? "#options" : "#" + tab);
   window.scrollTo(0, 0);
   paint();
 });

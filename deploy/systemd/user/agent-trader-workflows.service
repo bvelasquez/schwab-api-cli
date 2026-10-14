@@ -1,0 +1,19 @@
+# Workflow agent. Paper only: never add --trust or --yes.
+# Every rules/workflows/*.yaml is paper-run and recorded on the paper dashboard.
+# Adding a playbook is writing a file. This unit is already the capability.
+
+[Unit]
+Description=agent-trader workflow paper agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/schwabinvestbot
+EnvironmentFile=%h/.config/agent-trader/paper.env
+ExecStart=%h/.cargo/bin/agent-trader-swing run --dir rules/workflows --interval-seconds 120
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target

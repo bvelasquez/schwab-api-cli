@@ -69,6 +69,9 @@ pub fn snapshot(paths: &DashboardPaths) -> Value {
     for rules in &paths.options {
         books.push(options_book(rules));
     }
+    for book in agent_trader_paper_books(rules_dir(paths)).into_iter().rev() {
+        books.insert(0, book);
+    }
     json!({
         "generated_at": Utc::now().to_rfc3339(),
         "books": books,
@@ -78,6 +81,43 @@ pub fn snapshot(paths: &DashboardPaths) -> Value {
 }
 
 /// Directory that holds the options rules files, and beside them `chains/` and `scorecards/`.
+/// Books written by `agent-trader options paper`, `agent-trader-swing paper`,
+/// and a workflow paper tick. Absent until those loops have ticked.
+fn agent_trader_paper_books(dir: &Path) -> Vec<Value> {
+    let mut names = vec![
+        "agent-trader-public-paper.json".to_string(),
+        "agent-trader-public-swing-paper.json".to_string(),
+    ];
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        let mut extra: Vec<String> = entries
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                (name.starts_with("agent-trader-workflow-") && name.ends_with(".json")).then_some(name)
+            })
+            .collect();
+        extra.sort();
+        names.extend(extra);
+    }
+    names.into_iter().filter_map(|name| agent_trader_paper_file(&dir.join(name))).collect()
+}
+
+fn agent_trader_paper_file(path: &Path) -> Option<Value> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let book: Value = serde_json::from_str(&raw).ok()?;
+    if book.get("stack").and_then(|value| value.as_str()) != Some("agent-trader") {
+        return None;
+    }
+    if book.get("broker").and_then(|value| value.as_str()) != Some("public") {
+        return None;
+    }
+    let kind = book.get("kind").and_then(|value| value.as_str());
+    if kind != Some("options") && kind != Some("swing") && kind != Some("workflow") {
+        return None;
+    }
+    Some(book)
+}
+
 fn rules_dir(paths: &DashboardPaths) -> &Path {
     paths
         .options
@@ -1033,5 +1073,29 @@ mod tests {
         assert_eq!(book["experiment"]["short_delta_max"], 0.20);
         assert_eq!(book["pnl_series"][0]["realized_usd"], -71.6);
         assert!(book["positions"][0].get("position_id").is_none());
+    }
+
+    #[test]
+    fn snapshot_includes_a_workflow_paper_book() {
+        let dir = tempfile::tempdir().unwrap();
+        let rules = dir.path().join("options-a.yaml");
+        std::fs::write(&rules, "agent_id: options-a\n").unwrap();
+        std::fs::write(
+            dir.path().join("agent-trader-workflow-msft-dip.json"),
+            r#"{"stack":"agent-trader","broker":"public","kind":"workflow","name":"msft-dip","live_orders":false,"equity_usd":4000,"cash_usd":3750,"workflows":[{"id":"msft-dip","status":"simulated","steps":[{"id":"buy","status":"simulated"}]}]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("agent-trader-workflow-noise.json"),
+            r#"{"stack":"agent-trader","broker":"public","kind":"crypto","name":"nope"}"#,
+        )
+        .unwrap();
+        let snap = snapshot(&DashboardPaths {
+            swing: vec![],
+            options: vec![rules],
+        });
+        let books = snap["books"].as_array().unwrap();
+        assert!(books.iter().any(|book| book["kind"] == "workflow" && book["name"] == "msft-dip"));
+        assert!(books.iter().all(|book| book["kind"] != "crypto"));
     }
 }

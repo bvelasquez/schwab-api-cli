@@ -1,0 +1,24 @@
+[package]
+name = "broker-schwab"
+description = "Schwab adapter for agent-trader. Wraps the frozen schwab-api clients."
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+broker-core = { path = "../broker-core" }
+chrono.workspace = true
+schwab-api-cli-core = { path = "../schwab-api" }
+schwab-api-cli-market-data = { path = "../schwab-market-data" }
+serde_json.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+schwab-api-cli = { path = "../schwab-cli" }

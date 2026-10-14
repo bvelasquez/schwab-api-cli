@@ -1,0 +1,14 @@
+[Unit]
+Description=agent-trader options book (broker selected by the rules file)
+# Example only. Do not enable this while a schwab-options unit owns the same account.
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/schwabinvestbot
+ExecStart=%h/.cargo/bin/agent-trader options tick --rules rules/options-rules.example.yaml --trust --yes
+Environment=AGENT_TRADER_LEGACY_RULES_DIR=%h/projects/schwabinvestbot/rules
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target

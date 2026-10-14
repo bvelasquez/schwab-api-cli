@@ -1,0 +1,18 @@
+# Public options paper book. Quotes only. Never add --trust or --yes.
+# Runs on Jarvis. The book is rules/agent-trader-public-paper.json beside this repo.
+
+[Unit]
+Description=agent-trader Public options paper book
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/schwabinvestbot
+EnvironmentFile=%h/.config/agent-trader/paper.env
+ExecStart=%h/.cargo/bin/agent-trader options paper --rules rules/agent-trader-public-paper.yaml --interval-seconds 120
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target

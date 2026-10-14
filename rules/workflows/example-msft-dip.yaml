@@ -1,0 +1,39 @@
+# Continuous workflow: buy $250 of MSFT when price is above the 200-day EMA
+# and at or below the 20-day EMA, at most once every 7 days.
+# Replace the account, then:
+#   agent-trader-swing workflow validate --rules rules/workflows/example-msft-dip.yaml
+#   agent-trader-swing run --rules rules/workflows/example-msft-dip.yaml --once --dry-run
+version: 1
+broker: public
+account: "public:ACCOUNT_ID"
+workflows:
+  - id: msft-dip
+    schedule:
+      cron: "30 9-15 * * 1-5"
+      timezone: America/New_York
+      active_between: ["09:30", "16:00"]
+    steps:
+      - id: quote
+        fetch: quote
+        symbol: MSFT
+      - id: ema20
+        fetch: ema
+        symbol: MSFT
+        period: 20
+      - id: ema200
+        fetch: ema
+        symbol: MSFT
+        period: 200
+      - id: buy
+        when:
+          all:
+            - session_open: true
+            - gt: ["quote.last", "ema200"]
+            - lte: ["quote.last", "ema20"]
+            - min_days_since_fill: 7
+            - buying_power_at_least: 250
+        order:
+          side: buy
+          symbol: MSFT
+          notional_usd: 250
+          order_type: market

@@ -1,0 +1,29 @@
+[package]
+name = "agent-trader-swing"
+description = "Broker-agnostic equity swing book"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "agent-trader-swing"
+path = "src/main.rs"
+
+[dependencies]
+agent-trader-cli = { path = "../agent-trader-cli" }
+anyhow.workspace = true
+async-trait.workspace = true
+broker-core = { path = "../broker-core" }
+chrono.workspace = true
+chrono-tz = "0.10"
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+tokio.workspace = true
+uuid = { version = "1", features = ["v4"] }

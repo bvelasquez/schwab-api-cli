@@ -1,0 +1,27 @@
+# Simulated agent-trader options book on the Public API.
+# The paper loop reads PUBLIC_ACCOUNT_ID from the environment and never places an order.
+broker: public
+max_open_positions: 2
+watchlist:
+  - SPY
+  - QQQ
+entry_policy:
+  require_llm_proceed: false
+entry_rules:
+  vertical:
+    dte_min: 32
+    dte_max: 45
+    min_credit: 0.30
+    max_width: 5
+    short_delta_min: 0.10
+    short_delta_max: 0.16
+    # Public quotes for a $5-wide 10–16 delta put credit are about 8% right now.
+    # 7.5 leaves a little room under that quote so 0.40 / 5 does not miss on float error.
+    min_credit_to_width_pct: 7.5
+    max_contracts_per_trade: 1
+exit_rules:
+  profit_target_pct: 50
+  stop_loss_pct: 250
+  dte_close: 21
+schedule:
+  market_hours_only: true
