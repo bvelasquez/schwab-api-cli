@@ -1,0 +1,13 @@
+{
+  "rows": 766,
+  "by_reason": {
+    "other": {
+      "n": 704,
+      "mean_hyp_pnl_pct": -0.7714545980073088
+    },
+    "ADMITTED": {
+      "n": 62,
+      "mean_hyp_pnl_pct": -1.1180067184544216
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "status": "fail",
+  "reason": "criteria not met or insufficient post-cutoff days",
+  "named": {
+    "days": 0,
+    "mean_ic": null,
+    "t": null
+  },
+  "blinded": {
+    "days": 0,
+    "mean_ic": null,
+    "t": null
+  },
+  "incremental_vs_rsi": null,
+  "regimes": {},
+  "memorization_warning": null,
+  "criteria": {
+    "mean_daily_ic": 0.03,
+    "day_clustered_t": 2,
+    "incremental_ic_positive": true,
+    "min_days": 20
+  }
+}

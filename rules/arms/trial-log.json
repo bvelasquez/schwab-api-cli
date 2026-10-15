@@ -1,0 +1,43 @@
+{
+  "trials": [
+    {
+      "id": "research-pullback",
+      "status": "deployed_shadow"
+    },
+    {
+      "id": "research-dip",
+      "status": "deployed_shadow"
+    },
+    {
+      "id": "research-regime",
+      "status": "deployed_shadow"
+    },
+    {
+      "id": "research-rangecap",
+      "status": "deployed_shadow"
+    },
+    {
+      "id": "research-no-blocklist",
+      "status": "deployed_shadow"
+    },
+    {
+      "id": "research-wide-universe",
+      "status": "deployed_shadow"
+    },
+    {
+      "id": "research-gap",
+      "status": "deployed_shadow"
+    },
+    {
+      "id": "research-skip-event",
+      "status": "deployed_shadow"
+    },
+    {
+      "id": "research-rs-off",
+      "status": "proposed"
+    }
+  ],
+  "pvals": [],
+  "bh_survive": [],
+  "trial_count": 9
+}

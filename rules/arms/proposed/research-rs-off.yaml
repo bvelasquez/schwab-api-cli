@@ -1,0 +1,7 @@
+# Proposed by scripts/research_agent.py. Not applied.
+# not yet in the shadow list; do not apply without the promotion gate
+id: research-rs-off
+base: research-base
+overrides:
+  # one variable. Fill this in before the arm is copied into the shadow list.
+  playbook: {}

@@ -1,0 +1,6 @@
+{
+  "control": "research-base",
+  "min_days": 40,
+  "arms": [],
+  "note": "A pass is not a production change. Operator OK is required. Real money is a separate decision."
+}
