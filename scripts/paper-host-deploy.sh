@@ -5,8 +5,9 @@
 # Never passes --trust or --yes.
 #
 # Env:
-#   PAPER_HOST_SSH   SSH target (default: paper-host — set Host/User in ~/.ssh/config)
-#   PAPER_HOST_REPO  Clone path on the paper host (default: $HOME/projects/schwabinvestbot)
+#   PAPER_HOST_SSH         SSH target (default: paper-host — set Host/User in ~/.ssh/config)
+#   PAPER_HOST_REPO        Clone path on the paper host (optional; default ~paper/projects/schwabinvestbot)
+#   PAPER_HOST_RUN_USER    Account that owns systemd user units (default: jarvis when SSH is root)
 #
 # OAuth: Schwab allows one refresh-token owner per app login. Refresh tokens on
 # exactly one host. A second long-running process that refreshes will revoke the first.
@@ -23,15 +24,24 @@ if [[ "$*" == *"--trust"* || "$*" == *"--yes"* ]]; then
   exit 1
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WRAP_FILE="${SCRIPT_DIR}/lib/paper-host-ssh-wrap.sh"
+
 PAPER_HOST_SSH="${PAPER_HOST_SSH:-paper-host}"
 PAPER_HOST_REPO="${PAPER_HOST_REPO:-}"
+PAPER_HOST_RUN_USER="${PAPER_HOST_RUN_USER:-}"
 
-ssh -o BatchMode=yes "${PAPER_HOST_SSH}" env REPO="${PAPER_HOST_REPO}" bash -s <<'REMOTE'
+ssh -o BatchMode=yes "${PAPER_HOST_SSH}" \
+  env REPO="${PAPER_HOST_REPO}" \
+      RUN_USER="${PAPER_HOST_RUN_USER}" \
+  bash -s <<REMOTE
 set -euo pipefail
+$(cat "${WRAP_FILE}")
+paper_host_reexec_if_root
 
-repo="${REPO:-$HOME/projects/schwabinvestbot}"
-export PATH="$HOME/.cargo/bin:$PATH"
-cd "$repo"
+repo="\${REPO:-\$HOME/projects/schwabinvestbot}"
+export PATH="\${HOME}/.cargo/bin:\${PATH}"
+cd "\$repo"
 
 echo "==> git fetch/pull --ff-only origin main"
 git fetch origin main
@@ -42,27 +52,27 @@ cargo install --path crates/schwab-cli --force
 cargo install --path crates/schwab-trader --force
 
 echo "==> install systemd user units"
-unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-mkdir -p "$unit_dir"
-cp -f deploy/systemd/user/schwab-options.service "$unit_dir/"
-cp -f deploy/systemd/user/schwab-swing.service "$unit_dir/"
-cp -f deploy/systemd/user/schwab-bot-watchdog.service "$unit_dir/"
-cp -f deploy/systemd/user/schwab-bot-watchdog.timer "$unit_dir/"
-cp -f deploy/systemd/user/schwab-scorecard.service "$unit_dir/"
-cp -f deploy/systemd/user/schwab-scorecard.timer "$unit_dir/"
-cp -f deploy/systemd/user/schwab-chain-snapshot.service "$unit_dir/"
-cp -f deploy/systemd/user/schwab-chain-snapshot.timer "$unit_dir/"
-cp -f deploy/systemd/user/schwab-outcomes.service "$unit_dir/"
-cp -f deploy/systemd/user/schwab-outcomes.timer "$unit_dir/"
-cp -f deploy/systemd/user/schwab-llm-signal.service "$unit_dir/"
-cp -f deploy/systemd/user/schwab-llm-signal.timer "$unit_dir/"
-cp -f deploy/systemd/user/schwab-llm-agent.service "$unit_dir/"
-cp -f deploy/systemd/user/schwab-llm-agent.timer "$unit_dir/"
-cp -f deploy/systemd/user/schwab-research-agent.service "$unit_dir/"
-cp -f deploy/systemd/user/schwab-research-agent.timer "$unit_dir/"
-cp -f deploy/systemd/user/schwab-earnings-calendar.service "$unit_dir/"
-cp -f deploy/systemd/user/schwab-earnings-calendar.timer "$unit_dir/"
-cp -f deploy/systemd/user/schwab-dashboard.service "$unit_dir/"
+unit_dir="\${XDG_CONFIG_HOME:-\$HOME/.config}/systemd/user"
+mkdir -p "\$unit_dir"
+cp -f deploy/systemd/user/schwab-options.service "\$unit_dir/"
+cp -f deploy/systemd/user/schwab-swing.service "\$unit_dir/"
+cp -f deploy/systemd/user/schwab-bot-watchdog.service "\$unit_dir/"
+cp -f deploy/systemd/user/schwab-bot-watchdog.timer "\$unit_dir/"
+cp -f deploy/systemd/user/schwab-scorecard.service "\$unit_dir/"
+cp -f deploy/systemd/user/schwab-scorecard.timer "\$unit_dir/"
+cp -f deploy/systemd/user/schwab-chain-snapshot.service "\$unit_dir/"
+cp -f deploy/systemd/user/schwab-chain-snapshot.timer "\$unit_dir/"
+cp -f deploy/systemd/user/schwab-outcomes.service "\$unit_dir/"
+cp -f deploy/systemd/user/schwab-outcomes.timer "\$unit_dir/"
+cp -f deploy/systemd/user/schwab-llm-signal.service "\$unit_dir/"
+cp -f deploy/systemd/user/schwab-llm-signal.timer "\$unit_dir/"
+cp -f deploy/systemd/user/schwab-llm-agent.service "\$unit_dir/"
+cp -f deploy/systemd/user/schwab-llm-agent.timer "\$unit_dir/"
+cp -f deploy/systemd/user/schwab-research-agent.service "\$unit_dir/"
+cp -f deploy/systemd/user/schwab-research-agent.timer "\$unit_dir/"
+cp -f deploy/systemd/user/schwab-earnings-calendar.service "\$unit_dir/"
+cp -f deploy/systemd/user/schwab-earnings-calendar.timer "\$unit_dir/"
+cp -f deploy/systemd/user/schwab-dashboard.service "\$unit_dir/"
 
 chmod +x scripts/paper-host-watchdog.sh
 

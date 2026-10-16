@@ -18,6 +18,8 @@ Log in with `schwab auth login` on the host that owns the token. Other machines 
 
 SSH target defaults to `paper-host`. Set `Host paper-host` in `~/.ssh/config`, or override `PAPER_HOST_SSH` / `PAPER_HOST_REPO`.
 
+If you SSH as **root** but agents run under another account (e.g. `jarvis` on the lab host), set `PAPER_HOST_RUN_USER=jarvis` or rely on the default auto-detect when a `jarvis` user exists. The deploy/reload scripts re-exec as that user with `HOME`, `PATH`, and `XDG_RUNTIME_DIR` so `schwab` and `systemctl --user` match the running paper units.
+
 Copy `rules/options-rules.example.yaml` and `rules/trader-rules.example.yaml` to local names (for example `rules/options-pilot.yaml` and `rules/trader-swing.yaml`) and put your Schwab `hashValue` in those copies. Do not commit them. Point the unit `ExecStart` at your filenames with a drop-in if they differ from the defaults.
 
 ## Safety
@@ -49,7 +51,7 @@ sudo loginctl enable-linger "$USER"
 | Script | What it does |
 |--------|----------------|
 | [`scripts/paper-host-deploy.sh`](../scripts/paper-host-deploy.sh) | SSH → `git pull --ff-only origin main` → `cargo install` both crates → copy units → `daemon-reload` → enable and restart paper units |
-| [`scripts/paper-host-rules-reload.sh`](../scripts/paper-host-rules-reload.sh) | SSH → `schwab agent reload` and `schwab-trader agent reload` for the rules paths in `PAPER_OPTIONS_RULES` / `PAPER_SWING_RULES` |
+| [`scripts/paper-host-rules-reload.sh`](../scripts/paper-host-rules-reload.sh) | SSH → `schwab agent reload` and `schwab-trader agent reload` for `PAPER_OPTIONS_RULES` / `PAPER_SWING_RULES` (defaults: `options-pilot-8709.yaml`, `trader-swing-9947.yaml`) |
 | [`scripts/paper-host-watchdog.sh`](../scripts/paper-host-watchdog.sh) | Restart a `--simulate` unit whose `last_tick` went stale, and send a Telegram alert if configured. No orders. |
 | [`scripts/scorecard.py`](../scripts/scorecard.py) | Read-only daily paper scorecard |
 | [`scripts/chain-snapshot.sh`](../scripts/chain-snapshot.sh) | Read-only option-chain snapshots. Does not refresh OAuth. |
@@ -58,6 +60,9 @@ sudo loginctl enable-linger "$USER"
 # from a machine with SSH to the paper host
 ./scripts/paper-host-deploy.sh
 ./scripts/paper-host-rules-reload.sh
+
+# Jarvis lab (SSH Host often lands as root; agents run as jarvis):
+PAPER_HOST_SSH=jarvis ./scripts/paper-host-rules-reload.sh
 ```
 
 A non-interactive SSH shell does not inherit a user unit's environment. Remote CLI calls need the Schwab app key on `PATH` / in the environment, or they exit with `SCHWAB_APP_KEY ... is required`.
