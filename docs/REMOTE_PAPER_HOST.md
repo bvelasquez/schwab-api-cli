@@ -54,6 +54,7 @@ sudo loginctl enable-linger "$USER"
 | [`scripts/paper-host-rules-reload.sh`](../scripts/paper-host-rules-reload.sh) | SSH → `schwab agent reload` and `schwab-trader agent reload` for `PAPER_OPTIONS_RULES` / `PAPER_SWING_RULES` (defaults: `options-pilot-8709.yaml`, `trader-swing-9947.yaml`) |
 | [`scripts/paper-host-watchdog.sh`](../scripts/paper-host-watchdog.sh) | Restart a `--simulate` unit whose `last_tick` went stale, and send a Telegram alert if configured. No orders. |
 | [`scripts/scorecard.py`](../scripts/scorecard.py) | Read-only daily paper scorecard |
+| [`scripts/morning_review_agent.py`](../scripts/morning_review_agent.py) | Multi-turn LLM morning brief + optional Telegram (`schwab-morning-review.timer`) |
 | [`scripts/chain-snapshot.sh`](../scripts/chain-snapshot.sh) | Read-only option-chain snapshots. Does not refresh OAuth. |
 
 ```bash

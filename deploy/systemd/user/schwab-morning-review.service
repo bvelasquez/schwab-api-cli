@@ -1,0 +1,18 @@
+# Multi-turn LLM morning review of paper agents. Read-only; optional Telegram.
+#
+# Requires OPENROUTER_API_KEY and TELEGRAM_* in schwab-paper.conf for full path.
+# Falls back to scorecard-only text if the LLM call fails.
+
+[Unit]
+Description=Schwab paper morning review (LLM + Telegram)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/schwabinvestbot
+EnvironmentFile=-%h/.config/environment.d/schwab-paper.conf
+ExecStart=/usr/bin/python3 %h/projects/schwabinvestbot/scripts/morning_review_agent.py --telegram
+
+[Install]
+WantedBy=default.target
