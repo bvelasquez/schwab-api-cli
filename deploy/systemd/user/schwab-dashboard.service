@@ -7,7 +7,7 @@ After=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/projects/schwabinvestbot
-ExecStart=/bin/sh -c 'ts=$(/usr/bin/tailscale ip -4) && exec %h/.cargo/bin/schwab-trader dashboard --bind 127.0.0.1:8791 --bind "$$ts:8791" --options-rules rules/options-pilot-8709.yaml --options-rules rules/options-arm-o0.yaml --options-rules rules/options-arm-o1.yaml --options-rules rules/options-arm-o2.yaml --options-rules rules/options-arm-o3.yaml --options-rules rules/options-arm-o4.yaml --options-rules rules/options-arm-o5.yaml --options-rules rules/options-arm-o6.yaml --options-rules rules/options-arm-o7.yaml --options-rules rules/options-arm-o8.yaml'
+ExecStart=/bin/sh -c 'ts=$(/usr/bin/tailscale ip -4) && exec %h/.cargo/bin/schwab-trader dashboard --bind 127.0.0.1:8791 --bind "$$ts:8791" --options-rules rules/options-pilot-8709.yaml --options-rules rules/options-arm-o0.yaml --options-rules rules/options-arm-o1.yaml --options-rules rules/options-arm-o2.yaml --options-rules rules/options-arm-o3.yaml --options-rules rules/options-arm-o4.yaml --options-rules rules/options-arm-o5.yaml --options-rules rules/options-arm-o6.yaml --options-rules rules/options-arm-o7.yaml --options-rules rules/options-arm-o8.yaml --options-families rules/arms/families.json'
 Restart=on-failure
 RestartSec=5
 

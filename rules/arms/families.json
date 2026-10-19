@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "families": [
+    {
+      "id": "index-verticals-clones",
+      "label": "Index credit-vertical clones (o0-o8)",
+      "stack": true,
+      "sleeve_usd": 270000,
+      "members": [
+        "options-arm-o0",
+        "options-arm-o1",
+        "options-arm-o2",
+        "options-arm-o3",
+        "options-arm-o4",
+        "options-arm-o5",
+        "options-arm-o6",
+        "options-arm-o7",
+        "options-arm-o8"
+      ]
+    },
+    {
+      "id": "single-name-dispersion",
+      "label": "Single-name rich-IV dispersion (o-d)",
+      "stack": true,
+      "sleeve_usd": 30000,
+      "members": ["options-arm-o-d"]
+    },
+    {
+      "id": "options-pilot-live",
+      "label": "Options pilot 8709 (live capital)",
+      "stack": false,
+      "sleeve_usd": 30000,
+      "members": ["options-pilot-8709"]
+    }
+  ]
+}

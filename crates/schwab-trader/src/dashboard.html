@@ -793,7 +793,8 @@ function appendEvidence(card, lab, options) {
     card.appendChild(el("p", { className: "empty" }, pg.data.note || "A pass is not a production change. Operator OK is required."));
   }
 }
-function renderLab(options, lab) {
+function renderLab(options, lab, families) {
+  families = families || [];
   const card = el("section", { className: "book lab" });
   card.appendChild(el("h2", null, "Options tests"));
   const openUsd = options.reduce((n, b) => n + (b.unrealized_pnl_usd || 0), 0);
@@ -832,6 +833,35 @@ function renderLab(options, lab) {
       ];
     })
   ));
+
+  const famRows = (families || []).filter((f) => f.present_members.length);
+  card.appendChild(el("h2", null, "Arm experiment families \u2014 stacked loss"));
+  if (!famRows.length) {
+    card.appendChild(el("p", { className: "empty" }, "No arm families are running (rules/arms/families.json). Brothers that clone one experiment must be read as one book: their losses add up here."));
+  } else {
+    const scf = () => {
+      const sc = lab && lab.scorecard && lab.scorecard.present && lab.scorecard.data && lab.scorecard.data.options_arms;
+      return (sc && sc.families) || null;
+    };
+    card.appendChild(table(
+      [{ label: "Family" }, { label: "Members" }, { label: "Sleeve", num: true }, { label: "Stacked net", num: true }, { label: "ROI", num: true }, { label: "Distinct bets", num: true }, { label: "Exp/bet", num: true }, { label: "Note", wrap: true }],
+      famRows.map((f) => {
+        const stats = scf() ? scf()[f.id] : null;
+        const exp = stats ? stats.distinct_bet_expectancy_usd : null;
+        return [
+          cell(f.label || f.id),
+          cell(f.present_members.length + " of " + f.declared_members.length),
+          cell(usd(f.sleeve_usd)),
+          cell(usd2(f.stacked_net_usd), cls(f.stacked_net_usd)),
+          cell(pct2(f.roi_pct), cls(f.roi_pct)),
+          cell(stats ? stats.distinct_bets : "\u2014"),
+          cell(exp == null ? "\u2014" : usd2(exp), exp != null && exp <= 0 ? "down" : ""),
+          cell(f.stack ? "duplicate arms are one experiment\u2014 loss stacks" : "live capital, shown separately")
+        ];
+      })
+    ));
+    card.appendChild(el("p", { className: "empty" }, "Stacked net = sum of member realized + open mark (the same spread open in two clones counts once). Distinct-bet expectancy is the nightly scorecard's experimental read: the falsifier is judged on the family, not the per-arm rows."));
+  }
 
   const charts = el("div", { className: "charts" });
   charts.appendChild(barChart(
@@ -1234,7 +1264,8 @@ function paint() {
   const rest = shown.filter((b) => b.stack !== "agent-trader");
   if (tab === "options") {
     const ok = options.filter((b) => !b.error);
-    if (ok.length) nodes.push(renderLab(ok, latest.lab));
+    const families = latest.families ? latest.families.families || [] : [];
+    if (ok.length) nodes.push(renderLab(ok, latest.lab, families));
   }
   if (!shown.length) nodes.push(el("p", { className: "empty" }, "No " + tab + " books are loaded."));
   nodes.push(...agent.map(renderBook), ...rest.map(renderBook));

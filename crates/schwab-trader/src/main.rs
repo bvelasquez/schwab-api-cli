@@ -45,11 +45,13 @@ async fn run() -> Result<()> {
         Some(Commands::Dashboard {
             rules_file,
             options_rules,
+            options_families,
             bind,
         }) => {
             let paths = schwab_trader::dashboard::DashboardPaths {
                 swing: resolve_rules(rules_file, "rules/trader-swing-9947.yaml"),
                 options: resolve_rules(options_rules, "rules/options-pilot-8709.yaml"),
+                families: options_families,
             };
             if paths.swing.is_empty() && paths.options.is_empty() {
                 anyhow::bail!("no rules files found; pass --rules-file and/or --options-rules");

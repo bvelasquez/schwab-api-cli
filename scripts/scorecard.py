@@ -529,13 +529,18 @@ def options_arms_section(rules: Path) -> dict:
     Reports per-agent results plus effective n (distinct trades across agents)
     next to nominal n (sum of entries), so correlated clones are not mistaken
     for independent experiments.
+
+    Agents listed in rules/arms/families.json as members of the same
+    ``stack: true`` family are one experiment: their losses STACK (member
+    realized and open marks are summed into a family sleeve), while the same
+    spread opened on the same day by two clones counts as one distinct bet.
     """
     agents: dict[str, dict] = {}
     all_keys: collections.Counter = collections.Counter()
     state_files = sorted(rules.glob("agent-sim-state-options-*.json"))
     for sp in state_files:
         name = sp.stem.removeprefix("agent-sim-state-options-")
-        if name.endswith(".bak") or ".bak" in sp.name:
+        if not name or name.endswith(".bak") or ".bak" in sp.name:
             continue
         jp = rules / f"agent-sim-journal-options-{name}.jsonl"
         sec = options_section(sp, jp)
@@ -547,18 +552,205 @@ def options_arms_section(rules: Path) -> dict:
         for k in set(keys):
             all_keys[k] += 1
         sec["_keys"] = keys
+        sec["_closes"] = _closed_by_bet_key(entries, jp)
+        sec["_open_marks"] = _open_marks_by_bet(sp)
         agents[name] = sec
     nominal = sum(a["entries"] for a in agents.values())
     effective = len(all_keys)
     shared = sum(1 for c in all_keys.values() if c > 1)
+    families = build_families(agents, load_families(rules))
     for a in agents.values():
-        a.pop("_keys", None)
+        for hidden in ("_keys", "_closes", "_open_marks"):
+            a.pop(hidden, None)
     return {
         "agents": agents,
         "nominal_entries": nominal,
         "effective_entries": effective,
         "entries_shared_by_multiple_agents": shared,
+        "families": families,
     }
+
+
+def load_families(rules: Path) -> list[dict]:
+    """Experiment families from rules/arms/families.json. Missing/unreadable file
+    means every agent is its own family (legacy per-agent behavior)."""
+    fp = rules / "arms" / "families.json"
+    if not fp.is_file():
+        return []
+    try:
+        return (json.loads(fp.read_text()) or {}).get("families") or []
+    except Exception:
+        return []
+
+
+def _bet_key_of(position_id: str, underlying: str | None, day: str) -> tuple[str, str, str] | None:
+    parts = (position_id or "").split("|")
+    und = underlying or (parts[1] if len(parts) > 1 else "")
+    legs = parts[-1] if parts else ""
+    return (str(und), day, str(legs)) if und and legs else None
+
+
+def _closed_by_bet_key(entries: list[dict], journal_path: Path) -> dict:
+    """Per-agent map bet key -> closed pnl, joined from closes back to their entry.
+    A bet key is (underlying, entry-day, legs): two clones that open the same
+    spread on the same day are ONE bet."""
+    pid_day = {
+        e.get("position_id"): (str(e.get("ts", ""))[:10], e.get("underlying"))
+        for e in entries
+        if e.get("position_id")
+    }
+    pnl_by_pid: dict[str, float] = {}
+    ts_by_pid: dict[str, str] = {}
+    exits, _, _ = scan_options_journal(journal_path)
+    for ex in exits:
+        pid = ex.get("position_id") or ""
+        if not pid:
+            continue
+        pnl_by_pid[pid] = pnl_by_pid.get(pid, 0.0) + float(ex.get("pnl_usd") or 0)
+        ts_by_pid[pid] = ts_by_pid.get(pid) or str(ex.get("ts") or "")
+    out: dict[tuple, dict] = {}
+    for pid, (day, und) in pid_day.items():
+        key = _bet_key_of(pid, und, day)
+        if key is None or pid not in pnl_by_pid:
+            continue
+        out[key] = {"pnl": pnl_by_pid[pid], "ts": ts_by_pid.get(pid, "")}
+    return out
+
+
+def _open_marks_by_bet(state_path: Path) -> dict:
+    """Per-agent map open-position bet key (underlying, legs) -> mark. Identical
+    open bets across clones are the same mark and must be counted once when stacked."""
+    state = load_json(state_path) or {}
+    out: dict = {}
+    for pid, pos in (state.get("open_positions") or {}).items():
+        parts = str(pid).split("|")
+        credit = pos.get("entry_credit")
+        debit = pos.get("last_good_debit_to_close")
+        contracts = pos.get("contracts") or 0
+        if credit is None or debit is None or len(parts) < 2 or not parts[-1]:
+            continue
+        key = (parts[1], parts[-1])
+        mark = (float(credit) - float(debit)) * 100.0 * contracts
+        out[key] = out.get(key, 0.0) + mark
+    return out
+
+
+def build_families(agents: dict, families: list[dict]) -> dict:
+    """Stack duplicate arm experiments into family-level books.
+
+    Headline numbers (the "stacked loss" view):
+      - stacked_realized_pnl_usd: raw sum of every member's realized P&L.
+      - stacked_open_mark_usd: sum of open marks, identical bets counted once.
+      - stacked_net_pnl_usd / stacked_equity_usd / roi_pct on the family sleeve.
+    Experimental read (the honest one):
+      - distinct_bets / distinct_bet_net_pnl_usd / distinct_bet_expectancy_usd,
+        where the same spread on the same day across clones is one bet.
+    """
+    # Declared members use the durable agent_id (e.g. options-arm-o0); the
+    # scorecard keys agents by state-stem suffix (e.g. arm-o0 after the
+    # agent-sim-state-options- prefix). Accept both spellings.
+    lookup: dict[str, str] = {}
+    for key in agents:
+        lookup[key] = key
+        lookup[f"options-{key}"] = key
+    out: dict[str, dict] = {}
+    for fam in families:
+        fid = str(fam.get("id") or "?")
+        declared = [str(m) for m in (fam.get("members") or [])]
+        members = [lookup[m] for m in declared if m in lookup]
+        sleeve = float(fam.get("sleeve_usd") or 0)
+        stack = bool(fam.get("stack", True))
+        if not members:
+            out[fid] = {
+                "id": fid,
+                "label": str(fam.get("label") or fid),
+                "stack": stack,
+                "sleeve_usd": sleeve,
+                "declared_members": declared,
+                "present_members": [],
+                "nominal_entries": 0,
+                "distinct_bets": 0,
+                "members_absent": len(declared) > 0,
+            }
+            continue
+        realized = 0.0
+        nominal = 0
+        distinct: dict[tuple, dict] = {}
+        open_marks: dict[tuple, float] = {}
+        for m in members:
+            a = agents[m]
+            realized += float(a.get("realized_pnl_usd") or 0)
+            nominal += int(a.get("entries") or 0)
+            for key, rec in a["_closes"].items():
+                if key in distinct:
+                    continue  # same bet duplicated by a clone: count once
+                distinct[key] = {"pnl": float(rec.get("pnl") or 0), "ts": str(rec.get("ts") or "")}
+            for key, mark in a["_open_marks"].items():
+                if key not in open_marks:
+                    open_marks[key] = float(mark)
+        open_mark = sum(open_marks.values())
+        pnls = [d["pnl"] for d in distinct.values()]
+        ts_order = sorted(distinct.items(), key=lambda kv: kv[1]["ts"])
+        exp = statistics.mean(pnls) if pnls else None
+        wins = sum(1 for p in pnls if p > 0)
+        n = len(pnls)
+        ci = bootstrap_mean_ci(pnls) if n >= 3 else None
+        peak = sleeve
+        cum = sleeve
+        max_dd = 0.0
+        for _, d in ts_order:
+            cum += d["pnl"]
+            if cum > peak:
+                peak = cum
+            if peak > 0:
+                max_dd = max(max_dd, 100.0 * (peak - cum) / peak)
+        net = realized + open_mark
+        out[fid] = {
+            "id": fid,
+            "label": str(fam.get("label") or fid),
+            "stack": stack,
+            "sleeve_usd": sleeve,
+            "declared_members": declared,
+            "present_members": members,
+            "members_absent": False,
+            "nominal_entries": nominal,
+            "distinct_bets": n,
+            "replication_count": (nominal / n if n else None),
+            "stacked_realized_pnl_usd": round(realized, 2),
+            "stacked_open_mark_usd": round(open_mark, 2),
+            "stacked_net_pnl_usd": round(net, 2),
+            "stacked_equity_usd": round(sleeve + net, 2),
+            "roi_pct": round(100.0 * net / sleeve, 2) if sleeve > 0 else None,
+            "drawdown_pct": round(max_dd, 2),
+            "distinct_bet_net_pnl_usd": round(sum(pnls), 2),
+            "distinct_bet_expectancy_usd": round(exp, 2) if exp is not None else None,
+            "distinct_bet_win_rate_pct": round(100.0 * wins / n, 1) if n else None,
+            "distinct_bet_exp_ci95": [round(v, 2) for v in ci] if ci else None,
+        }
+    return out
+
+
+def build_family_alerts(families: dict) -> list[str]:
+    """The falsifier is judged on the STACKED family, not the per-arm rows:
+    duplicates must not let a losing experiment masquerade as n small losses."""
+    alerts: list[str] = []
+    for fid, fam in sorted(families.items()):
+        if fam.get("members_absent") or not fam.get("stack"):
+            continue
+        sleeve = fam.get("sleeve_usd") or 0
+        dd = fam.get("drawdown_pct") or 0
+        if sleeve and dd > 10.0:
+            alerts.append(
+                f"arm family {fid}: stacked drawdown {dd:.1f}% of ${sleeve:,.0f} sleeve (>10%)"
+            )
+        n = fam.get("distinct_bets") or 0
+        exp = fam.get("distinct_bet_expectancy_usd")
+        if n >= 20 and exp is not None and exp <= 0:
+            alerts.append(
+                f"arm family {fid}: falsifier met after {n} distinct bets "
+                f"(stacked expectancy ${exp:.2f} <= 0)"
+            )
+    return alerts
 
 
 def _underlying_from_position(pid: str) -> str | None:
@@ -655,6 +847,16 @@ def compact_summary(report: dict) -> str:
             f"Options agents: {len(arms['agents'])}, entries {arms['nominal_entries']} "
             f"nominal / {arms['effective_entries']} distinct"
         )
+    for fid in sorted((arms.get("families") or {})):
+        f = arms["families"][fid]
+        if f.get("members_absent") or not f.get("present_members"):
+            continue
+        kind = "STACKED" if f.get("stack") else "live"
+        lines.append(
+            f"  {f['label']} [{kind}]: {len(f['present_members'])} members, "
+            f"sleeve {usd(f.get('sleeve_usd'), 0)}, net {usd(f.get('stacked_net_pnl_usd'))} "
+            f"({pct(f.get('roi_pct'), 1)}), {f.get('distinct_bets')} distinct bets"
+        )
     alerts = report.get("drift_alerts") or []
     if alerts:
         lines.append("Alerts: " + "; ".join(alerts[:5]))
@@ -711,6 +913,7 @@ def main() -> int:
     options_arms = options_arms_section(rules)
     drift_alerts = build_drift_alerts(swing, options)
     drift_alerts.extend(build_arm_alerts(options_arms))
+    drift_alerts.extend(build_family_alerts(options_arms.get("families") or {}))
     drift_alerts.extend(build_missing_file_alerts(rules))
     swing.pop("_alerts_inputs", None)
     options.pop("_alerts_inputs", None)

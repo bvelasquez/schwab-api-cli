@@ -88,6 +88,10 @@ pub enum Commands {
         /// Options rules YAML. Repeatable. Defaults to rules/options-pilot-8709.yaml when present.
         #[arg(long)]
         options_rules: Vec<PathBuf>,
+        /// rules/arms/families.json: which options agents are duplicate arms of
+        /// one experiment. Their losses are stacked on the dashboard.
+        #[arg(long)]
+        options_families: Option<PathBuf>,
         /// Listen address. Repeat to listen on more than one interface.
         /// Default is localhost. Pass the Tailscale address as well to open it on the tailnet only.
         #[arg(long, default_value = "127.0.0.1:8791")]

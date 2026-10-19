@@ -27,6 +27,9 @@ const LAB_STALE_HOURS: f64 = 36.0;
 pub struct DashboardPaths {
     pub swing: Vec<PathBuf>,
     pub options: Vec<PathBuf>,
+    /// rules/arms/families.json declaring which options agents are duplicate
+    /// arms of one experiment (their losses stack). Optional.
+    pub families: Option<PathBuf>,
 }
 
 pub fn serve(binds: &[String], paths: DashboardPaths) -> Result<()> {
@@ -76,8 +79,95 @@ pub fn snapshot(paths: &DashboardPaths) -> Value {
         "generated_at": Utc::now().to_rfc3339(),
         "books": books,
         "underlyings": underlying_prices(rules_dir(paths)),
+        "families": families_section(paths, &books),
         "lab": lab_section(paths),
     })
+}
+
+/// Stack duplicate arm experiments into family rows: member realized P&L and
+/// open marks add up, identical open bets across clones counted once. This is the
+/// loss view the dashboard must show — a losing clone family must read as one
+/// stacked loss, not as n small near-breakeven books. Member identity is the
+/// agent_id from the rules file (e.g. options-arm-o0), matched to book.name.
+fn families_section(paths: &DashboardPaths, books: &[Value]) -> Value {
+    let Some(fp) = &paths.families else {
+        return json!({ "families": [] });
+    };
+    let Ok(doc) = read_json(fp) else {
+        return json!({ "families": [] });
+    };
+    let Some(fams) = doc.get("families").and_then(Value::as_array) else {
+        return json!({ "families": [] });
+    };
+    let arr: Vec<Value> = fams
+        .iter()
+        .filter_map(|f| {
+            let id = f.get("id")?.as_str()?.to_string();
+            let label = f.get("label").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| id.clone());
+            let stack = f.get("stack").and_then(Value::as_bool).unwrap_or(true);
+            let declared: Vec<String> = f
+                .get("members")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(|m| m.as_str().map(str::to_string)).collect())
+                .unwrap_or_default();
+            let mut present: Vec<String> = Vec::new();
+            let mut realized = 0.0;
+            for book in books {
+                let name = book.get("name").and_then(Value::as_str).unwrap_or("");
+                if !declared.iter().any(|m| m == name) {
+                    continue;
+                }
+                present.push(name.to_string());
+                realized += book.get("realized_pnl_usd").and_then(Value::as_f64).unwrap_or(0.0);
+            }
+            // Same-open-bet dedup: across clones the identical spread on the same
+            // underlying/expiry/strikes is one mark, not one per sleeve. Use the
+            // bet identity (not a position id, which differs per agent).
+            let mut seen_bets: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut open_mark = 0.0;
+            for book in books {
+                let name = book.get("name").and_then(Value::as_str).unwrap_or("");
+                if !declared.iter().any(|m| m == name) {
+                    continue;
+                }
+                if let Some(positions) = book.get("positions").and_then(Value::as_array) {
+                    for pos in positions {
+                        let mark = pos.get("unrealized_usd").and_then(Value::as_f64).unwrap_or(0.0);
+                        let key = format!(
+                            "{}|{}|{}|{}|{}",
+                            pos.get("underlying").and_then(Value::as_str).unwrap_or(""),
+                            pos.get("expiry").and_then(Value::as_str).unwrap_or(""),
+                            pos.get("spread_type").and_then(Value::as_str).unwrap_or(""),
+                            pos.get("short_strike").and_then(Value::as_f64).map(|s| s.to_string()).unwrap_or_default(),
+                            pos.get("long_strike").and_then(Value::as_f64).map(|s| s.to_string()).unwrap_or_default()
+                        );
+                        if seen_bets.insert(key) {
+                            open_mark += mark;
+                        }
+                    }
+                }
+            }
+            let sleeve = f.get("sleeve_usd").and_then(Value::as_f64).unwrap_or(0.0);
+            let net = realized + open_mark;
+            let roi = if sleeve > 0.0 { 100.0 * net / sleeve } else { 0.0 };
+            if present.is_empty() && open_mark == 0.0 && realized == 0.0 {
+                return None;
+            }
+            Some(json!({
+                "id": id,
+                "label": label,
+                "stack": stack,
+                "declared_members": declared,
+                "present_members": present,
+                "sleeve_usd": sleeve,
+                "stacked_realized_usd": realized,
+                "stacked_open_mark_usd": open_mark,
+                "stacked_net_usd": net,
+                "roi_pct": roi,
+            }))
+        })
+        .collect();
+    json!({ "families": arr })
 }
 
 /// Directory that holds the options rules files, and beside them `chains/` and `scorecards/`.
@@ -934,6 +1024,7 @@ mod tests {
         let snap = snapshot(&DashboardPaths {
             swing: vec![rules],
             options: vec![],
+            families: None,
         });
         let book = &snap["books"][0];
         assert_eq!(book["name"], "swing-demo");
@@ -973,11 +1064,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let rules = dir.path().join("options-a.yaml");
         std::fs::write(&rules, "agent_id: a\n").unwrap();
-        let lab = lab_section(&DashboardPaths { swing: vec![], options: vec![rules.clone()] });
+        let lab = lab_section(&DashboardPaths { swing: vec![], options: vec![rules.clone()], families: None });
         for key in ["scorecard", "benchmarks", "slippage", "promotion_gate"] {
             assert_eq!(lab[key]["present"], false, "{key}");
         }
-        assert!(snapshot(&DashboardPaths { swing: vec![], options: vec![rules] })["underlyings"]
+        assert!(snapshot(&DashboardPaths { swing: vec![], options: vec![rules], families: None })["underlyings"]
             .as_object()
             .unwrap()
             .is_empty());
@@ -994,7 +1085,7 @@ mod tests {
             r#"{"QQQ":{"price":743.3,"as_of":"2026-10-13 10:00 ET"}}"#,
         )
         .unwrap();
-        let snap = snapshot(&DashboardPaths { swing: vec![], options: vec![rules] });
+        let snap = snapshot(&DashboardPaths { swing: vec![], options: vec![rules], families: None });
         assert_eq!(snap["underlyings"]["QQQ"]["price"], 743.3);
         assert_eq!(snap["underlyings"]["QQQ"]["as_of"], "2026-10-13 10:00 ET");
     }
@@ -1017,7 +1108,7 @@ mod tests {
             json!({"generated_at": "2020-01-01T00:00:00+00:00", "agents": {"a": {"total_usd": 1.0, "trades": [1, 2, 3]}}}).to_string(),
         )
         .unwrap();
-        let lab = lab_section(&DashboardPaths { swing: vec![], options: vec![rules] });
+        let lab = lab_section(&DashboardPaths { swing: vec![], options: vec![rules], families: None });
         assert_eq!(lab["scorecard"]["present"], true);
         assert_eq!(lab["scorecard"]["stale"], false);
         assert_eq!(lab["scorecard"]["data"]["options_arms"]["effective_entries"], 5);
@@ -1056,6 +1147,7 @@ mod tests {
         let snap = snapshot(&DashboardPaths {
             swing: vec![],
             options: vec![rules],
+            families: None,
         });
         let book = &snap["books"][0];
         assert_eq!(book["name"], "options-pilot");
@@ -1093,9 +1185,47 @@ mod tests {
         let snap = snapshot(&DashboardPaths {
             swing: vec![],
             options: vec![rules],
+            families: None,
         });
         let books = snap["books"].as_array().unwrap();
         assert!(books.iter().any(|book| book["kind"] == "workflow" && book["name"] == "msft-dip"));
         assert!(books.iter().all(|book| book["kind"] != "crypto"));
+    }
+
+    #[test]
+    fn families_section_stacks_clone_loss_and_dedups_open_bets() {
+        let dir = tempfile::tempdir().unwrap();
+        for (arm, realized) in [("options-arm-o0", -300.0), ("options-arm-o1", -300.0)] {
+            let rules = dir.path().join(format!("{arm}.yaml"));
+            std::fs::write(&rules, format!("agent_id: {arm}\n")).unwrap();
+            // identical open spread (same underlying/expiry/strikes) in both clones
+            let state = format!(
+                r#"{{"sim":{{"starting_budget_usd":30000,"realized_pnl_usd":{realized},"closed_trades":[{{"pnl_usd":{realized}}}]}},"open_positions":{{"p0":{{"underlying":"QQQ","expiry":"2026-11-20","spread_type":"put_credit","short_strike":745,"long_strike":740,"contracts":1,"entry_credit":1.5,"last_good_debit_to_close":1.0}}}}}}"#
+            );
+            std::fs::write(dir.path().join(format!("agent-sim-state-{arm}.json")), state).unwrap();
+        }
+        let fams = json!({"families": [{
+            "id": "dup", "label": "Dup clones", "stack": true,
+            "sleeve_usd": 60000,
+            "members": ["options-arm-o0", "options-arm-o1"],
+        }]});
+        std::fs::write(dir.path().join("families.json"), fams.to_string()).unwrap();
+        let paths = DashboardPaths {
+            swing: vec![],
+            options: vec![
+                dir.path().join("options-arm-o0.yaml"),
+                dir.path().join("options-arm-o1.yaml"),
+            ],
+            families: Some(dir.path().join("families.json")),
+        };
+        let snap = snapshot(&paths);
+        let fam = &snap["families"]["families"][0];
+        // member losses stack onto the family sleeve: -600 realized, not -300
+        assert_eq!(fam["stacked_realized_usd"], -600.0);
+        // the identical open spread is one mark ($50), not two ($100)
+        assert_eq!(fam["stacked_open_mark_usd"], 50.0);
+        assert_eq!(fam["stacked_net_usd"], -550.0);
+        assert_eq!(fam["sleeve_usd"], 60000.0);
+        assert_eq!(fam["present_members"].as_array().unwrap().len(), 2);
     }
 }

@@ -55,6 +55,27 @@ sudo loginctl enable-linger "$USER"
 | [`scripts/paper-host-watchdog.sh`](../scripts/paper-host-watchdog.sh) | Restart a `--simulate` unit whose `last_tick` went stale, and send a Telegram alert if configured. No orders. |
 | [`scripts/scorecard.py`](../scripts/scorecard.py) | Read-only daily paper scorecard |
 | [`scripts/morning_review_agent.py`](../scripts/morning_review_agent.py) | Multi-turn LLM morning brief + optional Telegram (`schwab-morning-review.timer`) |
+
+### Duplicate arm experiments stack their losses
+
+Clone arms (o0–o8 running the same experiment from slightly different seeds) are one
+comparison, not nine. `rules/arms/families.json` declares which agents are members of
+which experiment family (`stack: true`); `stack: false` families are shown separately
+(e.g. live capital). Both the dashboard and the nightly scorecard treat stacked
+families as a single book:
+
+- **Dashboard** — `schwab-trader dashboard ... --options-families rules/arms/families.json`
+  (wired in `deploy/systemd/user/schwab-dashboard.service`) renders a "stacked loss"
+  table per family: member realized P&L and open marks are summed, and an identical
+  spread open in two clones counts as one mark. ROI is against the family sleeve.
+- **Scorecard** — `scripts/scorecard.py` builds the same families from the same file
+  and reports the experimental read per family: `distinct_bets`, stacked expectancy
+  (bootstrap CI), win rate, `replication_count`. The falsifier (expectancy ≤ 0 after
+  20 distinct closed bets) is judged on the stacked family, and a family alert also
+  fires if stacked drawdown exceeds 10% of the sleeve.
+
+Missing or unreadable `families.json` falls back to the legacy per-agent rows, so the
+stacking change is safe to deploy without the file.
 | [`scripts/chain-snapshot.sh`](../scripts/chain-snapshot.sh) | Read-only option-chain snapshots. Does not refresh OAuth. |
 
 ```bash

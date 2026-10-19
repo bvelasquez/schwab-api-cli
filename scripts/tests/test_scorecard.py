@@ -116,6 +116,112 @@ class EffectiveN(unittest.TestCase):
         self.assertEqual(scorecard.build_arm_alerts({"nominal_entries": 3, "effective_entries": 3}), [])
 
 
+class FamilyStacking(unittest.TestCase):
+    """Duplicate arm experiments must be judged as one stacked book: losses add
+    across members, and the same spread on the same day across clones is one bet."""
+
+    @staticmethod
+    def _arm(rules: Path, name: str, pid: str, entry_day: str, exit_day: str, pnl: float, realized: float):
+        write_json(rules / f"agent-sim-state-options-{name}.json", options_state(realized=realized))
+        write_journal(
+            rules / f"agent-sim-journal-options-{name}.jsonl",
+            [
+                entry_event(pid, entry_day + "T13:30:00+00:00"),
+                {
+                    "type": "sim_exit_filled",
+                    "ts": exit_day + "T15:30:00+00:00",
+                    "payload": {"position_id": pid, "underlying": "QQQ", "pnl_usd": pnl},
+                },
+            ],
+        )
+
+    def test_clone_family_stacks_loss_and_dedups_bets(self):
+        pid = "HASH|QQQ|2026-11-20|vertical|P699L_P704S"
+        with tempfile.TemporaryDirectory() as tmp:
+            rules = Path(tmp)
+            (rules / "arms").mkdir(parents=True)
+            write_json(
+                rules / "arms" / "families.json",
+                {
+                    "families": [
+                        {
+                            "id": "dup",
+                            "label": "Dup clones",
+                            "stack": True,
+                            "sleeve_usd": 60000,
+                            "members": ["options-arm-o0", "options-arm-o1"],
+                        }
+                    ]
+                },
+            )
+            self._arm(rules, "arm-o0", pid, "2026-10-09", "2026-10-16", -300.0, -300.0)
+            self._arm(rules, "arm-o1", pid, "2026-10-09", "2026-10-16", -300.0, -300.0)
+            out = scorecard.options_arms_section(rules)
+            fam = out["families"]["dup"]
+        # member losses stack onto the family sleeve
+        self.assertEqual(fam["present_members"], ["arm-o0", "arm-o1"])
+        self.assertEqual(fam["stacked_realized_pnl_usd"], -600.0)
+        self.assertEqual(fam["stacked_net_pnl_usd"], -600.0)
+        self.assertEqual(fam["roi_pct"], -1.0)  # -600 on a $60k sleeve
+        # but the identical bet is one observation, not two
+        self.assertEqual(fam["distinct_bets"], 1)
+        self.assertEqual(fam["distinct_bet_net_pnl_usd"], -300.0)
+        self.assertEqual(fam["replication_count"], 2)
+        # one small clone loss is 0.5% of the stacked sleeve: no family alert yet
+        self.assertEqual(scorecard.build_family_alerts({"dup": fam}), [])
+
+    def test_falsifier_alert_fires_on_stacked_family(self):
+        fam = {
+            "members_absent": False,
+            "stack": True,
+            "sleeve_usd": 60000,
+            "drawdown_pct": 2.0,
+            "distinct_bets": 24,
+            "distinct_bet_expectancy_usd": -1.5,
+        }
+        alerts = scorecard.build_family_alerts({"dup": fam})
+        self.assertEqual(len(alerts), 1)
+        self.assertIn("falsifier met after 24 distinct bets", alerts[0])
+        # a live, non-stacked book is never gated by the family falsifier
+        alerts = scorecard.build_family_alerts({"dup": dict(fam, stack=False)})
+        self.assertEqual(alerts, [])
+    def test_different_bets_in_one_family_stay_distinct_and_stack(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rules = Path(tmp)
+            (rules / "arms").mkdir(parents=True)
+            write_json(
+                rules / "arms" / "families.json",
+                {
+                    "families": [
+                        {
+                            "id": "dup",
+                            "label": "Dup",
+                            "stack": True,
+                            "sleeve_usd": 60000,
+                            "members": ["options-arm-o0", "options-arm-o1"],
+                        }
+                    ]
+                },
+            )
+            self._arm(rules, "arm-o0", "H|QQQ|2026-11-20|vertical|P699L_P704S", "2026-10-09", "2026-10-16", -300.0, -300.0)
+            self._arm(rules, "arm-o1", "H|QQQ|2026-11-20|vertical|P694L_P699S", "2026-10-09", "2026-10-16", -450.0, -450.0)
+            out = scorecard.options_arms_section(rules)
+            fam = out["families"]["dup"]
+        self.assertEqual(fam["distinct_bets"], 2)
+        self.assertEqual(fam["stacked_realized_pnl_usd"], -750.0)
+        self.assertEqual(fam["distinct_bet_net_pnl_usd"], -750.0)
+
+    def test_missing_families_file_is_legacy_per_agent(self):
+        pid = "H|QQQ|2026-11-20|vertical|P699L_P704S"
+        with tempfile.TemporaryDirectory() as tmp:
+            rules = Path(tmp)
+            self._arm(rules, "arm-o0", pid, "2026-10-09", "2026-10-16", -300.0, -300.0)
+            out = scorecard.options_arms_section(rules)
+        self.assertEqual(out["families"], {})
+        self.assertEqual(out["nominal_entries"], 1)
+        self.assertEqual(len(scorecard.build_family_alerts(out["families"])), 0)
+
+
 class SwingLedger(unittest.TestCase):
     def test_state_ledger_is_used_when_journal_was_rotated(self):
         closed = [
