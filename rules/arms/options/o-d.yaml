@@ -1,0 +1,287 @@
+version: 1
+# Paper arm o-d ("dispersion", $30k sleeve, LLM off, 300s tick). Does not change 8709 or o0-o8.
+# Single-name rich-IV credit spreads on POST-EARNINGS names — the opposite side of
+# the tape from the QQQ/SPY pilot. Rationale (week of 2026-10-16, Saxo/OptiView/chain data):
+#   - Index vol is the most efficiently sold surface on Earth (VIX ~15, $7T monthly expiry,
+#     ~$75B covered-call ETFs, 0DTE >20M contracts/day). QQQ/SPY 12-20d 35-45 DTE pays
+#     7-10% of width — below the edge line, calls at zero candidates.
+#   - Single-name IV is rich while the index is calm: median IV rank 44.6 and rising,
+#     health care ranks 68-97, refiners 80-93; implied correlation ~11-13% (index priced
+#     as one object, names trade rich against it). Earnings event premium 3-8% per report.
+# HYPOTHESIS: 25-35 delta, 11-30 DTE credit spreads on rich-IV post-earnings single names
+#   collect premium that index spreads cannot after ~2026-10-01 in low-VIX regimes.
+# FALSIFIER: expectancy per trade <= 0 after 20 DISTINCT closed trades (share-agnostic;
+#   fewer than 12 distinct closes in 4 weeks = watchlist too restrictive, review list).
+# v1 constraint: the options agent has NO per-symbol earnings blackout. The earnings
+#   cycle is managed structurally: (1) watchlist = names whose quarterly report already
+#   printed (refreshed by operator weekly, see header of watchlist), (2) dte_close at 10
+#   and dte_max 30 so no position can span the next report, (3) no defensive roll (single
+#   names gap; do not manage losers into a report). Revisit when engine supports
+#   earnings blackout properly.
+agent_id: options-arm-o-d
+
+accounts:
+  - hash: __ACCOUNT_HASH__
+    label: IRA account ending 8709
+    type: ira
+    enabled: true
+
+schedule:
+  tick_interval_seconds: 300
+  tick_jitter_seconds: 90
+  market_hours_only: true
+  timezone: America/New_York
+  overnight:
+    enabled: false
+
+strategies:
+  vertical:
+    enabled: true
+  iron_condor:
+    # Single-name ICs are gap-prone and not price-tested on this engine.
+    enabled: false
+
+# v1 SEED WATCHLIST — refresh before go-live. Selection rules (operator, weekly):
+#   1. Name's Q3 report already printed (post-earnings → sell the quiet after the print).
+#      Banks (JPM/GS/BAC) printed 2026-10-13..16; TSMC 10-15; NFLX is 10-20 (NOT eligible).
+#   2. Prefer rich IV: health care (IV rank 68-97 on 2026-10-15 Saxo data) and post-event
+#      stress names; skip names whose IV rank is crushed to the floor (e.g. NVDA 5.8).
+#   3. Drop any name trading within 5 days of its NEXT report.
+# Correlation groups (risk section) cap overlap within sector; entries share risk.
+watchlist:
+  - symbol: UNH
+    role: primary
+    min_credit: 0.60
+    min_credit_to_width_pct: 10.0
+  - symbol: MRK
+    role: primary
+    min_credit: 0.60
+    min_credit_to_width_pct: 10.0
+  - symbol: DHR
+    role: primary
+    min_credit: 0.60
+    min_credit_to_width_pct: 10.0
+  - symbol: LLY
+    role: primary
+    min_credit: 0.60
+    min_credit_to_width_pct: 10.0
+  - symbol: JPM
+    role: primary
+    min_credit: 0.60
+    min_credit_to_width_pct: 10.0
+  - symbol: GS
+    role: primary
+    min_credit: 0.60
+    min_credit_to_width_pct: 10.0
+  - symbol: XOM
+    role: primary
+    min_credit: 0.60
+    min_credit_to_width_pct: 10.0
+  - symbol: CVX
+    role: primary
+    min_credit: 0.60
+    min_credit_to_width_pct: 10.0
+
+entry_policy:
+  mode: first_qualifying
+  fallback_only_after_primary_exhausted: true
+  require_llm_proceed: false
+  fail_open_on_llm_defer: false
+  proceed_cache_minutes: 45
+  entry_attempt_cooldown_minutes: 90
+  promote_redeploy_symbol: false
+  # Single-name sellers: after a stop, force richer names for 10 days instead of
+  # compounding losses into a beaten-up sector neighbor.
+  post_stop_tightening:
+    enabled: true
+    min_iv_rv_ratio: 1.2
+    min_short_otm_pct: 4.0
+    cooldown_days: 10
+
+entry_rules:
+  vertical:
+    # Regime flips put_credit/call_credit; default below.
+    type: put_credit
+    dte_min: 11
+    dte_max: 30
+    min_credit: 0.60
+    max_width: 5
+    # 25-35 delta: the near-the-money premium the covered-call/CC-short crowd actually
+    # harvests (The Multiplier live slate: 0.31-0.40). Engine picks by delta band only.
+    short_delta_min: 0.25
+    short_delta_max: 0.35
+    min_pop_pct: 55
+    min_distance_to_be_pct: 2.0
+    min_credit_to_width_pct: 10.0
+    min_short_otm_pct: 1.5
+    put_credit_max_rsi2: 40
+    call_credit_min_rsi2: 55
+    # Singles gap more than indices; skip entries into an already-big adverse move.
+    max_adverse_day_change_pct: 1.5
+    reject_short_inside_1sigma: false
+    # Require IV clearly above realized vol — the whole premise is rich-IV names.
+    min_iv_rv_ratio: 1.2
+    max_open_positions: 2
+    max_contracts_per_trade: 1
+
+exit_rules:
+  # The 50% buy-back (The Multiplier: GTC close at half premium, immediately).
+  profit_target_pct: 50
+  # 2x credit stop, armed only when the short is really threatened (below 2% OTM).
+  stop_loss_pct: 200
+  stop_loss_require_short_otm_below_pct: 2.0
+  # v1 guardrail so no position can span the next report: exit well before typical
+  # report DTE. When the earnings-blackout engine feature lands, relax to 14.
+  dte_close: 10
+  dte_close_skip_degraded_above_otm_pct: 6.0
+  defer_non_urgent_on_degraded_quotes: true
+  max_defer_minutes: 60
+  roll:
+    # No defensive rolls on single names (gap risk); a stop closes the book.
+    enabled: false
+  thesis:
+    enabled: true
+    min_hold_minutes: 1440
+    min_pop_pct_exit: 60
+    max_short_delta_exit: 0.45
+    min_short_otm_pct: 2.0
+    exit_short_inside_1sigma: false
+    redeploy_cooldown_minutes: 1440
+    regime_mismatch:
+      enabled: true
+      min_profit_pct: 25
+      treat_pause_as_mismatch: true
+    profit_giveback:
+      # Off for v1: 25-35d single-name marks are noisy; let the 50% target and
+      # thesis handle exits instead of giveback churn.
+      enabled: false
+      peak_profit_min_pct: 30
+      exit_if_below_pct: 10
+
+risk:
+  # $5-wide @ 0.25-0.35d singles: credit $0.60-2.50 -> defined risk ~$250-440 per slot.
+  max_portfolio_risk_usd: 3000
+  max_risk_per_trade_usd: 1200
+  max_trades_per_day: 1
+  allowed_underlyings:
+    - UNH
+    - MRK
+    - DHR
+    - LLY
+    - JPM
+    - GS
+    - XOM
+    - CVX
+  max_open_per_underlying:
+    UNH: 1
+    MRK: 1
+    DHR: 1
+    LLY: 1
+    JPM: 1
+    GS: 1
+    XOM: 1
+    CVX: 1
+  # Sector caps: two names per sector is the real slot ceiling (correlated earnings
+  # and balance-sheet risk are the single-name twin of the index-correlation cap).
+  correlation_groups:
+    - name: health_care
+      symbols: [UNH, MRK, DHR, LLY]
+      max_open: 2
+    - name: banks
+      symbols: [JPM, GS]
+      max_open: 1
+    - name: energy
+      symbols: [XOM, CVX]
+      max_open: 1
+  # Halt new entries after 10% sleeve drawdown from HWM (~$30k). Singles can gap;
+  # 10% keeps a bad week from chaining more entries into the same tape.
+  max_drawdown_halt_pct: 10.0
+  drawdown_sleeve_usd: 30000
+  re_entry_after_stop_loss:
+    enabled: true
+    cooldown_days: 5
+  blocked_events: []
+  post_event_entry_window_days: 2
+  # Same macro calendar as the pilot (CPI/FOMC/NFP still move single names via rates).
+  blocked_dates:
+    - date: "2026-10-28"
+      lead_days: 1
+      label: FOMC
+    - date: "2026-12-09"
+      lead_days: 1
+      label: FOMC
+    - date: "2026-11-10"
+      lead_days: 0
+      label: CPI
+    - date: "2026-12-10"
+      lead_days: 0
+      label: CPI
+    - date: "2026-11-06"
+      lead_days: 0
+      label: NFP
+    - date: "2026-12-04"
+      lead_days: 0
+      label: NFP
+
+# Regime: kept ENABLED for the engine's put/call selection, but with the index-VIX
+# pause effectively off (0 / 99 thresholds) — this arm trades single-name vol, and
+# the index regime must not freeze a rich individual name. The per-name IV/RV filter
+# in entry_rules is the actual gate.
+regime:
+  enabled: true
+  benchmark_symbol: SPY
+  vix_symbol: $VIX
+  vix_low: 12.0
+  vix_high: 26.0
+  pause_entries_vix_below: 0.0
+  pause_entries_vix_above: 99.0
+  pause_on_missing_vix: true
+  realized_vol_lookback: 20
+  strategy_map:
+    low_vol_trend: put_credit
+    elevated_vol: put_credit
+    high_vol_chop: call_credit
+    bearish_trend: call_credit
+    hostile: put_credit
+    neutral: put_credit
+  put_credit_guard:
+    # Never block on the index guard; single-name filters own this book.
+    vix_above: 99.0
+    require_benchmark_above_sma: 20
+
+simulation:
+  starting_budget_usd: 30000
+  # Paper honesty: single-name quotes are wider than indices; 7% to cover the
+  # spread delta between displayed mid and realistic fill.
+  fill_slippage_pct: 7.0
+
+execution:
+  min_minutes_after_open: 15
+  order_type: limit
+  require_preview: true
+  wait_for_fill: true
+  fill_timeout_seconds: 300
+
+llm:
+  # Off 2026-10-01: reviews did not change entries or exits on the queues.
+  enabled: false
+  selection_model: anthropic/claude-sonnet-4
+  monitor_model: google/gemini-2.5-flash
+  web_model: perplexity/sonar
+  review_every_ticks: 30
+  monitor_review_every_ticks: 60
+  web_research_every_reviews: 3
+  max_tokens: 2000
+  veto_entries: true
+  allow_llm_exits: false
+  allow_rule_suggestions: true
+
+notify:
+  telegram:
+    enabled: true
+    notify_every_tick: false
+    notify_on_actions: true
+    llm_notify_digest: true
+    llm_digest_interval_minutes: 60
+    llm_notify_urgent: true
+    llm_urgent_cooldown_minutes: 30
