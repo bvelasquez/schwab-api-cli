@@ -20,6 +20,8 @@ SSH target defaults to `paper-host`. Set `Host paper-host` in `~/.ssh/config`, o
 
 If you SSH as **root** but agents run under another account (e.g. `jarvis` on the lab host), set `PAPER_HOST_RUN_USER=jarvis` or rely on the default auto-detect when a `jarvis` user exists. The deploy/reload scripts re-exec as that user with `HOME`, `PATH`, and `XDG_RUNTIME_DIR` so `schwab` and `systemctl --user` match the running paper units.
 
+`paper-host-deploy.sh` refuses to run when the host already has account-specific units (for example `schwab-options-8709.service`, `schwab-swing-9947.service`, or `schwab-options-arm-*`). Those hosts should use their own deploy script so the generic units do not point at missing rules files. Set `PAPER_HOST_ALLOW_GENERIC_UNITS=1` only to override that check deliberately.
+
 Copy `rules/options-rules.example.yaml` and `rules/trader-rules.example.yaml` to local names (for example `rules/options-pilot.yaml` and `rules/trader-swing.yaml`) and put your Schwab `hashValue` in those copies. Do not commit them. Point the unit `ExecStart` at your filenames with a drop-in if they differ from the defaults.
 
 ## Safety

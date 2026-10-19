@@ -8,6 +8,8 @@
 #   PAPER_HOST_SSH         SSH target (default: paper-host — set Host/User in ~/.ssh/config)
 #   PAPER_HOST_REPO        Clone path on the paper host (optional; default ~paper/projects/schwabinvestbot)
 #   PAPER_HOST_RUN_USER    Account that owns systemd user units (default: jarvis when SSH is root)
+#   PAPER_HOST_ALLOW_GENERIC_UNITS  Set to 1 to deploy generic units even when the host
+#                          already has account-specific units (e.g. -8709/-9947).
 #
 # OAuth: Schwab allows one refresh-token owner per app login. Refresh tokens on
 # exactly one host. A second long-running process that refreshes will revoke the first.
@@ -30,6 +32,7 @@ WRAP_FILE="${SCRIPT_DIR}/lib/paper-host-ssh-wrap.sh"
 PAPER_HOST_SSH="${PAPER_HOST_SSH:-paper-host}"
 PAPER_HOST_REPO="${PAPER_HOST_REPO:-}"
 PAPER_HOST_RUN_USER="${PAPER_HOST_RUN_USER:-}"
+PAPER_HOST_ALLOW_GENERIC_UNITS="${PAPER_HOST_ALLOW_GENERIC_UNITS:-0}"
 
 ssh -o BatchMode=yes "${PAPER_HOST_SSH}" \
   env REPO="${PAPER_HOST_REPO}" \
@@ -38,6 +41,25 @@ ssh -o BatchMode=yes "${PAPER_HOST_SSH}" \
 set -euo pipefail
 $(cat "${WRAP_FILE}")
 paper_host_reexec_if_root
+
+# Refuse to clobber a host that already has account-specific paper units (for
+# example schwab-options-8709.service / schwab-swing-9947.service on Jarvis).
+# Those hosts run their own deploy script; the generic units below would point
+# at rules files that do not exist and would trip the watchdog.
+allow_generic_units="${PAPER_HOST_ALLOW_GENERIC_UNITS}"
+unit_dir="\${XDG_CONFIG_HOME:-\$HOME/.config}/systemd/user"
+if [[ "\$allow_generic_units" != "1" ]]; then
+  shopt -s nullglob
+  host_units=( "\$unit_dir"/schwab-options-*.service "\$unit_dir"/schwab-swing-*.service )
+  shopt -u nullglob
+  if (( \${#host_units[@]} > 0 )); then
+    echo "refusing: this host already has account-specific paper units:" >&2
+    printf '  %s\n' "\${host_units[@]##*/}" >&2
+    echo "Use the host's own deploy script instead (for example scripts/jarvis-deploy.sh)," >&2
+    echo "or set PAPER_HOST_ALLOW_GENERIC_UNITS=1 to override." >&2
+    exit 1
+  fi
+fi
 
 repo="\${REPO:-\$HOME/projects/schwabinvestbot}"
 export PATH="\${HOME}/.cargo/bin:\${PATH}"
