@@ -41,23 +41,18 @@ strategies:
     # Single-name ICs are gap-prone and not price-tested on this engine.
     enabled: false
 
-# v1 SEED WATCHLIST — refresh before go-live. Selection rules (operator, weekly):
+# v1 SEED WATCHLIST — refreshed 2026-10-18 for go-live. Selection rules (operator, weekly):
 #   1. Name's Q3 report already printed (post-earnings → sell the quiet after the print).
-#      Banks (JPM/GS/BAC) printed 2026-10-13..16; TSMC 10-15; NFLX is 10-20 (NOT eligible).
+#      LLY reported ~10-02; UNH ~10-14; banks JPM/GS printed 2026-10-13..16.
 #   2. Prefer rich IV: health care (IV rank 68-97 on 2026-10-15 Saxo data) and post-event
 #      stress names; skip names whose IV rank is crushed to the floor (e.g. NVDA 5.8).
 #   3. Drop any name trading within 5 days of its NEXT report.
+#   Pending prints to re-add after their reports: MRK/DHR (~10-23..29), XOM/CVX (~10-31..11-01);
+#   BAC/TSMC (printed 10-13..16) are candidates for the next weekly refresh. NFLX is 10-20 (NOT eligible).
 # Correlation groups (risk section) cap overlap within sector; entries share risk.
+#   NOTE: 4 names is thin — if distinct closes stay under 12 in 4 weeks, widen the list.
 watchlist:
   - symbol: UNH
-    role: primary
-    min_credit: 0.60
-    min_credit_to_width_pct: 10.0
-  - symbol: MRK
-    role: primary
-    min_credit: 0.60
-    min_credit_to_width_pct: 10.0
-  - symbol: DHR
     role: primary
     min_credit: 0.60
     min_credit_to_width_pct: 10.0
@@ -70,14 +65,6 @@ watchlist:
     min_credit: 0.60
     min_credit_to_width_pct: 10.0
   - symbol: GS
-    role: primary
-    min_credit: 0.60
-    min_credit_to_width_pct: 10.0
-  - symbol: XOM
-    role: primary
-    min_credit: 0.60
-    min_credit_to_width_pct: 10.0
-  - symbol: CVX
     role: primary
     min_credit: 0.60
     min_credit_to_width_pct: 10.0
