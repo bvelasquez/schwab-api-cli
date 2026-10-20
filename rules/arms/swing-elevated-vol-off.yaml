@@ -1,0 +1,28 @@
+# Paste this under `adaptation.profiles` in the live swing rules file
+# (the file `schwab-swing-9947` loads, usually rules/trader-swing.yaml on the
+# paper host). Maps merge, so these entry caps land on the existing profiles
+# and leave their exit overrides in place. `low_vol_trend` is omitted on
+# purpose: that profile keeps its current entry size.
+#
+# Then SIGHUP or restart the swing unit. Do not restart the options arms.
+#
+# This is the same gate as the `low-vol-only` shadow arm in
+# rules/arms/swing-arms.example.yaml, applied to the book that is trading.
+
+adaptation:
+  profiles:
+    baseline:
+      description: No new entries while the book is in the baseline profile.
+      overrides:
+        entry:
+          max_new_entries_per_day: 0
+    elevated_vol:
+      description: No new entries in elevated vol. Open positions still exit on their own rules.
+      overrides:
+        entry:
+          max_new_entries_per_day: 0
+    high_vol_chop:
+      description: No new entries in high-vol chop.
+      overrides:
+        entry:
+          max_new_entries_per_day: 0

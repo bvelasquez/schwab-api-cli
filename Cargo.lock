@@ -13,6 +13,7 @@ name = "agent-trader-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "broker-core",
  "broker-public",
  "broker-schwab",
@@ -21,9 +22,11 @@ dependencies = [
  "directories",
  "dotenvy",
  "libc",
+ "schwab-api-cli",
  "serde",
  "serde_json",
  "serde_yaml",
+ "tempfile",
  "tokio",
  "uuid",
 ]
@@ -39,6 +42,8 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "clap",
+ "schwab-api-cli",
+ "schwab-trader",
  "serde",
  "serde_json",
  "serde_yaml",

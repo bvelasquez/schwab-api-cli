@@ -28,8 +28,13 @@ clap.workspace = true
 directories.workspace = true
 dotenvy = "0.15"
 libc = "0.2"
+schwab-api-cli = { path = "../schwab-cli" }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
 tokio.workspace = true
 uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+async-trait.workspace = true
+tempfile = "3"

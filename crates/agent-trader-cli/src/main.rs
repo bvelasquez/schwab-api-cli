@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
@@ -60,8 +62,21 @@ enum Command {
         rules_dir: Option<String>,
     },
     /// Read-only readiness check. Does not place an order.
-    Canary {
-        account: String,
+    Canary { account: String },
+    /// Read-only HTML dashboard for paper books. Does not place an order.
+    Dashboard {
+        /// Swing rules YAML. Repeatable. Defaults to rules/trader-swing-9947.yaml when present.
+        #[arg(long)]
+        rules_file: Vec<PathBuf>,
+        /// Options rules YAML. Repeatable. Defaults to rules/options-pilot-8709.yaml when present.
+        #[arg(long)]
+        options_rules: Vec<PathBuf>,
+        /// rules/arms/families.json. Members may be ids or {id, role} objects.
+        #[arg(long)]
+        options_families: Option<PathBuf>,
+        /// Listen address. Repeat to listen on more than one interface.
+        #[arg(long, default_value = "127.0.0.1:8791")]
+        bind: Vec<String>,
     },
 }
 
@@ -119,6 +134,14 @@ enum OptionsCmd {
         #[arg(long)]
         rules: Option<String>,
     },
+    /// The options agent used by the paper arms. Same loop and state files as `schwab agent run`.
+    /// Paper units pass `--simulate` and never `--trust` or `--yes`.
+    Run {
+        #[arg(long)]
+        rules: PathBuf,
+        #[arg(long)]
+        once: bool,
+    },
     /// Simulated Public options book. Never submits an order.
     Paper {
         #[arg(long, default_value = "rules/agent-trader-public-paper.yaml")]
@@ -132,6 +155,7 @@ enum OptionsCmd {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    schwab_cli::tls::install_crypto_provider();
     load_dotenv();
     let cli = Cli::parse();
     if cli.dry_run && cli.simulate {
@@ -145,9 +169,10 @@ async fn main() -> Result<()> {
     };
     match cli.command {
         Command::Accounts => accounts(cli.broker.as_deref()).await?,
-        Command::Portfolio { account, data_source } => {
-            portfolio(&account, data_source.as_deref()).await?
-        }
+        Command::Portfolio {
+            account,
+            data_source,
+        } => portfolio(&account, data_source.as_deref()).await?,
         Command::Market { command } => market(command).await?,
         Command::Plan { command } => plan_cmd(command, &flags).await?,
         Command::Options { command } => options_cmd(command, &flags).await?,
@@ -156,12 +181,46 @@ async fn main() -> Result<()> {
         Command::Capabilities => capabilities(cli.broker.as_deref()).await?,
         Command::Guard { account, rules_dir } => guard(&account, rules_dir.as_deref())?,
         Command::Canary { account } => canary(&account).await?,
+        Command::Dashboard {
+            rules_file,
+            options_rules,
+            options_families,
+            bind,
+        } => {
+            let paths = agent_trader::dashboard::DashboardPaths {
+                swing: resolve_rules(rules_file, "rules/trader-swing-9947.yaml"),
+                options: resolve_rules(options_rules, "rules/options-pilot-8709.yaml"),
+                families: options_families.or_else(|| {
+                    let path = PathBuf::from("rules/arms/families.json");
+                    path.is_file().then_some(path)
+                }),
+            };
+            if paths.swing.is_empty() && paths.options.is_empty() {
+                anyhow::bail!("no rules files found; pass --rules-file and/or --options-rules");
+            }
+            agent_trader::dashboard::serve(&bind, paths)?;
+        }
     }
     Ok(())
 }
 
+fn resolve_rules(given: Vec<PathBuf>, default_rel: &str) -> Vec<PathBuf> {
+    if !given.is_empty() {
+        return given;
+    }
+    let path = PathBuf::from(default_rel);
+    if path.is_file() {
+        vec![path]
+    } else {
+        Vec::new()
+    }
+}
+
 fn print_json(value: serde_json::Value) {
-    println!("{}", serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".into()));
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".into())
+    );
 }
 
 async fn accounts(broker: Option<&str>) -> Result<()> {
@@ -201,19 +260,36 @@ async fn market(command: MarketCmd) -> Result<()> {
                 "source": handle.data.broker_name()
             }));
         }
-        MarketCmd::Expirations { underlying, account } => {
+        MarketCmd::Expirations {
+            underlying,
+            account,
+        } => {
             let account = broker_core::parse_account_address(&account)?;
             let handle = registry.resolve(&account, broker_core::DataSource::AccountBroker)?;
-            let rows = handle.data.option_expirations(&account, &underlying).await?;
+            let rows = handle
+                .data
+                .option_expirations(&account, &underlying)
+                .await?;
             print_json(serde_json::json!({"expirations": rows}));
         }
-        MarketCmd::Chain { underlying, expiration, account } => {
+        MarketCmd::Chain {
+            underlying,
+            expiration,
+            account,
+        } => {
             let account = broker_core::parse_account_address(&account)?;
             let handle = registry.resolve(&account, broker_core::DataSource::AccountBroker)?;
-            let chain = handle.data.option_chain(&account, &underlying, &expiration).await?;
+            let chain = handle
+                .data
+                .option_chain(&account, &underlying, &expiration)
+                .await?;
             print_json(serde_json::json!(chain));
         }
-        MarketCmd::Bars { symbol, period, account } => {
+        MarketCmd::Bars {
+            symbol,
+            period,
+            account,
+        } => {
             let account = broker_core::parse_account_address(&account)?;
             let handle = registry.resolve(&account, broker_core::DataSource::AccountBroker)?;
             let bars = handle.data.bars(&account, &symbol, &period).await?;
@@ -227,7 +303,9 @@ async fn plan_cmd(command: PlanCmd, flags: &agent_trader::TradingFlags) -> Resul
     match command {
         PlanCmd::Validate { path } => {
             let plan = agent_trader::TradePlan::load(&path)?;
-            print_json(serde_json::json!({"ok": true, "plan_id": plan.plan_id, "steps": plan.steps.len()}));
+            print_json(
+                serde_json::json!({"ok": true, "plan_id": plan.plan_id, "steps": plan.steps.len()}),
+            );
         }
         PlanCmd::Run { path } => {
             let plan = agent_trader::TradePlan::load(&path)?;
@@ -251,9 +329,16 @@ async fn options_cmd(command: OptionsCmd, flags: &agent_trader::TradingFlags) ->
             let report = agent_trader::options::flatten(&registry, &rules, flags).await?;
             print_json(report);
         }
-        OptionsCmd::Replay { chain, today, rules } => {
+        OptionsCmd::Replay {
+            chain,
+            today,
+            rules,
+        } => {
             let report = agent_trader::options::replay_file(&chain, &today, rules.as_deref())?;
             print_json(report);
+        }
+        OptionsCmd::Run { rules, once } => {
+            run_options_agent(&rules, once, flags).await?;
         }
         OptionsCmd::Paper {
             rules,
@@ -267,6 +352,26 @@ async fn options_cmd(command: OptionsCmd, flags: &agent_trader::TradingFlags) ->
         }
     }
     Ok(())
+}
+
+async fn run_options_agent(
+    rules: &std::path::Path,
+    once: bool,
+    flags: &agent_trader::TradingFlags,
+) -> Result<()> {
+    let safety = schwab_cli::safety_config::SafetyConfig::load()?;
+    let runtime = schwab_cli::config::RuntimeConfig::for_agent_trading(
+        schwab_cli::output::OutputFormat::Pretty,
+        flags.yes,
+        flags.dry_run,
+        flags.simulate,
+        flags.trust,
+        false,
+        false,
+        schwab_cli::safety::SafetyContext::new(safety),
+        schwab_cli::output::OutputSink::stdout(),
+    );
+    schwab_cli::agent::run_agent_loop(&runtime, rules, once, None).await
 }
 
 fn import_schwab() -> Result<()> {
@@ -288,7 +393,9 @@ fn import_schwab() -> Result<()> {
         std::fs::write(&dest, serde_json::to_string_pretty(&gate)?)?;
         println!("wrote default safety config to {}", dest.display());
     }
-    println!("Schwab tokens stay in the schwabinvestbot token directory. PUBLIC_API_KEY stays in .env.");
+    println!(
+        "Schwab tokens stay in the schwabinvestbot token directory. PUBLIC_API_KEY stays in .env."
+    );
     Ok(())
 }
 
@@ -370,7 +477,10 @@ fn selected_kinds(
         return Ok(vec![broker_core::BrokerKind::parse(broker)?]);
     }
     let mut kinds = Vec::new();
-    for kind in [broker_core::BrokerKind::Schwab, broker_core::BrokerKind::Public] {
+    for kind in [
+        broker_core::BrokerKind::Schwab,
+        broker_core::BrokerKind::Public,
+    ] {
         if registry.get(kind).is_ok() {
             kinds.push(kind);
         }

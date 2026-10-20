@@ -76,9 +76,7 @@ impl AccountLock {
             let existing = fs::read_to_string(&path).unwrap_or_default();
             if let Ok(owner) = existing.trim().parse::<i32>() {
                 if pid_alive(owner) && owner as u32 != pid {
-                    anyhow::bail!(
-                        "account {account_key} is locked by agent-trader pid {owner}"
-                    );
+                    anyhow::bail!("account {account_key} is locked by agent-trader pid {owner}");
                 }
             }
         }
@@ -118,7 +116,8 @@ mod tests {
 
     #[test]
     fn live_pid_with_account_is_busy() {
-        let dir = std::env::temp_dir().join(format!("agent-trader-guard-live-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("agent-trader-guard-live-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("trader-demo.pid"), std::process::id().to_string()).unwrap();

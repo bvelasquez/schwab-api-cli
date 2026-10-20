@@ -149,7 +149,10 @@ class FamilyStacking(unittest.TestCase):
                             "label": "Dup clones",
                             "stack": True,
                             "sleeve_usd": 60000,
-                            "members": ["options-arm-o0", "options-arm-o1"],
+                            "members": [
+                                "options-arm-o0",
+                                {"id": "options-arm-o1", "role": "variant"},
+                            ],
                         }
                     ]
                 },
@@ -198,7 +201,10 @@ class FamilyStacking(unittest.TestCase):
                             "label": "Dup",
                             "stack": True,
                             "sleeve_usd": 60000,
-                            "members": ["options-arm-o0", "options-arm-o1"],
+                            "members": [
+                                "options-arm-o0",
+                                {"id": "options-arm-o1", "role": "variant"},
+                            ],
                         }
                     ]
                 },

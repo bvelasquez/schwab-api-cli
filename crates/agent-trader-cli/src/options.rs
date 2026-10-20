@@ -106,7 +106,11 @@ pub fn select_put_credit(
         .iter()
         .filter(|contract| contract.put_call.eq_ignore_ascii_case("P"))
         .collect();
-    puts.sort_by(|a, b| b.strike.partial_cmp(&a.strike).unwrap_or(std::cmp::Ordering::Equal));
+    puts.sort_by(|a, b| {
+        b.strike
+            .partial_cmp(&a.strike)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     for short in &puts {
         let Some(delta) = short.greeks.delta.map(f64::abs) else {
             continue;
@@ -119,7 +123,11 @@ pub fn select_put_credit(
             .iter()
             .copied()
             .filter(|contract| contract.strike <= target + 0.001)
-            .max_by(|a, b| a.strike.partial_cmp(&b.strike).unwrap_or(std::cmp::Ordering::Equal))
+            .max_by(|a, b| {
+                a.strike
+                    .partial_cmp(&b.strike)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
         else {
             continue;
         };
@@ -174,7 +182,10 @@ pub fn exit_action(
     }
     if short_otm_pct < rules.min_short_otm_pct {
         return ExitAction::Close {
-            reason: format!("short otm {short_otm_pct:.2}% < {:.2}%", rules.min_short_otm_pct),
+            reason: format!(
+                "short otm {short_otm_pct:.2}% < {:.2}%",
+                rules.min_short_otm_pct
+            ),
         };
     }
     if profit_pct >= rules.profit_target_pct {
@@ -228,7 +239,12 @@ pub fn spread_intent(choice: &SpreadChoice, contracts: f64) -> OrderIntent {
     }
 }
 
-pub fn close_intent(short_symbol: &str, long_symbol: &str, contracts: f64, debit: f64) -> OrderIntent {
+pub fn close_intent(
+    short_symbol: &str,
+    long_symbol: &str,
+    contracts: f64,
+    debit: f64,
+) -> OrderIntent {
     OrderIntent::Spread {
         strategy: SpreadKind::Vertical,
         legs: vec![
@@ -348,14 +364,30 @@ impl Default for VerticalYaml {
     }
 }
 
-fn dte_min() -> i64 { 32 }
-fn dte_max() -> i64 { 45 }
-fn min_credit() -> f64 { 0.30 }
-fn max_width() -> f64 { 5.0 }
-fn delta_min() -> f64 { 0.10 }
-fn delta_max() -> f64 { 0.16 }
-fn credit_width() -> f64 { 12.5 }
-fn one() -> f64 { 1.0 }
+fn dte_min() -> i64 {
+    32
+}
+fn dte_max() -> i64 {
+    45
+}
+fn min_credit() -> f64 {
+    0.30
+}
+fn max_width() -> f64 {
+    5.0
+}
+fn delta_min() -> f64 {
+    0.10
+}
+fn delta_max() -> f64 {
+    0.16
+}
+fn credit_width() -> f64 {
+    12.5
+}
+fn one() -> f64 {
+    1.0
+}
 
 #[derive(Debug, Deserialize)]
 struct ExitYaml {
@@ -383,9 +415,15 @@ impl Default for ExitYaml {
     }
 }
 
-fn profit() -> f64 { 50.0 }
-fn stop() -> f64 { 250.0 }
-fn dte_close() -> i64 { 21 }
+fn profit() -> f64 {
+    50.0
+}
+fn stop() -> f64 {
+    250.0
+}
+fn dte_close() -> i64 {
+    21
+}
 
 #[derive(Debug, Deserialize)]
 struct ThesisYaml {
@@ -404,7 +442,9 @@ impl Default for ThesisYaml {
     }
 }
 
-fn otm() -> f64 { 3.0 }
+fn otm() -> f64 {
+    3.0
+}
 
 #[derive(Debug, Deserialize)]
 struct GivebackYaml {
@@ -423,8 +463,12 @@ impl Default for GivebackYaml {
     }
 }
 
-fn peak() -> f64 { 40.0 }
-fn give() -> f64 { 10.0 }
+fn peak() -> f64 {
+    40.0
+}
+fn give() -> f64 {
+    10.0
+}
 
 #[derive(Debug, Deserialize)]
 struct RollYaml {
@@ -446,7 +490,9 @@ impl Default for RollYaml {
     }
 }
 
-fn roll_debit() -> f64 { 25.0 }
+fn roll_debit() -> f64 {
+    25.0
+}
 
 #[derive(Debug, Default, Deserialize)]
 struct ScheduleYaml {
@@ -454,7 +500,9 @@ struct ScheduleYaml {
     market_hours_only: bool,
 }
 
-fn hours() -> bool { true }
+fn hours() -> bool {
+    true
+}
 
 impl RulesFile {
     fn vertical(&self) -> VerticalRules {
@@ -491,7 +539,11 @@ impl RulesFile {
             if !row.enabled {
                 continue;
             }
-            let id = row.id.clone().filter(|id| !id.is_empty()).unwrap_or_else(|| row.hash.clone());
+            let id = row
+                .id
+                .clone()
+                .filter(|id| !id.is_empty())
+                .unwrap_or_else(|| row.hash.clone());
             if id.is_empty() || id.starts_with('<') {
                 continue;
             }
@@ -538,7 +590,11 @@ pub(crate) fn paper_setup(path: &str) -> Result<PaperSetup> {
     })
 }
 
-pub async fn tick(registry: &BrokerRegistry, rules_path: &str, flags: &TradingFlags) -> Result<Value> {
+pub async fn tick(
+    registry: &BrokerRegistry,
+    rules_path: &str,
+    flags: &TradingFlags,
+) -> Result<Value> {
     let rules = load_rules(rules_path)?;
     let vertical = rules.vertical();
     let exits = rules.exits();
@@ -577,7 +633,8 @@ pub async fn tick(registry: &BrokerRegistry, rules_path: &str, flags: &TradingFl
                 "action": format!("{action:?}"),
             }));
         }
-        let allow_entry = !rules.entry_policy.require_llm_proceed || flags.dry_run || flags.simulate;
+        let allow_entry =
+            !rules.entry_policy.require_llm_proceed || flags.dry_run || flags.simulate;
         if !allow_entry {
             continue;
         }
@@ -590,7 +647,14 @@ pub async fn tick(registry: &BrokerRegistry, rules_path: &str, flags: &TradingFl
             if let Some(min_credit) = min_credit {
                 rules_for_symbol.min_credit = rules_for_symbol.min_credit.max(min_credit);
             }
-            let choice = pick_from_market(handle.data.as_ref(), &account, &symbol, &rules_for_symbol, today).await?;
+            let choice = pick_from_market(
+                handle.data.as_ref(),
+                &account,
+                &symbol,
+                &rules_for_symbol,
+                today,
+            )
+            .await?;
             let Some(mut choice) = choice else {
                 decisions.push(json!({"account": account.address(), "symbol": symbol, "action": "no_candidate"}));
                 continue;
@@ -615,16 +679,23 @@ pub async fn tick(registry: &BrokerRegistry, rules_path: &str, flags: &TradingFl
                 continue;
             }
             require_trading_approval(flags, "options tick")?;
-            if let Some(reason) = legacy_account_busy(Path::new(rules_path).parent().unwrap_or(Path::new("rules")), &account.id)? {
+            if let Some(reason) = legacy_account_busy(
+                Path::new(rules_path).parent().unwrap_or(Path::new("rules")),
+                &account.id,
+            )? {
                 anyhow::bail!(reason);
             }
             let _lock = AccountLock::acquire(&state_dir()?.join("locks"), &account.address())?;
             let preflight = handle.trading.preflight(&account, &intent).await?;
             if !preflight.accepted {
-                decisions.push(json!({"action": "preflight_rejected", "message": preflight.message}));
+                decisions
+                    .push(json!({"action": "preflight_rejected", "message": preflight.message}));
                 continue;
             }
-            let placed = handle.trading.place(&account, &intent, &uuid::Uuid::new_v4().to_string()).await?;
+            let placed = handle
+                .trading
+                .place(&account, &intent, &uuid::Uuid::new_v4().to_string())
+                .await?;
             decisions.push(json!({"action": "opened", "order_id": placed.order_id}));
         }
     }
@@ -656,7 +727,11 @@ pub(crate) async fn pick_from_market(
     Ok(None)
 }
 
-pub async fn flatten(registry: &BrokerRegistry, rules_path: &str, flags: &TradingFlags) -> Result<Value> {
+pub async fn flatten(
+    registry: &BrokerRegistry,
+    rules_path: &str,
+    flags: &TradingFlags,
+) -> Result<Value> {
     let rules = load_rules(rules_path)?;
     let safety = SafetyGate::load()?;
     let mut closed = Vec::new();
@@ -668,12 +743,23 @@ pub async fn flatten(registry: &BrokerRegistry, rules_path: &str, flags: &Tradin
             if strategy.legs.len() < 2 {
                 continue;
             }
-            let short = strategy.legs.iter().find(|leg| leg.side == broker_core::Side::Sell);
-            let long = strategy.legs.iter().find(|leg| leg.side == broker_core::Side::Buy);
+            let short = strategy
+                .legs
+                .iter()
+                .find(|leg| leg.side == broker_core::Side::Sell);
+            let long = strategy
+                .legs
+                .iter()
+                .find(|leg| leg.side == broker_core::Side::Buy);
             let (Some(short), Some(long)) = (short, long) else {
                 continue;
             };
-            let intent = close_intent(&short.symbol, &long.symbol, strategy.quantity.max(1.0), 0.05);
+            let intent = close_intent(
+                &short.symbol,
+                &long.symbol,
+                strategy.quantity.max(1.0),
+                0.05,
+            );
             safety.check(&account, &intent, equity)?;
             if flags.dry_run || flags.simulate {
                 closed.push(json!({"account": account.address(), "strategy": strategy.id, "status": "dry_run"}));
@@ -681,7 +767,10 @@ pub async fn flatten(registry: &BrokerRegistry, rules_path: &str, flags: &Tradin
             }
             require_trading_approval(flags, "options flatten")?;
             let _lock = AccountLock::acquire(&state_dir()?.join("locks"), &account.address())?;
-            let placed = handle.trading.place(&account, &intent, &uuid::Uuid::new_v4().to_string()).await?;
+            let placed = handle
+                .trading
+                .place(&account, &intent, &uuid::Uuid::new_v4().to_string())
+                .await?;
             closed.push(json!({"account": account.address(), "order_id": placed.order_id}));
         }
     }

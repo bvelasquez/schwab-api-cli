@@ -2,8 +2,8 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use broker_core::{
-    parse_account_address, AccountRef, BrokerKind, DataSource, EquitySize, ExitBracket, OrderIntent,
-    Session, Side, TimeInForce,
+    parse_account_address, AccountRef, BrokerKind, DataSource, EquitySize, ExitBracket,
+    OrderIntent, Session, Side, TimeInForce,
 };
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
@@ -22,7 +22,11 @@ use agent_trader::{
 };
 
 #[derive(Parser)]
-#[command(name = "agent-trader-swing", version, about = "Equity swing book on Schwab or Public")]
+#[command(
+    name = "agent-trader-swing",
+    version,
+    about = "Equity swing book on Schwab or Public"
+)]
 struct Cli {
     #[arg(long, global = true)]
     yes: bool,
@@ -56,6 +60,14 @@ enum Command {
         once: bool,
         #[arg(long, default_value_t = 120)]
         interval_seconds: u64,
+    },
+    /// The equity swing agent. Same loop and state files as `schwab-trader agent run`.
+    /// Paper units pass `--simulate` and never `--trust` or `--yes`.
+    Book {
+        #[arg(long)]
+        rules: String,
+        #[arg(long)]
+        once: bool,
     },
     /// Run cron workflows until stopped. `--dir` paper-runs every workflow file and records the dashboard book.
     Run {
@@ -98,6 +110,7 @@ enum WorkflowCmd {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    schwab_cli::tls::install_crypto_provider();
     load_dotenv();
     let cli = Cli::parse();
     let flags = TradingFlags {
@@ -129,6 +142,9 @@ async fn main() -> Result<()> {
                 paper::run_public_paper(&rules, once, interval_seconds).await?;
             }
         }
+        Command::Book { rules, once } => {
+            run_swing_book(Path::new(&rules), once, &flags).await?;
+        }
         Command::Run {
             rules,
             dir,
@@ -147,10 +163,16 @@ async fn main() -> Result<()> {
         }
         Command::Workflow { command } => match command {
             WorkflowCmd::Schema { .. } => {
-                println!("{}", serde_json::to_string_pretty(&instructions::workflow_schema())?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&instructions::workflow_schema())?
+                );
             }
             WorkflowCmd::Prompt { .. } => {
-                println!("{}", serde_json::to_string_pretty(&instructions::workflow_prompt())?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&instructions::workflow_prompt())?
+                );
             }
             WorkflowCmd::Validate { rules } => {
                 let report = workflow::validate_report(Path::new(&rules))?;
@@ -309,24 +331,30 @@ async fn tick(path: &str, flags: &TradingFlags, shadow: bool) -> Result<Value> {
             }
         }));
         for position in &held {
-            let quotes = handle.data.quotes(&account, &[position.symbol.clone()]).await?;
+            let quotes = handle
+                .data
+                .quotes(&account, &[position.symbol.clone()])
+                .await?;
             let last = quotes.first().and_then(|quote| quote.last);
             let average = position.average_price.unwrap_or(0.0);
             if let (Some(last), true) = (last, average > 0.0) {
                 let drop_pct = (average - last) / average * 100.0;
                 if drop_pct >= rules.exits.invalidation_pct {
                     let intent = sell_intent(&position.symbol, position.quantity, last);
-                    rows.push(decide(
-                        &account,
-                        &handle,
-                        &safety,
-                        &intent,
-                        portfolio.balances.equity,
-                        flags,
-                        shadow,
-                        path,
-                        "thesis_exit",
-                    ).await?);
+                    rows.push(
+                        decide(
+                            &account,
+                            &handle,
+                            &safety,
+                            &intent,
+                            portfolio.balances.equity,
+                            flags,
+                            shadow,
+                            path,
+                            "thesis_exit",
+                        )
+                        .await?,
+                    );
                 }
             }
         }
@@ -440,7 +468,10 @@ async fn decide(
     if let Some(reason) = legacy_account_busy(rules_dir, &account.id)? {
         anyhow::bail!(reason);
     }
-    let _lock = AccountLock::acquire(&agent_trader::state_dir()?.join("locks"), &account.address())?;
+    let _lock = AccountLock::acquire(
+        &agent_trader::state_dir()?.join("locks"),
+        &account.address(),
+    )?;
     let preflight = handle.trading.preflight(account, intent).await?;
     if !preflight.accepted {
         return Ok(json!({"action": action, "status": "rejected", "message": preflight.message}));
@@ -488,6 +519,27 @@ fn accounts(rules: &SwingRules) -> Result<Vec<AccountRef>> {
         out.push(account);
     }
     Ok(out)
+}
+
+async fn run_swing_book(rules: &Path, once: bool, flags: &TradingFlags) -> Result<()> {
+    let safety = schwab_cli::safety_config::SafetyConfig::load()?;
+    let runtime = schwab_trader::config::TraderRuntime {
+        output: schwab_cli::output::OutputFormat::Pretty,
+        yes: flags.yes,
+        dry_run: flags.dry_run,
+        simulate: flags.simulate,
+        trust: flags.trust,
+        suppress_tick_output: false,
+        no_audio: false,
+        safety: schwab_cli::safety::SafetyContext::new(safety),
+        sink: schwab_cli::output::OutputSink::stdout(),
+    };
+    schwab_trader::agent::run_agent_loop(
+        &runtime,
+        rules,
+        schwab_trader::agent::runner::AgentRunOptions { once, health: None },
+    )
+    .await
 }
 
 pub(crate) fn symbols_in(value: &Value) -> Vec<String> {

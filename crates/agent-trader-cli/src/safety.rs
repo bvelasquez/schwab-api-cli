@@ -100,11 +100,16 @@ impl SafetyGate {
             if let Some(flag) = limits.get("allow_complex_orders").and_then(|v| v.as_bool()) {
                 gate.allow_complex_orders = flag;
             }
-            if let Some(pct) = limits.get("max_trade_pct_of_equity").and_then(|v| v.as_f64()) {
+            if let Some(pct) = limits
+                .get("max_trade_pct_of_equity")
+                .and_then(|v| v.as_f64())
+            {
                 gate.max_trade_pct_of_equity = pct;
             }
-            gate.allowed_symbols = string_list(limits.get("allowed_symbols")).unwrap_or(gate.allowed_symbols);
-            gate.blocked_symbols = string_list(limits.get("blocked_symbols")).unwrap_or(gate.blocked_symbols);
+            gate.allowed_symbols =
+                string_list(limits.get("allowed_symbols")).unwrap_or(gate.allowed_symbols);
+            gate.blocked_symbols =
+                string_list(limits.get("blocked_symbols")).unwrap_or(gate.blocked_symbols);
         }
         gate.normalize();
         Ok(gate)
@@ -140,26 +145,42 @@ impl SafetyGate {
         }
         let qty = intent.max_quantity();
         if qty > limits.max_shares {
-            bail!("quantity {qty} exceeds max_shares_per_order {}", limits.max_shares);
+            bail!(
+                "quantity {qty} exceeds max_shares_per_order {}",
+                limits.max_shares
+            );
         }
         let notional = intent.estimated_notional();
         if notional > limits.max_value && notional > 0.0 {
-            bail!("notional {notional:.2} exceeds max_trade_value_usd {}", limits.max_value);
+            bail!(
+                "notional {notional:.2} exceeds max_trade_value_usd {}",
+                limits.max_value
+            );
         }
         if self.max_trade_pct_of_equity > 0.0 && equity > 0.0 && notional > 0.0 {
             let cap = equity * self.max_trade_pct_of_equity / 100.0;
             if notional > cap {
-                bail!("notional {notional:.2} exceeds {cap:.2} ({:.1}% of equity)", self.max_trade_pct_of_equity);
+                bail!(
+                    "notional {notional:.2} exceeds {cap:.2} ({:.1}% of equity)",
+                    self.max_trade_pct_of_equity
+                );
             }
         }
         for symbol in intent.symbols() {
             let symbol = symbol.trim().to_uppercase();
             let root = symbol.split_whitespace().next().unwrap_or(&symbol);
-            if limits.blocked.iter().any(|item| item == root || item == &symbol) {
+            if limits
+                .blocked
+                .iter()
+                .any(|item| item == root || item == &symbol)
+            {
                 bail!("symbol {root} is blocked");
             }
             if !limits.allowed.is_empty()
-                && !limits.allowed.iter().any(|item| item == root || item == &symbol)
+                && !limits
+                    .allowed
+                    .iter()
+                    .any(|item| item == root || item == &symbol)
             {
                 bail!("symbol {root} is not in allowed_symbols");
             }
@@ -173,10 +194,22 @@ impl SafetyGate {
         let mut allowed = self.allowed_symbols.clone();
         let mut blocked = self.blocked_symbols.clone();
         if let Some(over) = self.brokers.get(account.broker.as_str()) {
-            apply(&mut max_value, &mut max_shares, &mut allowed, &mut blocked, over);
+            apply(
+                &mut max_value,
+                &mut max_shares,
+                &mut allowed,
+                &mut blocked,
+                over,
+            );
         }
         if let Some(over) = self.accounts.get(&account.address()) {
-            apply(&mut max_value, &mut max_shares, &mut allowed, &mut blocked, over);
+            apply(
+                &mut max_value,
+                &mut max_shares,
+                &mut allowed,
+                &mut blocked,
+                over,
+            );
         }
         Resolved {
             max_value,

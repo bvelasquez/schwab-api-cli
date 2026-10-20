@@ -1,0 +1,1383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paper books</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='2' fill='%2312140f'/%3E%3Cpath d='M3 11h2V8H3zm4 0h2V5H7zm4 0h2V3h-2z' fill='%23e2b15a'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #12140f;
+    --card: #1b1e16;
+    --line: #313628;
+    --text: #e7e4d8;
+    --muted: #9a9586;
+    --amber: #e2b15a;
+    --up: #8fceab;
+    --down: #e08b7a;
+    --stale: #e2b15a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.45 ui-sans-serif, system-ui, sans-serif;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: baseline;
+    padding: 18px 22px 8px;
+  }
+  h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: 0.01em; }
+  h1 span { color: var(--amber); font-weight: 500; }
+  .meta { color: var(--muted); font-size: 12px; }
+  main { padding: 8px 22px 40px; display: grid; gap: 16px; }
+  .book {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px 16px 16px;
+  }
+  .book.agent-trader { border-color: #3d8b7a; box-shadow: inset 0 0 0 1px #3d8b7a; }
+  .badge.stack { color: #9ecbff; border-color: #3d5a80; }
+  .badge.public { color: #8fceab; border-color: #3d8b7a; }
+  .book.head-row, .row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+  .title { font-size: 16px; font-weight: 600; }
+  .badge {
+    display: inline-block;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 1px 8px;
+    color: var(--amber);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .badge.stale { color: var(--stale); border-color: var(--stale); }
+  .badge.suspect, td.suspect { color: #e08b7a; border-color: #e08b7a; }
+  .badge.role { text-transform: none; letter-spacing: 0.02em; }
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px;
+    margin: 12px 0;
+  }
+  .metric { background: #14160f; border-radius: 8px; padding: 8px 10px; }
+  .metric .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .metric .v { font-variant-numeric: tabular-nums; font-size: 16px; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 14px 6px 0; border-bottom: 1px solid var(--line); vertical-align: top; white-space: nowrap; }
+  td.wrap, th.wrap { white-space: normal; min-width: 240px; }
+  th { color: var(--muted); font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; }
+  td.num, th.num { text-align: right; }
+  .up { color: var(--up); }
+  .down { color: var(--down); }
+  h2 { font-size: 13px; margin: 16px 0 6px; color: var(--muted); font-weight: 600; }
+  .halt { color: var(--down); margin: 8px 0 0; }
+  .empty { color: var(--muted); }
+  .journal { font-size: 12px; }
+  .err { color: var(--down); }
+  .lab h2 { color: var(--text); font-size: 15px; margin: 14px 0 8px; }
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .chart-card { background: #14160f; border-radius: 8px; padding: 10px 12px 8px; }
+  .chart-card .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .chart-card .note { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
+  svg.chart { width: 100%; height: auto; display: block; }
+  .line-plot { position: relative; }
+  svg.line-chart { width: 100%; height: 260px; display: block; }
+  svg.line-chart line, svg.line-chart path { vector-effect: non-scaling-stroke; }
+  .line-dot {
+    position: absolute; width: 8px; height: 8px; border-radius: 50%;
+    transform: translate(-50%, -50%); pointer-events: none;
+  }
+  .hbar { display: grid; grid-template-columns: 210px 1fr 88px; gap: 10px; align-items: center; margin: 5px 0; }
+  .hbar-name { color: #c4bfb0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hbar-track { position: relative; height: 18px; background: #2a2e22; border-radius: 5px; }
+  .hbar-fill { position: absolute; top: 3px; height: 12px; border-radius: 3px; }
+  .hbar-fill.up { background: var(--up); }
+  .hbar-fill.down { background: var(--down); }
+  .hbar-val { text-align: right; font-variant-numeric: tabular-nums; }
+  nav.tabs { display: flex; gap: 8px; padding: 4px 22px 0; }
+  button.tab {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 6px 14px;
+    font: inherit;
+    cursor: pointer;
+  }
+  button.tab.on { color: var(--amber); border-color: var(--amber); }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 4px; font-size: 12px; color: var(--muted); }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
+  .pos-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); gap: 12px; }
+  .verdict { font-weight: 600; font-size: 16px; margin: 6px 0 2px; }
+  .watch { color: var(--amber); }
+  .pos .say { margin: 2px 0 6px; }
+  .pos .chart-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin: 8px 0 2px; }
+  svg.mini { width: 100%; height: auto; display: block; }
+  .pos {
+    background: #14160f;
+    border-radius: 8px;
+    padding: 10px 12px 12px;
+  }
+  .pos .who { font-weight: 600; }
+  .pos .pnl { font-variant-numeric: tabular-nums; font-size: 18px; margin: 4px 0; }
+  .rail { position: relative; height: 14px; margin: 8px 6px 0; background: #3a3f30; border-radius: 99px; }
+  .rail .mark {
+    position: absolute; top: 1px; width: 12px; height: 12px; border-radius: 50%;
+    transform: translateX(-50%); border: 2px solid #12140f;
+  }
+  .rail .tick {
+    position: absolute; top: -3px; width: 2px; height: 20px; background: var(--amber); transform: translateX(-50%);
+  }
+  .rail-caps { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin: 6px 0 2px; }
+  .learnings { margin: 8px 0 0; padding-left: 18px; }
+  .learnings li { margin: 4px 0; }
+  .gates { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  @media (max-width: 800px) { .charts { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Paper books <span>read only</span></h1>
+  <div class="meta" id="updated">loading…</div>
+</header>
+<nav class="tabs" id="tabs">
+  <button type="button" class="tab on" data-tab="options">Options</button>
+  <button type="button" class="tab" data-tab="swing">Swing</button>
+  <button type="button" class="tab" data-tab="workflows">Workflows</button>
+</nav>
+<main id="books"></main>
+<script>
+const books = document.getElementById("books");
+const updated = document.getElementById("updated");
+
+function usd(n) {
+  if (n == null || Number.isNaN(n)) return "—";
+  const sign = n < 0 ? "-" : "";
+  return sign + "$" + Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+function usd2(n) {
+  if (n == null || Number.isNaN(n)) return "—";
+  const sign = n < 0 ? "-" : "";
+  return sign + "$" + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function pct(n) {
+  if (n == null || Number.isNaN(n)) return "—";
+  return (n >= 0 ? "+" : "") + n.toFixed(1) + "%";
+}
+function pct2(n) {
+  if (n == null || Number.isNaN(n)) return "—";
+  return (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
+}
+function cls(n) { return n > 0 ? "up" : n < 0 ? "down" : ""; }
+function ago(iso) {
+  if (!iso) return "no tick yet";
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 90) return Math.round(s) + "s ago";
+  if (s < 3600) return Math.round(s / 60) + "m ago";
+  return Math.round(s / 3600) + "h ago";
+}
+function stale(iso) {
+  if (!iso) return true;
+  // Arms tick every 300s plus up to 90s of jitter, so 3 minutes flags a healthy book.
+  // 10 minutes covers one full cycle and still marks a book that missed its next tick.
+  return (Date.now() - new Date(iso).getTime()) > 600000;
+}
+function el(tag, attrs, text) {
+  const node = document.createElement(tag);
+  if (attrs) {
+    if (attrs.className) node.className = attrs.className;
+  }
+  if (text != null) node.textContent = text;
+  return node;
+}
+function metric(k, v, klass) {
+  const box = el("div", { className: "metric" });
+  box.appendChild(el("div", { className: "k" }, k));
+  box.appendChild(el("div", { className: "v " + (klass || "") }, v));
+  return box;
+}
+function table(headers, rows) {
+  const t = document.createElement("table");
+  const thead = document.createElement("thead");
+  const hr = document.createElement("tr");
+  headers.forEach((h) => {
+    const th = el("th", { className: [h.num ? "num" : "", h.wrap ? "wrap" : ""].filter(Boolean).join(" ") }, h.label);
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr);
+  t.appendChild(thead);
+  const tb = document.createElement("tbody");
+  if (!rows.length) {
+    const tr = document.createElement("tr");
+    const td = el("td", { className: "empty" }, "none");
+    td.colSpan = headers.length;
+    tr.appendChild(td);
+    tb.appendChild(tr);
+  }
+  rows.forEach((cells) => {
+    const tr = document.createElement("tr");
+    cells.forEach((c, i) => {
+      const td = el("td", { className: [headers[i].num ? "num" : "", headers[i].wrap ? "wrap" : "", c.cls || ""].filter(Boolean).join(" ") }, c.text);
+      tr.appendChild(td);
+    });
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);
+  return t;
+}
+function cell(text, klass) { return { text: text == null || text === "" ? "—" : String(text), cls: klass || "" }; }
+function bookRealized(book) {
+  return book.clean_realized_pnl_usd != null ? book.clean_realized_pnl_usd : (book.realized_pnl_usd || 0);
+}
+function roleLabel(role) {
+  if (role === "control") return "CONTROL";
+  if (role === "entry_clone") return "CLONE OF O0 — same entries";
+  if (role === "variant") return "DIFFERENT TEST";
+  return null;
+}
+function roleBadge(role) {
+  const label = roleLabel(role);
+  if (!label) return null;
+  return el("span", { className: "badge role" }, label);
+}
+function spreadKey(p) {
+  return [p.underlying, p.expiry, p.spread_type, p.short_strike, p.long_strike].join("|");
+}
+
+const COLORS = ["#e2b15a", "#8fceab", "#8eb4e8", "#e08b7a", "#c7b4f5", "#d4c48a"];
+
+function num(n, digits) {
+  if (n == null || Number.isNaN(Number(n))) return "—";
+  return Number(n).toFixed(digits);
+}
+function structure(p) {
+  if (p.short_strike == null || p.long_strike == null) return p.strategy || "—";
+  const kind = String(p.spread_type || "").replaceAll("_", " ");
+  return p.short_strike + "/" + p.long_strike + (kind ? " " + kind : "");
+}
+function shortName(book) {
+  if (book.stack === "agent-trader") {
+    return "agent-trader · " + (book.broker === "public" ? "Public" : (book.broker_label || "broker"));
+  }
+  return (book.name || "").replace("options-", "");
+}
+function sleeveReturn(book) {
+  const start = book.starting_cash_usd || book.sleeve_cap_usd;
+  if (!start) return null;
+  return ((book.realized_pnl_usd || 0) + (book.unrealized_pnl_usd || 0)) / start * 100;
+}
+function dte(expiry) {
+  if (!expiry) return null;
+  const day = new Date(String(expiry).slice(0, 10) + "T00:00:00");
+  if (Number.isNaN(day.getTime())) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((day - today) / 86400000);
+}
+function heldDays(iso) {
+  if (!iso) return null;
+  const days = (Date.now() - new Date(iso).getTime()) / 86400000;
+  return Number.isNaN(days) ? null : Math.max(0, Math.floor(days));
+}
+function railModel(p, exp) {
+  const credit = p.entry_credit;
+  const debit = p.debit_to_close;
+  if (credit == null || debit == null || !(credit > 0)) return null;
+  const targetPct = (exp && exp.profit_target_pct) || 60;
+  const stopPct = (exp && exp.stop_loss_pct) || 200;
+  const target = credit * (1 - targetPct / 100);
+  const stop = credit * (stopPct / 100);
+  const span = stop - target;
+  if (!(span > 0)) return null;
+  const at = (px) => Math.max(0, Math.min(1, (stop - px) / span));
+  let progress;
+  if (debit > credit) {
+    const ratio = Math.min(1, (debit - credit) / Math.max(stop - credit, 0.0001));
+    progress = debit >= stop ? "at or through the stop" : Math.round(ratio * 100) + "% of the way from entry to the stop";
+  } else {
+    const ratio = Math.min(1, (credit - debit) / Math.max(credit - target, 0.0001));
+    progress = debit <= target ? "at or through the profit target" : Math.round(ratio * 100) + "% of the way from entry to the target";
+  }
+  return { credit, debit, target, stop, mark: at(debit), entry: at(credit), winning: debit <= credit, progress };
+}
+function experimentLine(exp) {
+  if (!exp) return "";
+  const bits = [];
+  if (exp.short_delta_min != null) bits.push("delta " + num(exp.short_delta_min, 2) + "–" + num(exp.short_delta_max, 2));
+  if (exp.min_credit != null) bits.push("credit ≥ " + num(exp.min_credit, 2));
+  if (exp.min_credit_to_width_pct != null) bits.push(num(exp.min_credit_to_width_pct, 0) + "% of width");
+  if (exp.widths && exp.widths.length) bits.push("width " + exp.widths.join("/"));
+  else if (exp.max_width != null) bits.push("width ≤ " + num(exp.max_width, 0));
+  if (exp.profit_target_pct != null) bits.push("target " + num(exp.profit_target_pct, 0) + "%");
+  if (exp.stop_loss_pct != null) bits.push("stop " + num(exp.stop_loss_pct / 100, 1) + "×");
+  if (exp.dte_min != null) bits.push("enter " + num(exp.dte_min, 0) + "–" + num(exp.dte_max, 0) + " DTE");
+  if (exp.dte_close != null) bits.push("close " + num(exp.dte_close, 0) + " DTE");
+  if (exp.max_open_positions != null) bits.push("max open " + num(exp.max_open_positions, 0));
+  return bits.join(" · ");
+}
+function gateName(name) {
+  return String(name || "").replaceAll("_", " ");
+}
+function funnelLine(book) {
+  const f = book.entry_funnel;
+  if (!f || !f.candidates_seen) return "";
+  const rejects = Object.entries(f.rejects || {}).sort((a, b) => b[1] - a[1]);
+  const top = rejects.length ? gateName(rejects[0][0]) + " " + rejects[0][1] : "none";
+  return "Today's search: " + f.candidates_seen + " candidates, " + (f.admitted || 0) + " admitted. Top reject: " + top + ".";
+}
+function learnings(options) {
+  const notes = [];
+  const positions = options.flatMap((b) => (b.positions || []).map((p) => Object.assign({ book: shortName(b), exp: b.experiment }, p)));
+  const closedBooks = options.filter((b) => b.closed_count > 0);
+  const openBooks = options.filter((b) => !(b.closed_count > 0));
+  notes.push(positions.length + " open contracts across " + options.length + " options books.");
+  if (positions.length) {
+    const under = positions.filter((p) => p.unrealized_usd < 0).length;
+    notes.push(under + " of " + positions.length + " would cost more to close today than the credit collected. That is usual while time value remains. The result is the close.");
+    const names = [...new Set(positions.map((p) => p.underlying).filter(Boolean))];
+    if (names.length === 1) notes.push("Every open fill is " + names[0] + ".");
+    const ranked = positions.map((p) => ({ p, rail: railModel(p, p.exp) })).filter((row) => row.rail);
+    const losing = ranked.filter((row) => !row.rail.winning).sort((a, b) => a.rail.mark - b.rail.mark);
+    const winning = ranked.filter((row) => row.rail.winning).sort((a, b) => b.rail.mark - a.rail.mark);
+    const where = (p) => p.book + " " + (p.underlying || "") + " " + structure(p) + (p.expiry ? " exp " + p.expiry : "");
+    if (losing[0]) notes.push(where(losing[0].p) + " is the closest open spread to its stop: " + losing[0].rail.progress + ".");
+    if (winning[0]) notes.push(where(winning[0].p) + " is the closest open spread to its target: " + winning[0].rail.progress + ".");
+  }
+  if (openBooks.length) {
+    notes.push(openBooks.map(shortName).join(", ") + (openBooks.length === 1 ? " has" : " have") + " no completed round trip, so win rate is not knowable yet.");
+  }
+  closedBooks.forEach((b) => {
+    notes.push(shortName(b) + " has closed " + b.closed_count + " trade" + (b.closed_count === 1 ? "" : "s") + " for " + usd2(b.realized_pnl_usd) + " realized, win rate " + b.win_rate_pct.toFixed(0) + "%.");
+  });
+  options.forEach((b) => {
+    const f = b.entry_funnel;
+    if (f && f.candidates_seen > 0 && !(f.admitted > 0)) {
+      const top = Object.entries(f.rejects || {}).sort((a, c) => c[1] - a[1])[0];
+      notes.push(shortName(b) + " looked at " + f.candidates_seen + " candidates today and took none. The first failing gate was " + (top ? gateName(top[0]) : "unrecorded") + ".");
+    }
+  });
+  const control = options.find((b) => String(b.name || "").includes("8709")) || options[0];
+  options.forEach((b) => {
+    if (!control || b === control || !b.experiment) return;
+    const bits = [];
+    const a = b.experiment, c = control.experiment || {};
+    const changed = (key, text) => { if (a[key] != null && a[key] !== c[key]) bits.push(text); };
+    changed("short_delta_min", "delta " + num(a.short_delta_min, 2) + "–" + num(a.short_delta_max, 2));
+    if (a.short_delta_max !== c.short_delta_max && a.short_delta_min === c.short_delta_min) {
+      bits.push("delta " + num(a.short_delta_min, 2) + "–" + num(a.short_delta_max, 2));
+    }
+    changed("min_credit", "credit floor " + num(a.min_credit, 2));
+    changed("min_credit_to_width_pct", num(a.min_credit_to_width_pct, 0) + "% of width");
+    if (!(a.widths && a.widths.length)) changed("max_width", "max width " + num(a.max_width, 0));
+    changed("profit_target_pct", "target " + num(a.profit_target_pct, 0) + "%");
+    changed("dte_close", "close at " + num(a.dte_close, 0) + " DTE");
+    changed("dte_min", "entry " + num(a.dte_min, 0) + "–" + num(a.dte_max, 0) + " DTE");
+    changed("max_open_positions", "max open " + num(a.max_open_positions, 0));
+    changed("max_trades_per_day", num(a.max_trades_per_day, 0) + "/day");
+    if (a.widths && a.widths.length && JSON.stringify(a.widths) !== JSON.stringify(c.widths || [])) {
+      bits.push("width " + a.widths.join("/"));
+    }
+    if (bits.length) notes.push(shortName(b) + " changes " + shortName(control) + " by " + [...new Set(bits)].join(", ") + ".");
+  });
+  return notes;
+}
+function svgEl(name, attrs) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+  Object.entries(attrs).forEach(([k, v]) => node.setAttribute(k, v));
+  return node;
+}
+function barChart(title, rows, note, leftPad) {
+  const card = el("div", { className: "chart-card" });
+  card.appendChild(el("div", { className: "k" }, title));
+  const w = 640, top = 12, bottom = 18, left = leftPad || 118, right = 78;
+  const h = Math.max(180, rows.length * 28 + top + bottom);
+  const max = Math.max(0.01, ...rows.map((r) => Math.abs(r.value || 0)));
+  const svg = svgEl("svg", { viewBox: "0 0 " + w + " " + h, class: "chart" });
+  const plotW = w - left - right;
+  // Counts are all positive, so the bars start at the labels and use the whole plot.
+  // A series that crosses zero keeps a center axis.
+  const diverging = rows.some((r) => (r.value || 0) < 0);
+  const origin = diverging ? left + plotW / 2 : left;
+  const span = diverging ? plotW / 2 - 4 : plotW - 8;
+  if (diverging) svg.appendChild(svgEl("line", { x1: origin, x2: origin, y1: top, y2: h - bottom, stroke: "#313628" }));
+  const gap = (h - top - bottom) / Math.max(rows.length, 1);
+  rows.forEach((r, i) => {
+    const y = top + i * gap + 4;
+    const bh = Math.max(8, gap - 10);
+    const mag = (Math.abs(r.value || 0) / max) * span;
+    const x = (r.value || 0) >= 0 ? origin : origin - mag;
+    svg.appendChild(svgEl("rect", {
+      x, y, width: Math.max(mag, 1), height: bh, rx: 3,
+      fill: r.color || ((r.value || 0) >= 0 ? "#8fceab" : "#e08b7a")
+    }));
+    const label = svgEl("text", { x: 4, y: y + bh * 0.72, fill: "#c4bfb0", "font-size": "14" });
+    label.textContent = r.label;
+    svg.appendChild(label);
+    const val = svgEl("text", {
+      x: (r.value || 0) >= 0 ? Math.min(w - 4, x + mag + 6) : Math.max(4, x - 6),
+      y: y + bh * 0.72, fill: "#e7e4d8",
+      "text-anchor": (r.value || 0) >= 0 ? "start" : "end",
+      "font-size": "13"
+    });
+    val.textContent = r.text;
+    svg.appendChild(val);
+  });
+  card.appendChild(svg);
+  if (note) card.appendChild(el("p", { className: "note" }, note));
+  return card;
+}
+function lineChart(title, series, note) {
+  const card = el("div", { className: "chart-card" });
+  card.appendChild(el("div", { className: "k" }, title));
+  const usable = series.filter((s) => (s.points || []).length);
+  if (!usable.length) {
+    card.appendChild(el("p", { className: "empty" }, "No completed closes yet. The open marks above are the live result."));
+    return card;
+  }
+  const w = 640, h = 220, left = 52, right = 12, top = 12, bottom = 28;
+  const pts = usable.flatMap((s) => s.points);
+  const xs = pts.map((p) => p.x);
+  const ys = pts.map((p) => p.y).concat([0]);
+  let minX = Math.min(...xs), maxX = Math.max(...xs);
+  if (maxX === minX) { minX -= 86400000; maxX += 86400000; }
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const ySpan = maxY - minY || 1;
+  const svg = svgEl("svg", {
+    viewBox: "0 0 " + w + " " + h,
+    class: "chart line-chart",
+    preserveAspectRatio: "none"
+  });
+  const X = (x) => left + ((x - minX) / (maxX - minX)) * (w - left - right);
+  const Y = (y) => top + (1 - (y - minY) / ySpan) * (h - top - bottom);
+  svg.appendChild(svgEl("line", { x1: left, x2: w - right, y1: Y(0), y2: Y(0), stroke: "#313628", "stroke-width": "1" }));
+  const plot = el("div", { className: "line-plot" });
+  plot.appendChild(svg);
+  usable.forEach((s) => {
+    const d = s.points.map((p, i) => (i ? "L" : "M") + X(p.x).toFixed(1) + " " + Y(p.y).toFixed(1)).join(" ");
+    svg.appendChild(svgEl("path", { d, fill: "none", stroke: s.color, "stroke-width": "2" }));
+    const last = s.points[s.points.length - 1];
+    const dot = el("span", { className: "line-dot" });
+    dot.style.left = (X(last.x) / w * 100) + "%";
+    dot.style.top = (Y(last.y) / h * 100) + "%";
+    dot.style.background = s.color;
+    plot.appendChild(dot);
+  });
+  card.appendChild(plot);
+  const legend = el("div", { className: "legend" });
+  usable.forEach((s) => {
+    const item = el("span");
+    const sw = el("span", { className: "swatch" });
+    sw.style.background = s.color;
+    item.appendChild(sw);
+    item.appendChild(document.createTextNode(s.label));
+    legend.appendChild(item);
+  });
+  card.appendChild(legend);
+  if (note) card.appendChild(el("p", { className: "note" }, note));
+  return card;
+}
+function spotFor(symbol) {
+  const book = latest && latest.underlyings;
+  if (!book || !symbol) return null;
+  const row = book[symbol];
+  return row && row.price ? row : null;
+}
+function positionHealth(p) {
+  const credit = p.entry_credit;
+  const debit = p.debit_to_close;
+  const width = p.width;
+  if (!(credit > 0) || debit == null || !(width > credit)) return null;
+  const contracts = p.contracts || 1;
+  const maxLoss = (width - credit) * 100 * contracts;
+  const used = Math.max(0, debit - credit) / (width - credit);
+  const kind = String(p.spread_type || "");
+  const put = kind.includes("put");
+  const call = kind.includes("call");
+  const be = put ? p.short_strike - credit : call ? p.short_strike + credit : null;
+  const spot = spotFor(p.underlying);
+  let cushion = null;
+  if (spot && p.short_strike != null && (put || call)) {
+    cushion = put ? (spot.price - p.short_strike) / spot.price : (p.short_strike - spot.price) / spot.price;
+  }
+  const days = dte(p.expiry);
+  let label, tone;
+  if ((cushion != null && cushion < 0) || used >= 0.5) {
+    label = "Under pressure";
+    tone = "down";
+  } else if (used >= 0.15 || (cushion != null && cushion < 0.015)) {
+    label = "Watch";
+    tone = "watch";
+  } else {
+    label = "On track";
+    tone = "up";
+  }
+  const giveback = (debit - credit) * 100 * contracts;
+  const bits = [];
+  if (giveback > 0) {
+    bits.push("Closing today would give back " + usd2(giveback) + ", " + Math.round(used * 100) + "% of the " + usd2(maxLoss) + " max loss.");
+  } else {
+    bits.push("The mark is " + usd2(-giveback) + " ahead of the credit.");
+  }
+  if (days != null) bits.push(days + " days left for the remaining time value to decay.");
+  if (spot && cushion != null) {
+    const side = cushion >= 0 ? (put ? "above" : "below") : "through";
+    bits.push(p.underlying + " " + spot.price.toFixed(2) + " (" + spot.as_of + ") is " + Math.abs(cushion * 100).toFixed(1) + "% " + side + " the " + p.short_strike + " short.");
+  }
+  if (be != null) bits.push("Break-even at expiration is " + be.toFixed(2) + ".");
+  return { label, tone, say: bits.join(" ") };
+}
+function bookHealth(book) {
+  const rows = (book.positions || []).map(positionHealth).filter(Boolean);
+  if (!rows.length) return { text: "—", tone: "" };
+  if (rows.every((h) => h.label === "On track")) return { text: "Yes", tone: "up" };
+  if (rows.some((h) => h.label === "Under pressure")) return { text: "No", tone: "down" };
+  return { text: "Watch", tone: "watch" };
+}
+function payoffChart(p) {
+  const credit = p.entry_credit;
+  const short = p.short_strike;
+  const long = p.long_strike;
+  const kind = String(p.spread_type || "");
+  const put = kind.includes("put");
+  const call = kind.includes("call");
+  if (credit == null || short == null || long == null || (!put && !call)) return null;
+  const contracts = p.contracts || 1;
+  const pnl = (s) => {
+    const intrinsic = put
+      ? Math.max(0, short - s) - Math.max(0, long - s)
+      : Math.max(0, s - short) - Math.max(0, s - long);
+    return (credit - intrinsic) * 100 * contracts;
+  };
+  const width = Math.abs(short - long) || 1;
+  const spot = spotFor(p.underlying);
+  let lo = Math.min(short, long) - width * 0.5;
+  let hi = Math.max(short, long) + width * 1.2;
+  if (spot) {
+    lo = Math.min(lo, spot.price - width);
+    hi = Math.max(hi, spot.price + width * 0.35);
+  }
+  const be = put ? short - credit : short + credit;
+  const samples = [];
+  for (let i = 0; i <= 80; i++) samples.push(lo + (hi - lo) * i / 80);
+  const values = samples.map(pnl);
+  const yLo = Math.min(0, ...values);
+  const yHi = Math.max(0, ...values);
+  const w = 360, h = 128, left = 8, right = 8, top = 16, bottom = 18;
+  const svg = svgEl("svg", { viewBox: "0 0 " + w + " " + h, class: "mini" });
+  const X = (s) => left + (s - lo) / (hi - lo) * (w - left - right);
+  const Y = (v) => top + (1 - (v - yLo) / ((yHi - yLo) || 1)) * (h - top - bottom);
+  const zero = Y(0);
+  svg.appendChild(svgEl("line", { x1: left, x2: w - right, y1: zero, y2: zero, stroke: "#6d6758" }));
+  let d = "";
+  samples.forEach((s, i) => { d += (i ? "L" : "M") + X(s).toFixed(1) + " " + Y(values[i]).toFixed(1) + " "; });
+  svg.appendChild(svgEl("path", { d, fill: "none", stroke: "#e2b15a", "stroke-width": "2" }));
+  const markX = (s, color, text, anchor) => {
+    const x = Math.max(left + 2, Math.min(w - right - 2, X(s)));
+    svg.appendChild(svgEl("line", { x1: x, x2: x, y1: top, y2: h - bottom, stroke: color, "stroke-dasharray": "3 3" }));
+    const t = svgEl("text", { x: x + (anchor === "end" ? -3 : 3), y: top + 9, fill: color, "font-size": "11", "text-anchor": anchor || "start" });
+    t.textContent = text;
+    svg.appendChild(t);
+  };
+  markX(be, "#9a9586", "break-even " + be.toFixed(0), "start");
+  if (spot) markX(spot.price, "#8fceab", (p.underlying || "spot") + " " + Math.round(spot.price), spot.price > (lo + hi) / 2 ? "end" : "start");
+  return svg;
+}
+function decayChart(p, exp) {
+  const credit = p.entry_credit;
+  const debit = p.debit_to_close;
+  const days = dte(p.expiry);
+  if (!(credit > 0) || debit == null || days == null || days <= 0) return null;
+  const targetPct = (exp && exp.profit_target_pct) || 60;
+  const stopPct = (exp && exp.stop_loss_pct) || 200;
+  const target = credit * (1 - targetPct / 100);
+  const stop = credit * (stopPct / 100);
+  const yMax = Math.max(debit, credit * 2.4) * 1.12;
+  const w = 360, h = 116, left = 8, right = 8, top = 14, bottom = 16;
+  const svg = svgEl("svg", { viewBox: "0 0 " + w + " " + h, class: "mini" });
+  const X = (day) => left + (day / days) * (w - left - right);
+  const Y = (v) => top + (1 - Math.max(0, v) / yMax) * (h - top - bottom);
+  const guide = (v, color, text) => {
+    if (v < 0 || v > yMax) return;
+    svg.appendChild(svgEl("line", { x1: left, x2: w - right, y1: Y(v), y2: Y(v), stroke: color, "stroke-dasharray": "4 3" }));
+    const t = svgEl("text", { x: left + 2, y: Math.max(10, Y(v) - 2), fill: color, "font-size": "11" });
+    t.textContent = text;
+    svg.appendChild(t);
+  };
+  guide(credit, "#9a9586", "entry " + credit.toFixed(2));
+  guide(target, "#8fceab", "target " + target.toFixed(2));
+  guide(stop, "#e08b7a", "stop " + stop.toFixed(2));
+  const path = "M" + X(0).toFixed(1) + " " + Y(debit).toFixed(1) + " L" + X(days).toFixed(1) + " " + Y(0).toFixed(1);
+  svg.appendChild(svgEl("path", { d: path, fill: "none", stroke: "#e2b15a", "stroke-width": "2", "stroke-dasharray": "5 4" }));
+  svg.appendChild(svgEl("circle", { cx: X(0), cy: Y(debit), r: 3.5, fill: "#e7e4d8" }));
+  const a = svgEl("text", { x: left, y: h - 3, fill: "#9a9586", "font-size": "11" });
+  a.textContent = "today";
+  svg.appendChild(a);
+  const b = svgEl("text", { x: w - right, y: h - 3, fill: "#9a9586", "font-size": "11", "text-anchor": "end" });
+  b.textContent = "expiration";
+  svg.appendChild(b);
+  return svg;
+}
+function positionCard(book, p, copies) {
+  const card = el("div", { className: "pos" });
+  const days = dte(p.expiry);
+  const held = heldDays(p.opened_at);
+  const who = el("div", { className: "who" });
+  who.appendChild(document.createTextNode(shortName(book) + " · " + (p.underlying || "—") + " " + structure(p)));
+  if (copies > 1) {
+    who.appendChild(document.createTextNode(" "));
+    who.appendChild(el("span", { className: "badge" }, "×" + copies));
+  }
+  card.appendChild(who);
+  const bits = [p.expiry, days != null ? days + "d" : "", held != null ? "held " + held + "d" : ""].filter(Boolean).join(" · ");
+  card.appendChild(el("div", { className: "meta" }, bits));
+  const health = positionHealth(p);
+  if (health) {
+    card.appendChild(el("div", { className: "verdict " + health.tone }, health.label));
+    card.appendChild(el("div", { className: "say" }, health.say));
+  }
+  const payoff = payoffChart(p);
+  if (payoff) {
+    card.appendChild(el("div", { className: "chart-label" }, "Profit at expiration"));
+    card.appendChild(payoff);
+  }
+  const decay = decayChart(p, book.experiment);
+  if (decay) {
+    card.appendChild(el("div", { className: "chart-label" }, "Debit if the short stays out of the money"));
+    card.appendChild(decay);
+    card.appendChild(el("div", { className: "meta" }, "The dashed line is that path, not a forecast. A move through the short strike leaves it."));
+  }
+  const pnl = el("div", { className: "meta" });
+  pnl.textContent = "Cost to close now " + usd2(p.unrealized_usd) + (p.unrealized_pct != null ? " (" + pct(p.unrealized_pct) + " of credit)" : "");
+  card.appendChild(pnl);
+  const model = railModel(p, book.experiment);
+  if (model) {
+    const rail = el("div", { className: "rail" });
+    const tick = el("div", { className: "tick" });
+    tick.style.left = (model.entry * 100) + "%";
+    rail.appendChild(tick);
+    const mark = el("div", { className: "mark" });
+    mark.style.left = (model.mark * 100) + "%";
+    mark.style.background = model.winning ? "#8fceab" : "#e08b7a";
+    rail.appendChild(mark);
+    card.appendChild(rail);
+    const caps = el("div", { className: "rail-caps" });
+    caps.appendChild(el("span", null, "stop " + model.stop.toFixed(2)));
+    caps.appendChild(el("span", null, "target " + model.target.toFixed(2)));
+    card.appendChild(caps);
+    card.appendChild(el("div", { className: "meta" }, "debit " + model.debit.toFixed(2) + " · entry " + model.credit.toFixed(2) + " · " + model.progress));
+  } else {
+    card.appendChild(el("div", { className: "meta" }, "waiting for a mark"));
+  }
+  const extra = [
+    p.entry_short_delta != null ? "delta " + p.entry_short_delta.toFixed(2) : "",
+    p.entry_pop_pct != null ? "POP " + p.entry_pop_pct.toFixed(0) + "%" : "",
+    p.max_loss_usd != null ? "max loss " + usd2(p.max_loss_usd) : "",
+    p.last_good_streak > 2 ? "mark frozen " + p.last_good_streak + " ticks" : ""
+  ].filter(Boolean).join(" · ");
+  if (extra) card.appendChild(el("div", { className: "meta" }, extra));
+  return card;
+}
+function labFreshness(art) {
+  if (!art || !art.present) return "not generated yet";
+  const h = art.age_hours;
+  const age = h == null ? "age unknown" : (h < 1 ? Math.round(h * 60) + "m" : h.toFixed(1) + "h") + " old";
+  return art.stale ? "STALE, " + age : age;
+}
+function labGate(g) {
+  const v = String(g || "").toLowerCase();
+  return v === "pass" ? "up" : v === "fail" ? "down" : "";
+}
+function appendEvidence(card, lab, options) {
+  if (!lab) return;
+  card.appendChild(el("h2", null, "Evidence status"));
+  const sc = lab.scorecard;
+  const arms = sc && sc.present && sc.data ? sc.data.options_arms : null;
+  const m = el("div", { className: "metrics" });
+  if (arms) {
+    m.appendChild(metric("Entries, nominal", String(arms.nominal_entries)));
+    m.appendChild(metric("Distinct trades", String(arms.effective_entries), arms.effective_entries * 2 <= arms.nominal_entries ? "down" : ""));
+  }
+  m.appendChild(metric("Scorecard", labFreshness(sc)));
+  m.appendChild(metric("Benchmarks", labFreshness(lab.benchmarks)));
+  m.appendChild(metric("Slippage study", labFreshness(lab.slippage)));
+  m.appendChild(metric("Promotion gate", labFreshness(lab.promotion_gate)));
+  card.appendChild(m);
+  const alerts = sc && sc.present && sc.data && sc.data.drift_alerts ? sc.data.drift_alerts : [];
+  if (alerts.length) {
+    const ul = el("ul", { className: "learnings" });
+    alerts.forEach((a) => ul.appendChild(el("li", null, a)));
+    card.appendChild(ul);
+  }
+  if (arms && arms.effective_entries < arms.nominal_entries) {
+    card.appendChild(el("p", { className: "empty" }, "Arms that open the same spread on the same day are one bet. Judge by distinct trades, not by entries."));
+  }
+
+  const tested = options.filter((b) => b.hypothesis || b.falsifier);
+  if (tested.length) {
+    card.appendChild(el("h2", null, "Hypotheses"));
+    card.appendChild(table(
+      [{ label: "Book" }, { label: "Hypothesis", wrap: true }, { label: "Falsified if", wrap: true }],
+      tested.map((b) => [cell(shortName(b)), cell(b.hypothesis), cell(b.falsifier)])
+    ));
+  }
+
+  const bm = lab.benchmarks;
+  if (bm && bm.present && bm.data) {
+    card.appendChild(el("h2", null, "Returns and benchmarks"));
+    const agents = Object.entries(bm.data.agents || {}).filter(([, a]) => !a.error);
+    card.appendChild(table(
+      [{ label: "Agent" }, { label: "Closed", num: true }, { label: "Open", num: true }, { label: "Total", num: true },
+       { label: "Return on max risk", num: true }, { label: "Return on IRA", num: true },
+       { label: "Delta-equivalent", num: true }, { label: "Alpha", num: true }],
+      agents.map(([name, a]) => [
+        cell(name), cell(a.closed_trades), cell(a.open_positions),
+        cell(usd2(a.total_usd), cls(a.total_usd)),
+        cell(a.return_on_max_risk_pct == null ? "—" : pct2(a.return_on_max_risk_pct), cls(a.return_on_max_risk_pct)),
+        cell(a.return_on_ira_pct == null ? "—" : pct2(a.return_on_ira_pct), cls(a.return_on_ira_pct)),
+        cell(a.delta_equiv_pnl_usd == null ? "—" : usd2(a.delta_equiv_pnl_usd), cls(a.delta_equiv_pnl_usd)),
+        cell(a.beta_adjusted_alpha_usd == null ? "—" : usd2(a.beta_adjusted_alpha_usd), cls(a.beta_adjusted_alpha_usd))
+      ])
+    ));
+    const pw = Object.entries(bm.data.putwrite || {});
+    if (pw.length) {
+      card.appendChild(el("p", { className: "empty" }, "Cash-secured SPY put-write benchmark, filled at " + num((bm.data.manual_constants || {}).putwrite_fill_fraction, 2) + " of the half spread, collateral charged at " + num((bm.data.manual_constants || {}).tbill_pct, 1) + "% (manual setting)."));
+      card.appendChild(table(
+        [{ label: "Variant" }, { label: "Settled", num: true }, { label: "Total", num: true }, { label: "Return on collateral", num: true }, { label: "Excess over T-bill", num: true }],
+        pw.map(([name, w]) => [
+          cell(name + " (|delta| " + num(w.target_abs_delta, 2) + ")"), cell(w.cycles_settled),
+          cell(usd2(w.total_usd), cls(w.total_usd)),
+          cell(w.return_on_collateral_pct == null ? "—" : pct2(w.return_on_collateral_pct), cls(w.return_on_collateral_pct)),
+          cell(w.excess_over_tbill_usd == null ? "—" : usd2(w.excess_over_tbill_usd), cls(w.excess_over_tbill_usd))
+        ])
+      ));
+    }
+    const und = Object.entries(bm.data.underlying || {});
+    if (und.length) {
+      card.appendChild(el("p", { className: "empty" }, "Underlying over the recorded window: " + und.map(([s, u]) => s + " " + pct2(u.return_pct)).join(", ") + ". Delta-equivalent is first order; alpha is what is left."));
+    }
+  }
+
+  const sl = lab.slippage;
+  if (sl && sl.present && sl.data) {
+    card.appendChild(el("h2", null, "Fill costs from recorded quotes"));
+    const rec = sl.data.recommended || {};
+    const sm = el("div", { className: "metrics" });
+    sm.appendChild(metric("Paper setting (8709)", sl.data.current_8709_fill_slippage_pct == null ? "—" : sl.data.current_8709_fill_slippage_pct + "%"));
+    sm.appendChild(metric("Measured entry cost", rec["entry_fill_slippage_pct_at_f0.5"] == null ? "—" : rec["entry_fill_slippage_pct_at_f0.5"] + "%"));
+    sm.appendChild(metric("Measured exit cost", rec["exit_fill_slippage_pct_at_f0.5"] == null ? "—" : rec["exit_fill_slippage_pct_at_f0.5"] + "%"));
+    sm.appendChild(metric("Verdict", rec.verdict || "—"));
+    card.appendChild(sm);
+    const rows = [];
+    Object.entries(sl.data.by_symbol_and_dte || {}).forEach(([sym, buckets]) => {
+      Object.entries(buckets).forEach(([bucket, e]) => {
+        const half = e["f0.5"], wide = e["f0.66"] || e["f0.5"];
+        if (!half) return;
+        rows.push([cell(sym), cell(bucket + " DTE"), cell(e.n),
+          cell(num(half.entry_cost_pct_of_credit.median, 1) + "%"),
+          cell(num(wide.entry_cost_pct_of_credit.median, 1) + "%"),
+          cell(usd2(wide.round_trip_usd_per_contract.median))]);
+      });
+    });
+    card.appendChild(table(
+      [{ label: "Symbol" }, { label: "Window" }, { label: "Spreads", num: true }, { label: "Entry cost, half spread", num: true }, { label: "Entry cost, 0.66 spread", num: true }, { label: "Round trip per contract", num: true }],
+      rows
+    ));
+    const fills = (sl.data.paper_fills_vs_quotes || []).filter((r) => String(r.quotes_from || "").includes("fill-time") && r.implied_fraction_of_spread != null);
+    if (fills.length) {
+      const fs = fills.map((r) => r.implied_fraction_of_spread).sort((a, b) => a - b);
+      const med = fs[Math.floor(fs.length / 2)];
+      card.appendChild(el("p", { className: "empty" }, fills.length + " paper entries have quotes from the moment of the fill. Median share of the quoted half spread given up: " + num(med, 2) + " (0 is the midpoint, 1 is the natural price). Includes the paper slippage setting."));
+    } else {
+      card.appendChild(el("p", { className: "empty" }, "Table is from recorded quotes in the middle of the session. No paper entry has fill-time quotes yet; they start with the next entry."));
+    }
+  }
+
+  const pg = lab.promotion_gate;
+  if (pg && pg.present && pg.data) {
+    card.appendChild(el("h2", null, "Promotion gate"));
+    const rows = Object.entries(pg.data.arms || {}).map(([name, a]) => [
+      cell(name), cell(a.n_distinct), cell(a.expectancy_usd == null ? "—" : usd2(a.expectancy_usd), cls(a.expectancy_usd)),
+      cell(a.verdict, labGate(a.verdict)), cell((a.failed || []).join("; "))
+    ]);
+    card.appendChild(table(
+      [{ label: "Arm" }, { label: "Distinct trades", num: true }, { label: "Expectancy per trade", num: true }, { label: "Verdict" }, { label: "Not met", wrap: true }],
+      rows
+    ));
+    card.appendChild(el("p", { className: "empty" }, pg.data.note || "A pass is not a production change. Operator OK is required."));
+  }
+}
+function renderLab(options, lab, families) {
+  families = families || [];
+  const card = el("section", { className: "book lab" });
+  card.appendChild(el("h2", null, "Options tests"));
+  const openUsd = options.reduce((n, b) => n + (b.unrealized_pnl_usd || 0), 0);
+  const realized = options.reduce((n, b) => n + bookRealized(b), 0);
+  const metrics = el("div", { className: "metrics" });
+  metrics.appendChild(metric("Books", String(options.length)));
+  metrics.appendChild(metric("Open contracts", String(options.reduce((n, b) => n + (b.open_count || 0), 0))));
+  metrics.appendChild(metric("Open mark", usd2(openUsd), cls(openUsd)));
+  metrics.appendChild(metric("Realized", usd2(realized), cls(realized)));
+  const healthRows = options.flatMap((b) => (b.positions || []).map(positionHealth)).filter(Boolean);
+  const onTrack = healthRows.filter((h) => h.label === "On track").length;
+  if (healthRows.length) {
+    metrics.appendChild(metric("On track", onTrack + " of " + healthRows.length, onTrack === healthRows.length ? "up" : "watch"));
+  }
+  card.appendChild(metrics);
+  if (healthRows.length && onTrack === healthRows.length) {
+    card.appendChild(el("p", { className: "empty" }, "Every open spread is on track. The open mark is red because closing today costs more than the credit collected: that is the bid/ask and the time value still in the option. The result is where the underlying finishes, which the charts on each position show."));
+  }
+  appendEvidence(card, lab, options);
+
+  card.appendChild(el("h2", null, "What each book is testing"));
+  card.appendChild(table(
+    [{label:"Book"},{label:"On track"},{label:"Open", num:true},{label:"Sleeve return", num:true},{label:"Realized", num:true},{label:"Open mark", num:true},{label:"Closed", num:true},{label:"Gates", wrap:true}],
+    options.map((b) => {
+      const ret = sleeveReturn(b);
+      const health = bookHealth(b);
+      return [
+        cell(shortName(b)),
+        cell(health.text, health.tone),
+        cell(b.open_count),
+        cell(ret == null ? "—" : pct2(ret), cls(ret)),
+        cell(usd2(bookRealized(b)), cls(bookRealized(b))),
+        cell(usd2(b.unrealized_pnl_usd), cls(b.unrealized_pnl_usd)),
+        cell(b.closed_count),
+        cell(experimentLine(b.experiment))
+      ];
+    })
+  ));
+
+  const famRows = (families || []).filter((f) => f.present_members.length);
+  const nominal = famRows.reduce((n, f) => n + (f.nominal_entries || 0), 0);
+  const effective = famRows.reduce((n, f) => n + (f.effective_entries || 0), 0);
+  if (nominal) {
+    const ratio = effective ? nominal / effective : 0;
+    card.appendChild(el("p", { className: "meta" }, nominal + " entries → " + effective + " effective → " + ratio.toFixed(1) + "× replicated"));
+  }
+  function roleRows(pred) {
+    return options.filter(pred).map((b) => {
+      const ret = sleeveReturn(b);
+      return [
+        cell(shortName(b) + (roleLabel(b.role) ? " · " + roleLabel(b.role) : "")),
+        cell(usd2(bookRealized(b)), cls(bookRealized(b))),
+        cell(usd2(b.unrealized_pnl_usd), cls(b.unrealized_pnl_usd)),
+        cell(b.closed_count),
+        cell(b.open_count)
+      ];
+    });
+  }
+  const dupRows = roleRows((b) => b.role === "control" || b.role === "entry_clone");
+  const distinctRows = roleRows((b) => b.role === "variant");
+  const roleHeaders = [{ label: "Book" }, { label: "Realized", num: true }, { label: "Open mark", num: true }, { label: "Closed", num: true }, { label: "Open", num: true }];
+  if (dupRows.length) {
+    card.appendChild(el("h2", null, "Duplicate arms (loss stacks)"));
+    card.appendChild(table(roleHeaders, dupRows));
+  }
+  if (distinctRows.length) {
+    card.appendChild(el("h2", null, "Distinct experiments (do not stack)"));
+    card.appendChild(table(roleHeaders, distinctRows));
+  }
+  card.appendChild(el("h2", null, "Arm experiment families \u2014 stacked loss"));
+  if (!famRows.length) {
+    card.appendChild(el("p", { className: "empty" }, "No arm families are running (rules/arms/families.json). Brothers that clone one experiment must be read as one book: their losses add up here."));
+  } else {
+    const scf = () => {
+      const sc = lab && lab.scorecard && lab.scorecard.present && lab.scorecard.data && lab.scorecard.data.options_arms;
+      return (sc && sc.families) || null;
+    };
+    card.appendChild(table(
+      [{ label: "Family" }, { label: "Members" }, { label: "Sleeve", num: true }, { label: "Stacked net", num: true }, { label: "ROI", num: true }, { label: "Distinct bets", num: true }, { label: "Exp/bet", num: true }, { label: "Note", wrap: true }],
+      famRows.map((f) => {
+        const stats = scf() ? scf()[f.id] : null;
+        const exp = stats ? stats.distinct_bet_expectancy_usd : null;
+        return [
+          cell(f.label || f.id),
+          cell(f.present_members.length + " of " + f.declared_members.length),
+          cell(usd(f.sleeve_usd)),
+          cell(usd2(f.stacked_net_usd), cls(f.stacked_net_usd)),
+          cell(pct2(f.roi_pct), cls(f.roi_pct)),
+          cell(f.effective_entries != null ? f.effective_entries : (stats ? stats.distinct_bets : "\u2014")),
+          cell(exp == null ? "\u2014" : usd2(exp), exp != null && exp <= 0 ? "down" : ""),
+          cell((f.mark_suspect ? "MARK SUSPECT · " : "") + (f.replication_count ? (f.replication_count.toFixed(1) + "× replicated. ") : "") + (f.stack ? "duplicate arms are one experiment— loss stacks" : "live capital, shown separately"))
+        ];
+      })
+    ));
+    card.appendChild(el("p", { className: "empty" }, "Stacked net = sum of member realized + open mark (the same spread open in two clones counts once). Distinct-bet expectancy is the nightly scorecard's experimental read: the falsifier is judged on the family, not the per-arm rows."));
+  }
+
+  const charts = el("div", { className: "charts" });
+  charts.appendChild(barChart(
+    "Open mark by book",
+    options.map((b, i) => ({
+      label: shortName(b),
+      value: b.unrealized_pnl_usd || 0,
+      text: usd2(b.unrealized_pnl_usd || 0),
+      color: (b.unrealized_pnl_usd || 0) >= 0 ? "#8fceab" : "#e08b7a"
+    })),
+    "What it would cost, in dollars, to close every spread right now. A red bar here is not the result at expiration."
+  ));
+  charts.appendChild(lineChart(
+    "Realized P/L after each close",
+    options.map((b, i) => ({
+      label: shortName(b),
+      color: COLORS[i % COLORS.length],
+      points: (b.pnl_series || []).filter((p) => p.at).map((p) => ({ x: new Date(p.at).getTime(), y: p.realized_usd }))
+    })),
+    "Open marks are not on this line. A book stays off the chart until it closes a trade."
+  ));
+  card.appendChild(charts);
+
+  const positions = options.flatMap((b) => (b.positions || []).map((p) => ({ book: b, p })));
+  card.appendChild(el("h2", null, "Open positions"));
+  if (!positions.length) {
+    card.appendChild(el("p", { className: "empty" }, "Flat. No open contracts."));
+  } else {
+    const grid = el("div", { className: "pos-grid" });
+    const groups = new Map();
+    positions.forEach((row) => {
+      const key = spreadKey(row.p);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(row);
+    });
+    groups.forEach((rows) => grid.appendChild(positionCard(rows[0].book, rows[0].p, rows.length)));
+    card.appendChild(grid);
+  }
+
+  const funnelRows = [];
+  options.forEach((b) => {
+    const f = b.entry_funnel;
+    if (!f || !f.candidates_seen) return;
+    Object.entries(f.rejects || {}).sort((a, c) => c[1] - a[1]).slice(0, 3).forEach(([gate, n]) => {
+      funnelRows.push({ label: shortName(b) + " " + gateName(gate), value: n, text: String(n), color: "#e08b7a" });
+    });
+    if (f.admitted) funnelRows.push({ label: shortName(b) + " admitted", value: f.admitted, text: String(f.admitted), color: "#8fceab" });
+  });
+  if (funnelRows.length) {
+    card.appendChild(el("h2", null, "Today's entry search"));
+    const funnel = el("div", { className: "charts" });
+    funnel.appendChild(barChart("First failing gate", funnelRows, "A full book does not scan, so a quiet funnel means the slots are already filled.", 210));
+    card.appendChild(funnel);
+  }
+
+  card.appendChild(el("h2", null, "What the books show"));
+  const list = el("ul", { className: "learnings" });
+  learnings(options).forEach((text) => list.appendChild(el("li", null, text)));
+  card.appendChild(list);
+  return card;
+}
+
+function heldDays(opened) {
+  if (!opened) return null;
+  const t = new Date(opened).getTime();
+  if (!Number.isFinite(t)) return null;
+  return Math.max(0, Math.floor((Date.now() - t) / 86400000));
+}
+
+function swingHealth(p, plan) {
+  const entry = p.entry_price;
+  const stop = p.stop_price;
+  const last = p.last_price;
+  const target = p.profit_limit;
+  if (!(entry > 0) || !(stop > 0) || !(last > 0)) return null;
+  const held = heldDays(p.opened_at);
+  const limit = plan && (plan.time_stop_days || plan.max_hold_days);
+  const trailAt = plan && plan.trail_activate_pct;
+  const peak = p.peak_profit_pct;
+  const locked = stop >= entry;
+  const trailOn = trailAt != null && peak != null && peak >= trailAt;
+  const through = last <= stop;
+  const pastTime = limit != null && held != null && held >= limit;
+  let label = "On track";
+  let tone = "up";
+  if (through || pastTime) {
+    label = "Under pressure";
+    tone = "down";
+  } else if (!locked && last < entry) {
+    label = "Watch";
+    tone = "watch";
+  }
+  const pnl = (last - entry) / entry * 100;
+  const bits = [
+    "Last " + last.toFixed(2) + " is " + Math.abs(pnl).toFixed(1) + "% " + (pnl >= 0 ? "above" : "below") + " the " + entry.toFixed(2) + " entry."
+  ];
+  if (locked) {
+    bits.push("The stop at " + stop.toFixed(2) + " is above entry, so the planned exit keeps a gain.");
+  } else {
+    const room = (entry - stop) / entry * 100;
+    const cap = plan && plan.stop_loss_pct != null ? plan.stop_loss_pct.toFixed(1) + "% rule" : "stop rule";
+    bits.push("The stop at " + stop.toFixed(2) + " is " + room.toFixed(1) + "% under entry, inside the " + cap + ".");
+  }
+  if (target > 0) bits.push("Target " + target.toFixed(2) + ".");
+  if (trailOn) bits.push("The trail is on: peak was " + peak.toFixed(1) + "%, and it arms after " + trailAt.toFixed(1) + "%.");
+  else if (trailAt != null && peak != null) bits.push("Peak is " + peak.toFixed(1) + "%. The trail arms after " + trailAt.toFixed(1) + "%.");
+  if (held != null && limit != null) bits.push("Held " + held + " of " + Math.round(limit) + " days.");
+  return { label, tone, say: bits.join(" ") };
+}
+
+function swingChart(p) {
+  const entry = p.entry_price;
+  const stop = p.stop_price;
+  const last = p.last_price;
+  const target = p.profit_limit;
+  if (!(entry > 0) || !(stop > 0) || !(last > 0) || !(target > 0)) return null;
+  const lo = Math.min(stop, entry, last, target);
+  const hi = Math.max(stop, entry, last, target);
+  const span = Math.max(hi - lo, entry * 0.01);
+  const pad = span * 0.12;
+  const min = lo - pad;
+  const max = hi + pad;
+  const xOf = (v) => 36 + (v - min) / (max - min) * 288;
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 360 128");
+  svg.setAttribute("class", "mini");
+  const add = (name, attrs, text) => {
+    const node = document.createElementNS(ns, name);
+    Object.entries(attrs).forEach(([k, v]) => node.setAttribute(k, v));
+    if (text != null) node.textContent = text;
+    svg.appendChild(node);
+    return node;
+  };
+  add("line", { x1: "36", x2: "324", y1: "62", y2: "62", stroke: "#2a3142", "stroke-width": "6", "stroke-linecap": "round" });
+  [
+    { v: stop, label: "stop " + stop.toFixed(2), color: "#e08b7a", textY: 28 },
+    { v: entry, label: "entry " + entry.toFixed(2), color: "#8b93a7", textY: 96 },
+    { v: target, label: "target " + target.toFixed(2), color: "#8fceab", textY: 28 }
+  ].forEach((mark) => {
+    const x = xOf(mark.v);
+    add("line", { x1: x, x2: x, y1: "48", y2: "76", stroke: mark.color, "stroke-width": "2" });
+    add("text", { x: x, y: mark.textY, "text-anchor": "middle", fill: mark.color, "font-size": "11" }, mark.label);
+  });
+  add("circle", { cx: xOf(last), cy: "62", r: "6", fill: "#d7dbe6" });
+  add("text", { x: xOf(last), y: "118", "text-anchor": "middle", fill: "#d7dbe6", "font-size": "11" }, "now " + last.toFixed(2));
+  return svg;
+}
+
+function swingCard(book, p) {
+  const health = swingHealth(p, book.plan);
+  const card = el("article", { className: "pos" });
+  const head = el("div", { className: "row" });
+  head.appendChild(el("div", { className: "title" }, p.symbol || "—"));
+  if (health) head.appendChild(el("span", { className: "verdict " + health.tone }, health.label));
+  card.appendChild(head);
+  if (health) card.appendChild(el("p", { className: "say" }, health.say));
+  const chart = swingChart(p);
+  if (chart) {
+    const wrap = el("div");
+    wrap.appendChild(el("div", { className: "chart-label" }, "Stop, entry, and target"));
+    wrap.appendChild(chart);
+    card.appendChild(wrap);
+  }
+  const parts = [];
+  if (p.unrealized_usd != null) parts.push(usd2(p.unrealized_usd) + " open");
+  if (p.stop_risk_usd != null) parts.push(usd2(p.stop_risk_usd) + " planned risk at the stop");
+  if (p.quantity != null) parts.push(Number(p.quantity).toFixed(2) + " shares");
+  if (p.workflow) parts.push(p.workflow);
+  card.appendChild(el("p", { className: "meta" }, parts.join(" · ")));
+  return card;
+}
+
+function renderBook(book) {
+  const agent = book.stack === "agent-trader";
+  const card = el("section", { className: agent ? "book agent-trader" : "book" });
+  const head = el("div", { className: "row" });
+  const title = el("div", { className: "title" });
+  const kind = book.kind === "options" ? "Options" : book.kind === "workflow" ? "Workflow" : "Swing";
+  title.appendChild(document.createTextNode(agent
+    ? "agent-trader · " + (book.broker_label || "Public API") + " · " + kind
+    : kind + " · " + (book.name || book.rules_file)));
+  title.appendChild(document.createTextNode(" "));
+  if (agent) {
+    title.appendChild(el("span", { className: "badge stack" }, "agent-trader"));
+    title.appendChild(document.createTextNode(" "));
+    title.appendChild(el("span", { className: "badge public" }, book.broker_label || "Public API"));
+    title.appendChild(document.createTextNode(" "));
+  }
+  title.appendChild(el("span", { className: "badge" }, "paper"));
+  const badge = roleBadge(book.role);
+  if (badge) {
+    title.appendChild(document.createTextNode(" "));
+    title.appendChild(badge);
+  }
+  if (book.mark_suspect_count > 0 || (book.recent_closes || []).some((t) => t.mark_suspect)) {
+    title.appendChild(document.createTextNode(" "));
+    title.appendChild(el("span", { className: "badge suspect" }, "MARK SUSPECT"));
+  }
+  if (agent && book.live_orders === false) {
+    title.appendChild(document.createTextNode(" "));
+    title.appendChild(el("span", { className: "badge public" }, "no live orders"));
+  }
+  if (stale(book.last_tick)) {
+    title.appendChild(document.createTextNode(" "));
+    title.appendChild(el("span", { className: "badge stale" }, "stale"));
+  }
+  head.appendChild(title);
+  const bits = [
+    ago(book.last_tick),
+    book.session || "",
+    book.tick_count != null ? "tick " + book.tick_count : "",
+    book.profile || ""
+  ].filter(Boolean).join(" · ");
+  head.appendChild(el("div", { className: "meta" }, bits));
+  card.appendChild(head);
+  if (book.error) {
+    card.appendChild(el("p", { className: "err" }, book.error));
+    return card;
+  }
+  if (book.note) card.appendChild(el("p", { className: "meta" }, book.note));
+  const decisions = workflowDecisions(book);
+  if (decisions) card.appendChild(decisions);
+  if (book.halted) card.appendChild(el("p", { className: "halt" }, "Halted: " + book.halted));
+  const gates = experimentLine(book.experiment);
+  if (gates) card.appendChild(el("div", { className: "gates" }, gates));
+  const metrics = el("div", { className: "metrics" });
+  metrics.appendChild(metric("Equity", usd(book.equity_usd)));
+  metrics.appendChild(metric("Cash", usd(book.cash_usd)));
+  metrics.appendChild(metric("Realized", usd2(bookRealized(book)), cls(bookRealized(book))));
+  if (book.clean_realized_pnl_usd != null && Math.abs(book.clean_realized_pnl_usd - (book.realized_pnl_usd || 0)) > 0.005) {
+    metrics.appendChild(metric("Booked", usd2(book.realized_pnl_usd), "suspect"));
+  }
+  if (book.unrealized_pnl_usd != null) {
+    metrics.appendChild(metric("Open mark", usd2(book.unrealized_pnl_usd), cls(book.unrealized_pnl_usd)));
+  }
+  metrics.appendChild(metric("Win rate", book.closed_count ? (book.win_rate_pct.toFixed(1) + "%") : "—"));
+  metrics.appendChild(metric("Open", String(book.open_count ?? 0)));
+  metrics.appendChild(metric("Closed", String(book.closed_count ?? 0)));
+  if (book.kind !== "options") {
+    const healths = (book.positions || []).map((p) => swingHealth(p, book.plan)).filter(Boolean);
+    if (healths.length) {
+      const bad = healths.filter((h) => h.tone === "down").length;
+      const watch = healths.filter((h) => h.tone === "watch").length;
+      const tone = bad ? "down" : watch ? "watch" : "up";
+      const label = bad ? "No" : watch ? "Watch" : "Yes";
+      metrics.appendChild(metric("On track", label, tone));
+    }
+  }
+  if (book.sleeve_cap_usd) metrics.appendChild(metric("Sleeve", usd(book.sleeve_cap_usd)));
+  if (book.deployed_pct != null) metrics.appendChild(metric("Deployed", book.deployed_pct.toFixed(0) + "%"));
+  card.appendChild(metrics);
+  if ((book.profile_pnl || []).length) {
+    card.appendChild(el("h2", null, "P&L by profile"));
+    card.appendChild(table(
+      [{ label: "Profile" }, { label: "n", num: true }, { label: "Win rate", num: true }, { label: "Net", num: true }],
+      book.profile_pnl.map((row) => [
+        cell(row.profile),
+        cell(row.n),
+        cell((row.win_rate_pct || 0).toFixed(0) + "%"),
+        cell(usd2(row.net_usd), cls(row.net_usd))
+      ])
+    ));
+  }
+  if (book.kind !== "options" && (book.pnl_series || []).length > 1) {
+    card.appendChild(lineChart(
+      "Realized P/L",
+      [{
+        label: book.name || "book",
+        color: "#e2b15a",
+        points: book.pnl_series.filter((p) => p.at).map((p) => ({ x: new Date(p.at).getTime(), y: p.realized_usd }))
+      }],
+      null
+    ));
+  }
+  if (book.shadows) card.appendChild(shadowSection(book));
+
+  card.appendChild(el("h2", null, "Open positions"));
+  if (book.kind === "options") {
+    card.appendChild(table(
+      [{label:"Underlying"},{label:"Structure"},{label:"Expiry"},{label:"Health"},{label:"Delta", num:true},{label:"POP", num:true},{label:"Credit", num:true},{label:"Debit", num:true},{label:"Open P/L", num:true},{label:"Max loss", num:true}],
+      (book.positions || []).map((p) => {
+        const health = positionHealth(p);
+        return [
+          cell(p.underlying),
+          cell(structure(p)),
+          cell(p.expiry),
+          cell(health ? health.label : "—", health ? health.tone : ""),
+          cell(p.entry_short_delta != null ? p.entry_short_delta.toFixed(2) : null),
+          cell(p.entry_pop_pct != null ? p.entry_pop_pct.toFixed(0) + "%" : null),
+          cell(p.entry_credit != null ? p.entry_credit.toFixed(2) : null),
+          cell(p.debit_to_close != null ? p.debit_to_close.toFixed(2) : null),
+          cell(usd2(p.unrealized_usd), cls(p.unrealized_usd)),
+          cell(usd2(p.max_loss_usd))
+        ];
+      })
+    ));
+    const funnel = funnelLine(book);
+    if (funnel) card.appendChild(el("p", { className: "meta" }, funnel));
+  } else if (!(book.positions || []).length) {
+    card.appendChild(el("p", { className: "empty" }, "Flat. No open shares."));
+  } else {
+    const grid = el("div", { className: "pos-grid" });
+    book.positions.forEach((p) => grid.appendChild(swingCard(book, p)));
+    card.appendChild(grid);
+  }
+
+  card.appendChild(el("h2", null, "Recent closes"));
+  card.appendChild(table(
+    [{label:"When"},{label:"Symbol"},{label:"P&L", num:true},{label:"%", num:true},{label:"Reason"},{label:"Days", num:true}],
+    (book.recent_closes || []).map((t) => [
+      cell(t.closed_at ? new Date(t.closed_at).toLocaleString() : null),
+      cell(t.symbol || t.underlying),
+      cell(usd2(t.pnl_usd), t.mark_suspect ? "suspect" : cls(t.pnl_usd)),
+      cell(pct(t.pnl_pct), t.mark_suspect ? "suspect" : cls(t.pnl_pct)),
+      cell(t.mark_suspect ? "MARK SUSPECT" : t.exit_reason, t.mark_suspect ? "suspect" : ""),
+      cell(t.hold_days)
+    ])
+  ));
+
+  card.appendChild(el("h2", null, "Recent journal"));
+  const j = el("div", { className: "journal" });
+  const events = book.journal || [];
+  if (!events.length) j.appendChild(el("div", { className: "empty" }, "none"));
+  events.forEach((ev) => {
+    const line = el("div");
+    const when = ev.ts ? new Date(ev.ts).toLocaleTimeString() : "";
+    line.appendChild(el("span", { className: "meta" }, when + "  "));
+    line.appendChild(document.createTextNode((ev.type || "") + (ev.detail ? " — " + ev.detail : "")));
+    j.appendChild(line);
+  });
+  card.appendChild(j);
+
+  return card;
+}
+
+function hbars(title, rows, note) {
+  const card = el("div", { className: "chart-card" });
+  card.appendChild(el("div", { className: "k" }, title));
+  const max = Math.max(0.01, ...rows.map((r) => Math.abs(r.value || 0)));
+  rows.forEach((r) => {
+    const row = el("div", { className: "hbar" });
+    row.appendChild(el("span", { className: "hbar-name" }, r.label));
+    const track = el("span", { className: "hbar-track" });
+    const fill = el("span", { className: "hbar-fill " + ((r.value || 0) >= 0 ? "up" : "down") });
+    const half = Math.abs(r.value || 0) / max * 50;
+    fill.style.width = Math.max(half, r.value ? 0.8 : 0) + "%";
+    fill.style.left = ((r.value || 0) >= 0 ? 50 : 50 - half) + "%";
+    track.appendChild(fill);
+    row.appendChild(track);
+    row.appendChild(el("span", { className: "hbar-val " + cls(r.value) }, r.text));
+    card.appendChild(row);
+  });
+  if (note) card.appendChild(el("p", { className: "note" }, note));
+  return card;
+}
+function shadowNote(shadows) {
+  const losers = shadows.filter((s) => (s.realized_pnl_usd || 0) < -500 && s.worst_close && s.worst_close.symbol);
+  if (!losers.length) return "Arms with a close are listed first. The scale is the largest realized gain or loss.";
+  const first = losers[0].worst_close;
+  const same = losers.every((s) => Math.abs((s.realized_pnl_usd || 0) - (losers[0].realized_pnl_usd || 0)) < 1);
+  let text = first.symbol + " closed " + (first.pnl_pct || 0).toFixed(1) + "% on a " + String(first.exit_reason || "exit").replaceAll("_", " ");
+  if (first.notional_usd) text += ", about " + usd(first.notional_usd) + " notional";
+  text += ". That is a research arm, not the live sleeve.";
+  if (same && losers.length > 1) text += " " + losers.map((s) => s.id).join(" and ") + " recorded the same close, so the dollars show once per arm.";
+  return text;
+}
+
+function shadowSection(book) {
+  const wrap = el("div");
+  wrap.appendChild(el("h2", null, "Shadow arms"));
+  const shadows = book.shadows.slice().sort((a, b) => Math.abs(b.realized_pnl_usd || 0) - Math.abs(a.realized_pnl_usd || 0) || String(a.id).localeCompare(String(b.id)));
+  wrap.appendChild(hbars(
+    "Shadow realized P/L",
+    shadows.map((s) => ({
+      label: s.id,
+      value: s.realized_pnl_usd || 0,
+      text: usd2(s.realized_pnl_usd || 0)
+    })),
+    shadowNote(shadows)
+  ));
+  wrap.appendChild(table(
+      [{label:"Arm"},{label:"Start", num:true},{label:"Equity", num:true},{label:"Open", num:true},{label:"Closed", num:true},{label:"Win", num:true},{label:"Realized", num:true},{label:"Tick"}],
+      shadows.map((s) => [
+        cell(s.id), cell(usd(s.starting_cash_usd)), cell(usd(s.equity_usd)),
+        cell(s.open_count), cell(s.closed_count),
+        cell(s.closed_count ? s.win_rate_pct.toFixed(0) + "%" : "—"),
+        cell(usd2(s.realized_pnl_usd), cls(s.realized_pnl_usd)),
+        cell(s.last_tick ? ago(s.last_tick) : "waiting")
+      ])
+    ));
+  return wrap;
+}
+
+function workflowDecisions(book) {
+  if (book.kind !== "workflow" || !(book.workflows || []).length) return null;
+  const wrap = el("div");
+  wrap.appendChild(el("h2", null, "Last decision"));
+  book.workflows.forEach((wf) => {
+    const bits = [wf.id, wf.status].filter(Boolean);
+    (wf.steps || []).forEach((step) => {
+      const piece = [step.id, step.status, step.reason, step.value != null ? String(step.value) : ""].filter(Boolean).join(" ");
+      if (piece) bits.push(piece);
+    });
+    wrap.appendChild(el("p", { className: "meta" }, bits.join(" · ")));
+  });
+  return wrap;
+}
+
+let tab = location.hash === "#swing" ? "swing" : location.hash === "#workflows" ? "workflows" : "options";
+let latest = null;
+
+function paint() {
+  document.querySelectorAll("button.tab").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+  if (!latest) return;
+  const all = latest.books || [];
+  const options = all.filter((b) => b.kind === "options");
+  const workflows = all.filter((b) => b.kind === "workflow");
+  const swing = all.filter((b) => b.kind !== "options" && b.kind !== "workflow");
+  const optBtn = document.querySelector('button[data-tab="options"]');
+  const swBtn = document.querySelector('button[data-tab="swing"]');
+  const wfBtn = document.querySelector('button[data-tab="workflows"]');
+  if (optBtn) optBtn.textContent = "Options" + (options.length ? " · " + options.length : "");
+  if (swBtn) swBtn.textContent = "Swing" + (swing.length ? " · " + swing.length : "");
+  if (wfBtn) wfBtn.textContent = "Workflows" + (workflows.length ? " · " + workflows.length : "");
+  const y = window.scrollY;
+  const nodes = [];
+  const shown = tab === "swing" ? swing : tab === "workflows" ? workflows : options;
+  const agent = shown.filter((b) => b.stack === "agent-trader");
+  const rest = shown.filter((b) => b.stack !== "agent-trader");
+  if (tab === "options") {
+    const ok = options.filter((b) => !b.error);
+    const families = latest.families ? latest.families.families || [] : [];
+    if (ok.length) nodes.push(renderLab(ok, latest.lab, families));
+  }
+  if (!shown.length) nodes.push(el("p", { className: "empty" }, "No " + tab + " books are loaded."));
+  nodes.push(...agent.map(renderBook), ...rest.map(renderBook));
+  books.replaceChildren(...nodes);
+  window.scrollTo(0, y);
+}
+
+document.getElementById("tabs").addEventListener("click", (ev) => {
+  const button = ev.target.closest("button[data-tab]");
+  if (!button || button.dataset.tab === tab) return;
+  tab = button.dataset.tab;
+  history.replaceState(null, "", tab === "options" ? "#options" : "#" + tab);
+  window.scrollTo(0, 0);
+  paint();
+});
+
+async function refresh() {
+  try {
+    const res = await fetch("/api/status", { cache: "no-store" });
+    latest = await res.json();
+    updated.textContent = "Updated " + new Date(latest.generated_at).toLocaleTimeString() + " · refreshes every 5s";
+    paint();
+  } catch (err) {
+    updated.textContent = "Refresh failed: " + err;
+  }
+}
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

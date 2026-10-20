@@ -571,6 +571,13 @@ def options_arms_section(rules: Path) -> dict:
     }
 
 
+def member_id(member: object) -> str:
+    """Family members are agent ids, or {id, role} objects."""
+    if isinstance(member, dict):
+        return str(member.get("id") or member.get("agent_id") or "")
+    return str(member)
+
+
 def load_families(rules: Path) -> list[dict]:
     """Experiment families from rules/arms/families.json. Missing/unreadable file
     means every agent is its own family (legacy per-agent behavior)."""
@@ -656,7 +663,7 @@ def build_families(agents: dict, families: list[dict]) -> dict:
     out: dict[str, dict] = {}
     for fam in families:
         fid = str(fam.get("id") or "?")
-        declared = [str(m) for m in (fam.get("members") or [])]
+        declared = [member_id(m) for m in (fam.get("members") or [])]
         members = [lookup[m] for m in declared if m in lookup]
         sleeve = float(fam.get("sleeve_usd") or 0)
         stack = bool(fam.get("stack", True))

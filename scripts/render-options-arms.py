@@ -81,9 +81,29 @@ HEADER = {
         "# FALSIFIER: max drawdown or worst loss not better than O0's, or the gate pauses so often that\n"
         "# fewer than 20 distinct closed trades accrue in 60 trading days."
     ),
+    "o9": (
+        "O9 edge floor. Same book as O0 except credit must be at least 0.50 and 12.5% of\n"
+        "# width. The 6% floor made breakeven win rate sit on top of POP.\n"
+        "# HYPOTHESIS: a higher credit/width floor is the entry edge the other arms lack.\n"
+        "# FALSIFIER: expectancy per trade at or below O0's after 20 distinct closed trades."
+    ),
+    "o10": (
+        "O10 trend gate. Same book as O0, but new put credits pause whenever SPY is below\n"
+        "# its 50-day average. vix_above is 0 so the SMA check is not waiting on a VIX band.\n"
+        "# HYPOTHESIS: put credits sold under the 50-day average are the losing tape.\n"
+        "# FALSIFIER: expectancy per trade not above O0's after 20 distinct closed trades."
+    ),
+    "o11": (
+        "O11 breadth. Same book as O0, plus IWM and XLF. QQQ and SPY stay one correlation\n"
+        "# group; IWM and XLF are a second group capped at one open spread.\n"
+        "# HYPOTHESIS: uncorrelated underlyings raise distinct bets faster than another index clone.\n"
+        "# FALSIFIER: IWM and XLF entries mostly duplicate QQQ/SPY on the same day, or expectancy\n"
+        "# per trade is below O0's after 20 distinct closed trades."
+    ),
 }
 
 ARMS = ("o0", "o1", "o2", "o3", "o4", "o5", "o6", "o7", "o8")
+CONTROL_ARMS = ("o9", "o10", "o11")
 
 
 def replace_between(text: str, start: str, end: str, old: str, new: str, expected: int = 1) -> str:
@@ -393,10 +413,90 @@ def build(text: str, arm: str) -> str:
     return text
 
 
+def header_block(arm: str) -> str:
+    return (
+        f"# Paper arm {arm} ($30k sleeve, LLM off, 300s tick). Does not change 8709.\n"
+        f"# {HEADER[arm]}\n"
+    )
+
+
+def build_from_control(text: str, arm: str) -> str:
+    start = text.index("# Paper arm o0")
+    end = text.index("agent_id: options-arm-o0\n")
+    text = text[:start] + header_block(arm) + f"agent_id: options-arm-{arm}\n" + text[end + len("agent_id: options-arm-o0\n") :]
+    if arm == "o9":
+        vertical = text.index("entry_rules:\n  vertical:\n")
+        watch = text.index("watchlist:\n")
+        head, watchlist, tail = text[:watch], text[watch:vertical], text[vertical:]
+        watchlist = watchlist.replace("    min_credit: 0.30\n", "    min_credit: 0.50\n")
+        watchlist = watchlist.replace(
+            "    min_credit_to_width_pct: 6.0\n", "    min_credit_to_width_pct: 12.5\n"
+        )
+        tail = tail.replace("    min_credit: 0.30\n", "    min_credit: 0.50\n", 1)
+        tail = tail.replace("    min_credit_to_width_pct: 6.0\n", "    min_credit_to_width_pct: 12.5\n", 1)
+        text = head + watchlist + tail
+    elif arm == "o10":
+        text = text.replace(
+            "  put_credit_guard:\n    vix_above: 18.0\n    require_benchmark_above_sma: 20\n",
+            "  put_credit_guard:\n    vix_above: 0\n    require_benchmark_above_sma: 50\n",
+            1,
+        )
+    elif arm == "o11":
+        text = text.replace(
+            "# QQQ/SPY only — no fallback sleeve burn on IWM/GLD/sectors.\n",
+            "# QQQ/SPY plus IWM and XLF. IWM and XLF share one correlation slot.\n",
+            1,
+        )
+        text = text.replace(
+            "  - symbol: SPY\n    role: primary\n    min_credit: 0.30\n    min_credit_to_width_pct: 6.0\n",
+            "  - symbol: SPY\n    role: primary\n    min_credit: 0.30\n    min_credit_to_width_pct: 6.0\n"
+            "  - symbol: IWM\n    role: primary\n    min_credit: 0.30\n    min_credit_to_width_pct: 6.0\n"
+            "  - symbol: XLF\n    role: primary\n    min_credit: 0.30\n    min_credit_to_width_pct: 6.0\n",
+            1,
+        )
+        text = text.replace(
+            "  allowed_underlyings:\n    - QQQ\n    - SPY\n",
+            "  allowed_underlyings:\n    - QQQ\n    - SPY\n    - IWM\n    - XLF\n",
+            1,
+        )
+        text = text.replace(
+            "  max_open_per_underlying:\n    QQQ: 1\n    SPY: 1\n",
+            "  max_open_per_underlying:\n    QQQ: 1\n    SPY: 1\n    IWM: 1\n    XLF: 1\n",
+            1,
+        )
+        text = text.replace(
+            "  correlation_groups:\n    - name: broad_index\n      symbols: [QQQ, SPY]\n      max_open: 1\n",
+            "  correlation_groups:\n    - name: broad_index\n      symbols: [QQQ, SPY]\n      max_open: 1\n"
+            "    - name: financials_smallcap\n      symbols: [IWM, XLF]\n      max_open: 1\n",
+            1,
+        )
+    else:
+        raise SystemExit(arm)
+    if text.count(f"agent_id: options-arm-{arm}\n") != 1:
+        raise SystemExit(f"{arm} agent id rewrite failed")
+    if "options-pilot-8709" in text:
+        raise SystemExit(f"{arm} still mentions the 8709 agent id")
+    return text
+
+
 def main() -> None:
-    src = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "rules" / "options-pilot-8709.yaml"
-    raw = base_from(src)
     OUT.mkdir(parents=True, exist_ok=True)
+    control = OUT / "o0.yaml"
+    if not control.is_file():
+        raise SystemExit(f"missing {control}")
+    control_text = control.read_text()
+    for arm in CONTROL_ARMS:
+        rendered = build_from_control(control_text, arm)
+        if "FB796575" in rendered or rendered.count(PLACEHOLDER) != 1:
+            raise SystemExit(f"{arm} hash handling failed")
+        dest = OUT / f"{arm}.yaml"
+        dest.write_text(rendered)
+        print(dest.relative_to(ROOT))
+
+    src = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "rules" / "options-pilot-8709.yaml"
+    if not src.is_file():
+        return
+    raw = base_from(src)
     for arm in ARMS:
         rendered = build(raw, arm)
         if "FB796575" in rendered or rendered.count(PLACEHOLDER) != 1:

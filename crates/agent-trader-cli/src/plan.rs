@@ -114,7 +114,10 @@ pub async fn run_plan(
         if let Some(reason) = legacy_account_busy(Path::new("rules"), &account.id)? {
             bail!("{reason}");
         }
-        Some(AccountLock::acquire(&state_dir()?.join("locks"), &account.address())?)
+        Some(AccountLock::acquire(
+            &state_dir()?.join("locks"),
+            &account.address(),
+        )?)
     };
 
     for step in &plan.steps {
@@ -149,24 +152,21 @@ pub async fn run_plan(
             continue;
         }
         let client_id = uuid::Uuid::new_v4().to_string();
-        let placed = handle
-            .trading
-            .place(&account, &intent, &client_id)
-            .await?;
+        let placed = handle.trading.place(&account, &intent, &client_id).await?;
         let mut status = placed.status;
         if plan.execution.wait_for_fill && !placed.order_id.is_empty() {
             let order = broker_core::poll_order(
                 &*handle.trading,
                 &account,
-                    &placed.order_id,
-                    WaitOptions {
-                        until: WaitUntil::Filled,
-                        timeout_seconds: plan.execution.fill_timeout_seconds,
-                        poll_interval_seconds: plan.execution.poll_interval_seconds,
-                        proceed_on_partial: false,
-                    },
-                )
-                .await?;
+                &placed.order_id,
+                WaitOptions {
+                    until: WaitUntil::Filled,
+                    timeout_seconds: plan.execution.fill_timeout_seconds,
+                    poll_interval_seconds: plan.execution.poll_interval_seconds,
+                    proceed_on_partial: false,
+                },
+            )
+            .await?;
             status = order.status;
             if status != OrderStatus::Filled && plan.execution.stop_on_error {
                 bail!("step {} ended {:?}", step.id, status);

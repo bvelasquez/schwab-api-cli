@@ -3,19 +3,22 @@
   "families": [
     {
       "id": "index-verticals-clones",
-      "label": "Index credit-vertical clones (o0-o8)",
+      "label": "Index credit-verticals (o0-o11)",
       "stack": true,
-      "sleeve_usd": 270000,
+      "sleeve_usd": 360000,
       "members": [
-        "options-arm-o0",
-        "options-arm-o1",
-        "options-arm-o2",
-        "options-arm-o3",
-        "options-arm-o4",
-        "options-arm-o5",
-        "options-arm-o6",
-        "options-arm-o7",
-        "options-arm-o8"
+        {"id": "options-arm-o0", "role": "control"},
+        {"id": "options-arm-o1", "role": "variant"},
+        {"id": "options-arm-o2", "role": "variant"},
+        {"id": "options-arm-o3", "role": "variant"},
+        {"id": "options-arm-o4", "role": "variant"},
+        {"id": "options-arm-o5", "role": "variant"},
+        {"id": "options-arm-o6", "role": "entry_clone"},
+        {"id": "options-arm-o7", "role": "entry_clone"},
+        {"id": "options-arm-o8", "role": "entry_clone"},
+        {"id": "options-arm-o9", "role": "variant"},
+        {"id": "options-arm-o10", "role": "variant"},
+        {"id": "options-arm-o11", "role": "variant"}
       ]
     },
     {
