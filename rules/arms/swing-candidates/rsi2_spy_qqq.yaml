@@ -1,0 +1,11 @@
+# Swing candidate: Connors RSI(2) on SPY/QQQ
+id: rsi2_spy_qqq
+family: mean_reversion
+label: "Connors RSI(2) on SPY/QQQ"
+source: "Connors and Alvarez, Short Term Trading Strategies That Work 2008."
+thesis: "Short, sharp pullbacks in an uptrend tend to revert within days; RSI(2) below 10 above SMA200 marks them."
+backtest_class: RSI2
+paper_target: shadow_arm   # baseline | control | shadow_arm | workflow
+biased_universe: false
+universe: [SPY, QQQ]
+doc: "Connors RSI(2): buy a pullback in an uptrend, sell the first bounce above the 5-day SMA."

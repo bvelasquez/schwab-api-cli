@@ -125,3 +125,6 @@ rules/analysis-*/trader-backtest-journal-arm*.jsonl
 rules/analysis-*/trader-backtest-state-arm*.json
 rules/analysis-*/trader-journal-arm*.jsonl
 rules/analysis-*/arm-*-W*.json
+
+# Swing lab price cache (regenerate with scripts/swing_lab_fetch.py)
+rules/lab-data/

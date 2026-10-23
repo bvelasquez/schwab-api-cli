@@ -1,0 +1,11 @@
+# Swing candidate: Sector ETF momentum, top 3 monthly
+id: sector_momentum
+family: rotation
+label: "Sector ETF momentum, top 3 monthly"
+source: "Moskowitz and Grinblatt 1999 (industry momentum); Antonacci, Dual Momentum Investing 2014 (absolute filter)."
+thesis: "Sector winners tend to keep winning for 3-12 months; requiring a positive score sends capital to cash in downtrends."
+backtest_class: SectorMomentum
+paper_target: workflow   # baseline | control | shadow_arm | workflow
+biased_universe: false
+universe: [XLK, XLF, XLE, XLV, XLI, XLP, XLU, XLY, XLB]
+doc: "Monthly: top 3 sector ETFs by mean of 3/6/12-month return, only those with positive score."

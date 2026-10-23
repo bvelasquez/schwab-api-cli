@@ -1,0 +1,11 @@
+# Swing candidate: Control: current 9947 entry rule (approx.)
+id: pullback_control
+family: pullback
+label: "Control: current 9947 entry rule (approx.)"
+source: "rules/trader-swing-9947.yaml, approximated on daily bars (no ATR sizing, no intraday logic)."
+thesis: "Existing live-paper approach: SMA20/50 trend, RSI 48-65, 5.5% stop, 7.5% target."
+backtest_class: PullbackControl
+paper_target: control   # baseline | control | shadow_arm | workflow
+biased_universe: true
+universe: [AAPL, MSFT, NVDA, AMZN, GOOGL, META, AVGO, JPM, XOM, UNH, COST, LLY, WMT, HD, PG, V, MA, JNJ, CVX, CAT, SPY, QQQ, IWM, DIA, XLK, XLF, XLE, XLV, XLI, XLP, XLU, XLY, XLB, SMH, GLD, TLT, EFA]
+doc: "Approximation of the live 9947 entry rule: above SMA20 and SMA50, RSI14 48-65, 5.5% stop, 7.5% target, 30-day time stop, 4 slots. Optional SPY regime gate (the review's main finding)."

@@ -1,5 +1,16 @@
 # Options strategy lab (paper only)
 
+> **PAUSED 2026-10-23.** All options paper agents, the chain-snapshot timer and the lab timer are stopped
+> and disabled. Journals, state, scorecards and arm rules are archived on the paper host under
+> `rules/archive/options-2026-10-23/` (chain snapshots in `rules/chains/` were left in place). Unit files
+> moved to `deploy/systemd/user/paused/`. Reason: 5 closed trades, every arm negative, break-even win
+> rate about 85% at about 10% credit-to-width. Focus moved to swing/ETF strategies.
+>
+> To resume: copy the archive contents back into `rules/`, move the units out of `paused/`, run
+> `./scripts/install-options-arms.sh`, `systemctl --user enable --now schwab-chain-snapshot.timer schwab-lab.timer`,
+> re-add `--options-rules ...` to `agent-trader-dashboard.service`, and run `scorecard.py --include-options`.
+> Also restore the `agent-trader-options-8709` row in `scripts/jarvis-bot-watchdog.sh` on the host.
+
 Nine paper arms (`O0`..`O8`) run beside the 8709 pilot so that each rule change is tested against a
 control instead of argued about. Everything here is paper or read-only. Nothing in the lab changes
 `rules/options-pilot-8709.yaml`, places an order, or needs the operator's approval to run.

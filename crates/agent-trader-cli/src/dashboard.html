@@ -153,8 +153,8 @@
   <div class="meta" id="updated">loading…</div>
 </header>
 <nav class="tabs" id="tabs">
-  <button type="button" class="tab on" data-tab="options">Options</button>
-  <button type="button" class="tab" data-tab="swing">Swing</button>
+  <button type="button" class="tab" data-tab="options" hidden>Options</button>
+  <button type="button" class="tab on" data-tab="swing">Swing</button>
   <button type="button" class="tab" data-tab="workflows">Workflows</button>
 </nav>
 <main id="books"></main>
@@ -359,7 +359,7 @@ function learnings(options) {
     notes.push(openBooks.map(shortName).join(", ") + (openBooks.length === 1 ? " has" : " have") + " no completed round trip, so win rate is not knowable yet.");
   }
   closedBooks.forEach((b) => {
-    notes.push(shortName(b) + " has closed " + b.closed_count + " trade" + (b.closed_count === 1 ? "" : "s") + " for " + usd2(b.realized_pnl_usd) + " realized, win rate " + b.win_rate_pct.toFixed(0) + "%.");
+    notes.push(shortName(b) + " has closed " + b.closed_count + " trade" + (b.closed_count === 1 ? "" : "s") + " for " + usd2(bookRealized(b)) + " realized, win rate " + b.win_rate_pct.toFixed(0) + "%.");
   });
   options.forEach((b) => {
     const f = b.entry_funnel;
@@ -818,25 +818,111 @@ function appendEvidence(card, lab, options) {
     card.appendChild(el("p", { className: "empty" }, pg.data.note || "A pass is not a production change. Operator OK is required."));
   }
 }
+function sumRealized(rows) {
+  return rows.reduce((n, b) => n + bookRealized(b), 0);
+}
+function sumOpen(rows) {
+  return rows.reduce((n, b) => n + (b.unrealized_pnl_usd || 0), 0);
+}
+function renderSwingLab(lab) {
+  const art = lab && lab.swing_lab;
+  if (!art || !art.present || !art.data) return null;
+  const rows = art.data.results || [];
+  const meta = art.data.meta || {};
+  const card = el("section", { className: "book lab" });
+  card.appendChild(el("h2", null, "Strategy lab (backtest, daily bars)"));
+  card.appendChild(el("p", { className: "meta" },
+    (meta.generated || "") + " · $" + (meta.start_capital || 4000) + " sleeve · " + (meta.slippage_bps || 5) + " bps per side · SPY buy and hold is the baseline · " +
+    "* = survivor stock basket, optimistic · a pass earns a paper test, not capital"));
+  card.appendChild(table(
+    [{label:"Strategy"},{label:"CAGR", num:true},{label:"Max DD", num:true},{label:"Sharpe", num:true},{label:"vs SPY", num:true},{label:"OOS CAGR", num:true},{label:"@15 bps", num:true},{label:"Trades", num:true},{label:"Win", num:true},{label:"Checks", num:true},{label:"Paper"}],
+    rows.map((r) => {
+      const f = r.full || {}, o = r.oos || {}, t = r.trade || {};
+      return [
+        cell(r.label + (r.biased_universe ? " *" : "")),
+        cell(pct(f.cagr_pct), cls(f.cagr_pct)),
+        cell(f.max_drawdown_pct == null ? "—" : f.max_drawdown_pct.toFixed(1) + "%"),
+        cell(f.sharpe == null ? "—" : f.sharpe.toFixed(2)),
+        cell(pct(r.excess_cagr_vs_spy_pct), cls(r.excess_cagr_vs_spy_pct)),
+        cell(pct(o.cagr_pct), cls(o.cagr_pct)),
+        cell(pct(r.cagr_pct_at_15bps), cls(r.cagr_pct_at_15bps)),
+        cell(t.trades || 0),
+        cell(t.win_rate_pct == null ? "—" : Math.round(t.win_rate_pct) + "%"),
+        cell((r.checks_passed == null ? "—" : r.checks_passed) + "/5"),
+        cell(r.paper_target)
+      ];
+    })
+  ));
+  return card;
+}
+function renderWorkflowSummary(books, title, noun) {
+  const ok = books.filter((b) => !b.error && b.equity_usd != null);
+  if (!ok.length) return null;
+  const START = 4000;
+  const ret = (b) => (b.equity_usd == null ? null : ((b.equity_usd - START) / START) * 100);
+  const name = (b) => b.name || b.rules_file || "workflow";
+  const base = ok.find((b) => /buy-?hold/i.test(name(b)));
+  const baseRet = base ? ret(base) : null;
+  const totalEq = ok.reduce((n, b) => n + (b.equity_usd || 0), 0);
+  const open = ok.reduce((n, b) => n + (b.positions || []).length, 0);
+  const card = el("section", { className: "book lab" });
+  card.appendChild(el("h2", null, title || "Workflow results"));
+  const metrics = el("div", { className: "metrics" });
+  metrics.appendChild(metric(noun || "Workflows", String(ok.length)));
+  metrics.appendChild(metric("Total equity", usd(totalEq)));
+  metrics.appendChild(metric("Total P/L", usd2(totalEq - START * ok.length), cls(totalEq - START * ok.length)));
+  metrics.appendChild(metric("Realized", usd2(sumRealized(ok)), cls(sumRealized(ok))));
+  metrics.appendChild(metric("Open positions", String(open)));
+  if (baseRet != null) metrics.appendChild(metric("SPY b&h", pct2(baseRet), cls(baseRet)));
+  card.appendChild(metrics);
+  card.appendChild(table(
+    [{label:noun ? "Book" : "Workflow"},{label:"Equity", num:true},{label:"Return", num:true},{label:"vs SPY b&h", num:true},{label:"Realized", num:true},{label:"Open", num:true},{label:"Closed", num:true},{label:"Last tick"}],
+    ok.map((b) => {
+      const r = ret(b);
+      const ex = r != null && baseRet != null ? r - baseRet : null;
+      return [
+        cell(name(b)),
+        cell(usd(b.equity_usd)),
+        cell(pct2(r), cls(r)),
+        cell(pct2(ex), cls(ex)),
+        cell(usd2(bookRealized(b)), cls(bookRealized(b))),
+        cell((b.positions || []).length),
+        cell(b.closed_count != null ? b.closed_count : (b.recent_closes || []).length),
+        cell(ago(b.last_tick))
+      ];
+    })
+  ));
+  return card;
+}
 function renderLab(options, lab, families) {
   families = families || [];
   const card = el("section", { className: "book lab" });
   card.appendChild(el("h2", null, "Options tests"));
-  const openUsd = options.reduce((n, b) => n + (b.unrealized_pnl_usd || 0), 0);
-  const realized = options.reduce((n, b) => n + bookRealized(b), 0);
+  const copies = options.filter((b) => b.role === "entry_clone");
+  const counted = options.filter((b) => b.role !== "entry_clone");
+  const pub = counted.filter((b) => b.stack === "agent-trader");
+  const schwab = counted.filter((b) => b.stack !== "agent-trader");
   const metrics = el("div", { className: "metrics" });
-  metrics.appendChild(metric("Books", String(options.length)));
-  metrics.appendChild(metric("Open contracts", String(options.reduce((n, b) => n + (b.open_count || 0), 0))));
-  metrics.appendChild(metric("Open mark", usd2(openUsd), cls(openUsd)));
-  metrics.appendChild(metric("Realized", usd2(realized), cls(realized)));
-  const healthRows = options.flatMap((b) => (b.positions || []).map(positionHealth)).filter(Boolean);
+  metrics.appendChild(metric("Distinct books", String(counted.length)));
+  metrics.appendChild(metric("Schwab realized", usd2(sumRealized(schwab)), cls(sumRealized(schwab))));
+  metrics.appendChild(metric("Schwab open mark", usd2(sumOpen(schwab)), cls(sumOpen(schwab))));
+  if (pub.length) {
+    metrics.appendChild(metric("Public realized", usd2(sumRealized(pub)), cls(sumRealized(pub))));
+    metrics.appendChild(metric("Public open mark", usd2(sumOpen(pub)), cls(sumOpen(pub))));
+  }
+  const healthRows = counted.flatMap((b) => (b.positions || []).map(positionHealth)).filter(Boolean);
   const onTrack = healthRows.filter((h) => h.label === "On track").length;
   if (healthRows.length) {
     metrics.appendChild(metric("On track", onTrack + " of " + healthRows.length, onTrack === healthRows.length ? "up" : "watch"));
   }
   card.appendChild(metrics);
+  if (copies.length) {
+    const names = copies.map((b) => shortName(b)).join(", ");
+    card.appendChild(el("p", { className: "empty" },
+      names + " repeat o0. Closed " + usd2(sumRealized(copies)) + ", open mark " + usd2(sumOpen(copies)) + ". Those copies stay on their own rows and are left out of the totals above."));
+  }
   if (healthRows.length && onTrack === healthRows.length) {
-    card.appendChild(el("p", { className: "empty" }, "Every open spread is on track. The open mark is red because closing today costs more than the credit collected: that is the bid/ask and the time value still in the option. The result is where the underlying finishes, which the charts on each position show."));
+    card.appendChild(el("p", { className: "empty" }, "Every distinct book's open spreads are on track. The open mark is red because closing today costs more than the credit collected: that is the bid/ask and the time value still in the option. The result is where the underlying finishes, which the charts on each position show."));
   }
   appendEvidence(card, lab, options);
 
@@ -882,46 +968,61 @@ function renderLab(options, lab, families) {
   const distinctRows = roleRows((b) => b.role === "variant");
   const roleHeaders = [{ label: "Book" }, { label: "Realized", num: true }, { label: "Open mark", num: true }, { label: "Closed", num: true }, { label: "Open", num: true }];
   if (dupRows.length) {
-    card.appendChild(el("h2", null, "Duplicate arms (loss stacks)"));
+    card.appendChild(el("h2", null, "o0 and its copies"));
+    card.appendChild(el("p", { className: "empty" }, "The copies repeat o0's entries. Their dollars stay on these rows and are left out of the totals above."));
     card.appendChild(table(roleHeaders, dupRows));
   }
   if (distinctRows.length) {
-    card.appendChild(el("h2", null, "Distinct experiments (do not stack)"));
+    card.appendChild(el("h2", null, "Different tests"));
+    card.appendChild(el("p", { className: "empty" }, "Each of these sleeves is its own paper account, so each result is counted once."));
     card.appendChild(table(roleHeaders, distinctRows));
   }
-  card.appendChild(el("h2", null, "Arm experiment families \u2014 stacked loss"));
+  card.appendChild(el("h2", null, "Arm families"));
   if (!famRows.length) {
-    card.appendChild(el("p", { className: "empty" }, "No arm families are running (rules/arms/families.json). Brothers that clone one experiment must be read as one book: their losses add up here."));
+    card.appendChild(el("p", { className: "empty" }, "No arm families are running (rules/arms/families.json)."));
   } else {
     const scf = () => {
       const sc = lab && lab.scorecard && lab.scorecard.present && lab.scorecard.data && lab.scorecard.data.options_arms;
       return (sc && sc.families) || null;
     };
+    function familyCounted(f) {
+      const role = {};
+      (f.member_roles || []).forEach((m) => { role[m.id] = m.role; });
+      const present = new Set(f.present_members || []);
+      let net = 0;
+      let n = 0;
+      options.forEach((b) => {
+        if (!present.has(b.name) || role[b.name] === "entry_clone") return;
+        net += bookRealized(b) + (b.unrealized_pnl_usd || 0);
+        n += 1;
+      });
+      return { net, n };
+    }
     card.appendChild(table(
-      [{ label: "Family" }, { label: "Members" }, { label: "Sleeve", num: true }, { label: "Stacked net", num: true }, { label: "ROI", num: true }, { label: "Distinct bets", num: true }, { label: "Exp/bet", num: true }, { label: "Note", wrap: true }],
+      [{ label: "Family" }, { label: "Counted", num: true }, { label: "Counted net", num: true }, { label: "Every sleeve", num: true }, { label: "Distinct bets", num: true }, { label: "Exp/bet", num: true }, { label: "Note", wrap: true }],
       famRows.map((f) => {
         const stats = scf() ? scf()[f.id] : null;
         const exp = stats ? stats.distinct_bet_expectancy_usd : null;
+        const countedFam = familyCounted(f);
         return [
           cell(f.label || f.id),
-          cell(f.present_members.length + " of " + f.declared_members.length),
-          cell(usd(f.sleeve_usd)),
+          cell(countedFam.n + " of " + f.present_members.length),
+          cell(usd2(countedFam.net), cls(countedFam.net)),
           cell(usd2(f.stacked_net_usd), cls(f.stacked_net_usd)),
-          cell(pct2(f.roi_pct), cls(f.roi_pct)),
           cell(f.effective_entries != null ? f.effective_entries : (stats ? stats.distinct_bets : "\u2014")),
           cell(exp == null ? "\u2014" : usd2(exp), exp != null && exp <= 0 ? "down" : ""),
-          cell((f.mark_suspect ? "MARK SUSPECT · " : "") + (f.replication_count ? (f.replication_count.toFixed(1) + "× replicated. ") : "") + (f.stack ? "duplicate arms are one experiment— loss stacks" : "live capital, shown separately"))
+          cell((f.mark_suspect ? "MARK SUSPECT · " : "") + (f.replication_count ? (f.replication_count.toFixed(1) + "× replicated. ") : "") + "Counted net leaves out o0 copies. Every sleeve adds those copies back in.")
         ];
       })
     ));
-    card.appendChild(el("p", { className: "empty" }, "Stacked net = sum of member realized + open mark (the same spread open in two clones counts once). Distinct-bet expectancy is the nightly scorecard's experimental read: the falsifier is judged on the family, not the per-arm rows."));
+    card.appendChild(el("p", { className: "empty" }, "Counted net adds each distinct book once, including its open mark. Every sleeve is that sum plus the o0 copies. An identical spread open in two books counts once inside Every sleeve. Distinct-bet expectancy is the nightly scorecard's experimental read."));
   }
 
   const charts = el("div", { className: "charts" });
   charts.appendChild(barChart(
     "Open mark by book",
     options.map((b, i) => ({
-      label: shortName(b),
+      label: shortName(b) + (b.role === "entry_clone" ? " copy" : ""),
       value: b.unrealized_pnl_usd || 0,
       text: usd2(b.unrealized_pnl_usd || 0),
       color: (b.unrealized_pnl_usd || 0) >= 0 ? "#8fceab" : "#e08b7a"
@@ -1325,7 +1426,8 @@ function workflowDecisions(book) {
   return wrap;
 }
 
-let tab = location.hash === "#swing" ? "swing" : location.hash === "#workflows" ? "workflows" : "options";
+// Options are paused (archived 2026-10-23); the tab only appears when options books are loaded.
+let tab = location.hash === "#options" ? "options" : location.hash === "#workflows" ? "workflows" : "swing";
 let latest = null;
 
 function paint() {
@@ -1338,7 +1440,12 @@ function paint() {
   const optBtn = document.querySelector('button[data-tab="options"]');
   const swBtn = document.querySelector('button[data-tab="swing"]');
   const wfBtn = document.querySelector('button[data-tab="workflows"]');
-  if (optBtn) optBtn.textContent = "Options" + (options.length ? " · " + options.length : "");
+  if (optBtn) {
+    optBtn.hidden = options.length === 0;
+    optBtn.textContent = "Options" + (options.length ? " · " + options.length : "");
+  }
+  if (tab === "options" && options.length === 0) tab = "swing";
+  document.querySelectorAll("button.tab").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
   if (swBtn) swBtn.textContent = "Swing" + (swing.length ? " · " + swing.length : "");
   if (wfBtn) wfBtn.textContent = "Workflows" + (workflows.length ? " · " + workflows.length : "");
   const y = window.scrollY;
@@ -1350,6 +1457,16 @@ function paint() {
     const ok = options.filter((b) => !b.error);
     const families = latest.families ? latest.families.families || [] : [];
     if (ok.length) nodes.push(renderLab(ok, latest.lab, families));
+  }
+  if (tab === "swing") {
+    const liveSum = renderWorkflowSummary(swing, "Current paper trades (live books)", "Books");
+    if (liveSum) nodes.push(liveSum);
+    const labCard = renderSwingLab(latest.lab);
+    if (labCard) nodes.push(labCard);
+  }
+  if (tab === "workflows") {
+    const sum = renderWorkflowSummary(workflows);
+    if (sum) nodes.push(sum);
   }
   if (!shown.length) nodes.push(el("p", { className: "empty" }, "No " + tab + " books are loaded."));
   nodes.push(...agent.map(renderBook), ...rest.map(renderBook));

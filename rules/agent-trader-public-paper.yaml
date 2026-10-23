@@ -25,3 +25,6 @@ exit_rules:
   dte_close: 21
 schedule:
   market_hours_only: true
+execution:
+  # No entries or exits, including stops, until the cash open has been underway for 15 minutes.
+  min_minutes_after_open: 15

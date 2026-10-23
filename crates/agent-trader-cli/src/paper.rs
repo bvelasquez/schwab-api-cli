@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use broker_core::{AccountRef, BrokerKind, DataSource, MarketData, Quote};
+use broker_core::{minutes_since_cash_open, AccountRef, BrokerKind, DataSource, MarketData, Quote};
 use chrono::Utc;
 use serde_json::{json, Value};
 
@@ -29,6 +29,7 @@ pub async fn run_public_paper(rules_path: &str, once: bool, interval_seconds: u6
             &setup,
             &path,
             use_strategy_quote,
+            Utc::now(),
         )
         .await
         {
@@ -61,6 +62,7 @@ async fn tick_once(
     setup: &crate::options::PaperSetup,
     book_file: &Path,
     use_strategy_quote: bool,
+    now: chrono::DateTime<Utc>,
 ) -> Result<Value> {
     let previous = read_book(book_file);
     let tick = previous["tick_count"].as_u64().unwrap_or(0) + 1;
@@ -78,7 +80,32 @@ async fn tick_once(
         .unwrap_or_default();
     let mut journal = previous["journal"].as_array().cloned().unwrap_or_default();
     let session = data.session_open(account).await?;
-    let today = Utc::now().date_naive();
+    let today = now.date_naive();
+    if setup.market_hours_only && !session.open {
+        let (mark_suspect_count, clean_delta) =
+            settle_closes(&mut closed, setup.vertical.max_width, &mut cash, &mut realized);
+        let unrealized = sum_unrealized(&positions);
+        let win_rate = win_rate(wins, closed_total);
+        return Ok(book_snapshot(
+            tick,
+            &session,
+            now,
+            cash,
+            unrealized,
+            realized,
+            clean_delta,
+            mark_suspect_count,
+            &positions,
+            closed_total,
+            wins,
+            win_rate,
+            &closed,
+            &journal,
+        ));
+    }
+    let bell_hold = setup.min_minutes_after_open.is_some_and(|threshold| {
+        minutes_since_cash_open(now).is_some_and(|elapsed| elapsed < threshold)
+    });
 
     let mut still_open = Vec::new();
     for mut position in positions.drain(..) {
@@ -112,10 +139,10 @@ async fn tick_once(
             }
         }
         let credit = position["entry_credit"].as_f64().unwrap_or(0.0);
-        let debit = position["debit_to_close"].as_f64().unwrap_or(credit);
+        let quote_debit = position["debit_to_close"].as_f64().unwrap_or(credit);
         let dte = expiry_dte(&expiry, today);
-        let action = exit_action(credit, debit, dte, 10.0, 0.0, &setup.exits);
-        if matches!(action, ExitAction::Hold) {
+        let action = exit_action(credit, quote_debit, dte, 10.0, 0.0, &setup.exits);
+        if bell_hold || matches!(action, ExitAction::Hold) {
             still_open.push(position);
             continue;
         }
@@ -123,8 +150,9 @@ async fn tick_once(
             ExitAction::Close { reason } | ExitAction::Roll { reason } => reason,
             ExitAction::Hold => "hold".into(),
         };
+        let fill_debit = stop_fill_debit(credit, quote_debit, &reason, &setup.exits);
         let contracts = position["contracts"].as_f64().unwrap_or(1.0);
-        let pnl = (credit - debit) * 100.0 * contracts;
+        let pnl = (credit - fill_debit) * 100.0 * contracts;
         cash += position["max_loss_usd"].as_f64().unwrap_or(0.0) + pnl;
         realized += pnl;
         if pnl > 0.0 {
@@ -132,19 +160,21 @@ async fn tick_once(
         }
         closed_total += 1;
         closed.push(json!({
-            "closed_at": Utc::now().to_rfc3339(),
+            "closed_at": now.to_rfc3339(),
             "underlying": underlying,
             "pnl_usd": pnl,
             "pnl_pct": if credit > 0.0 { pnl / (credit * 100.0 * contracts) * 100.0 } else { 0.0 },
             "exit_reason": reason,
             "hold_days": 0,
-            "debit": debit,
+            "debit": fill_debit,
+            "quote_debit": quote_debit,
             "width": width,
             "contracts": contracts,
             "entry_credit": credit,
             "short_strike": position["short_strike"].clone(),
             "long_strike": position["long_strike"].clone(),
-            "mark_suspect": false
+            "mark_suspect": false,
+            "stop_fill_applied": fill_debit + 1e-9 < quote_debit
         }));
         journal.push(note(&format!(
             "paper close {underlying} {pnl:.2} ({reason}). No order sent."
@@ -152,7 +182,7 @@ async fn tick_once(
     }
     positions = still_open;
 
-    if positions.len() < setup.max_open {
+    if !bell_hold && positions.len() < setup.max_open {
         for symbol in &setup.watchlist {
             if positions.len() >= setup.max_open {
                 break;
@@ -219,20 +249,57 @@ async fn tick_once(
     if closed.len() > 12 {
         closed = closed.split_off(closed.len() - 12);
     }
-    let (mark_suspect_count, clean_delta) = restate_closes(&mut closed);
-    let mut unrealized: f64 = positions
-        .iter()
-        .filter_map(|row| row["unrealized_usd"].as_f64())
-        .sum();
-    if unrealized.abs() < 1e-9 {
-        unrealized = 0.0;
-    }
-    let win_rate = if closed_total == 0 {
-        0.0
-    } else {
-        wins as f64 * 100.0 / closed_total as f64
-    };
-    Ok(json!({
+    let (mark_suspect_count, clean_delta) =
+        settle_closes(&mut closed, setup.vertical.max_width, &mut cash, &mut realized);
+    let unrealized = sum_unrealized(&positions);
+    let win_rate = win_rate(wins, closed_total);
+    Ok(book_snapshot(
+        tick,
+        &session,
+        now,
+        cash,
+        unrealized,
+        realized,
+        clean_delta,
+        mark_suspect_count,
+        &positions,
+        closed_total,
+        wins,
+        win_rate,
+        &closed,
+        &journal,
+    ))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct LegQuotes {
+    short_ask: Option<f64>,
+    long_bid: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum CloseMark {
+    Usable(f64),
+    Degraded,
+}
+
+fn book_snapshot(
+    tick: u64,
+    session: &broker_core::SessionStatus,
+    now: chrono::DateTime<Utc>,
+    cash: f64,
+    unrealized: f64,
+    realized: f64,
+    clean_delta: f64,
+    mark_suspect_count: u64,
+    positions: &[Value],
+    closed_total: u64,
+    wins: u64,
+    win_rate: f64,
+    closed: &[Value],
+    journal: &[Value],
+) -> Value {
+    json!({
         "stack": "agent-trader",
         "broker": "public",
         "broker_label": "Public API",
@@ -242,7 +309,7 @@ async fn tick_once(
         "mode": "paper",
         "live_orders": false,
         "note": "Simulated fills from the Public API. This book never submits an order.",
-        "last_tick": Utc::now().to_rfc3339(),
+        "last_tick": now.to_rfc3339(),
         "tick_count": tick,
         "session": if session.open { "open" } else { "closed" },
         "profile": "public-paper",
@@ -261,19 +328,111 @@ async fn tick_once(
         "positions": positions,
         "recent_closes": closed,
         "journal": journal
-    }))
+    })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct LegQuotes {
-    short_ask: Option<f64>,
-    long_bid: Option<f64>,
+fn sum_unrealized(positions: &[Value]) -> f64 {
+    let unrealized: f64 = positions
+        .iter()
+        .filter_map(|row| row["unrealized_usd"].as_f64())
+        .sum();
+    if unrealized.abs() < 1e-9 {
+        0.0
+    } else {
+        unrealized
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum CloseMark {
-    Usable(f64),
-    Degraded,
+fn win_rate(wins: u64, closed_total: u64) -> f64 {
+    if closed_total == 0 {
+        0.0
+    } else {
+        wins as f64 * 100.0 / closed_total as f64
+    }
+}
+
+/// A stop books the stop line. The quoted debit stays on the close as `quote_debit`.
+fn stop_fill_debit(
+    entry_credit: f64,
+    quote_debit: f64,
+    reason: &str,
+    exits: &crate::options::ExitRules,
+) -> f64 {
+    if !reason.starts_with("stop debit") || !reason.contains(">=") {
+        return quote_debit;
+    }
+    let stop_line = entry_credit * exits.stop_loss_pct / 100.0;
+    quote_debit.min(stop_line)
+}
+
+/// Rewrite legacy `stop debit Q >= S` closes onto the stop line, once.
+/// Returns the cash and realized adjustment (stop pnl minus the booked pnl).
+fn apply_legacy_stop_fills(closes: &mut [Value], max_width: f64) -> f64 {
+    let mut delta = 0.0;
+    for close in closes.iter_mut() {
+        if close.get("stop_fill_applied").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        let Some(reason) = close.get("exit_reason").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some((quote, stop)) = parse_stop_quote(reason) else {
+            continue;
+        };
+        if quote <= stop + 1e-6 {
+            close["stop_fill_applied"] = json!(true);
+            continue;
+        }
+        let contracts = close
+            .get("contracts")
+            .and_then(Value::as_f64)
+            .unwrap_or(1.0)
+            .max(0.0);
+        let booked = close.get("pnl_usd").and_then(Value::as_f64).unwrap_or(0.0);
+        let credit = close
+            .get("entry_credit")
+            .and_then(Value::as_f64)
+            .unwrap_or_else(|| {
+                if contracts > 0.0 {
+                    quote + booked / (100.0 * contracts)
+                } else {
+                    0.0
+                }
+            });
+        let stop_pnl = (credit - stop) * 100.0 * contracts;
+        close["booked_pnl_usd"] = json!(booked);
+        close["pnl_usd"] = json!(stop_pnl);
+        close["pnl_pct"] = json!(if credit > 0.0 {
+            stop_pnl / (credit * 100.0 * contracts) * 100.0
+        } else {
+            0.0
+        });
+        close["quote_debit"] = json!(quote);
+        close["debit"] = json!(stop);
+        close["entry_credit"] = json!(credit);
+        close["mark_suspect"] = json!(max_width > 0.0 && quote > max_width + 1e-6);
+        close["stop_fill_applied"] = json!(true);
+        delta += stop_pnl - booked;
+    }
+    delta
+}
+
+fn parse_stop_quote(reason: &str) -> Option<(f64, f64)> {
+    let rest = reason.strip_prefix("stop debit ")?;
+    let (quote, stop) = rest.split_once(" >= ")?;
+    Some((quote.trim().parse().ok()?, stop.trim().parse().ok()?))
+}
+
+fn settle_closes(
+    closes: &mut [Value],
+    max_width: f64,
+    cash: &mut f64,
+    realized: &mut f64,
+) -> (u64, f64) {
+    let fill_delta = apply_legacy_stop_fills(closes, max_width);
+    *cash += fill_delta;
+    *realized += fill_delta;
+    restate_closes(closes)
 }
 
 /// Prefer a strategy-quote debit. A non-positive leg, a missing strategy quote,
@@ -364,6 +523,12 @@ fn restate_closes(closes: &mut [Value]) -> (u64, f64) {
     let mut count = 0u64;
     let mut delta = 0.0;
     for close in closes.iter_mut() {
+        if close.get("stop_fill_applied").and_then(Value::as_bool) == Some(true) {
+            if close.get("mark_suspect").and_then(Value::as_bool) == Some(true) {
+                count += 1;
+            }
+            continue;
+        }
         if !close_is_suspect(close) {
             if close.get("mark_suspect").is_none() {
                 close["mark_suspect"] = json!(false);
@@ -504,6 +669,7 @@ mod tests {
         short_ask: f64,
         long_bid: f64,
         strategy: Option<f64>,
+        session_open: bool,
     }
 
     #[async_trait]
@@ -577,7 +743,7 @@ mod tests {
 
         async fn session_open(&self, _: &AccountRef) -> Result<SessionStatus> {
             Ok(SessionStatus {
-                open: true,
+                open: self.session_open,
                 source: "test".into(),
             })
         }
@@ -589,7 +755,15 @@ mod tests {
             vertical: VerticalRules::default(),
             exits: ExitRules::default(),
             max_open: 1,
+            market_hours_only: true,
+            min_minutes_after_open: None,
         }
+    }
+
+    fn afternoon() -> chrono::DateTime<Utc> {
+        chrono::DateTime::parse_from_rfc3339("2026-06-15T18:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc)
     }
 
     fn position() -> Value {
@@ -611,17 +785,20 @@ mod tests {
         })
     }
 
+    fn book_dir() -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("agent-trader-paper-{}-{n}", std::process::id()))
+    }
+
     async fn tick_position(stub: Stub, book: Value) -> Value {
-        let dir = std::env::temp_dir().join(format!(
-            "agent-trader-paper-{}-{}",
-            std::process::id(),
-            Utc::now().timestamp_micros()
-        ));
+        let dir = book_dir();
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("book.json");
         std::fs::write(&path, book.to_string()).unwrap();
         let account = AccountRef::new(BrokerKind::Public, "paper-test");
-        tick_once(&stub, &account, &setup(), &path, true)
+        tick_once(&stub, &account, &setup(), &path, true, afternoon())
             .await
             .unwrap()
     }
@@ -633,6 +810,7 @@ mod tests {
                 short_ask: 7.0,
                 long_bid: 0.16,
                 strategy: Some(6.84),
+                session_open: true,
             },
             json!({
                 "cash_usd": 9600.0,
@@ -657,6 +835,7 @@ mod tests {
                 short_ask: 3.0,
                 long_bid: 0.0,
                 strategy: None,
+                session_open: true,
             },
             json!({
                 "cash_usd": 9600.0,
@@ -680,6 +859,7 @@ mod tests {
                 short_ask: 2.2,
                 long_bid: 0.2,
                 strategy: Some(0.55),
+                session_open: true,
             },
             json!({
                 "cash_usd": 9600.0,
@@ -713,5 +893,115 @@ mod tests {
         let realized = -1542.0;
         let clean = realized + delta;
         assert!((clean - (-1358.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn legacy_stop_quote_is_rewritten_to_the_stop_line_once() {
+        let mut closes = vec![json!({
+            "underlying": "SPY",
+            "pnl_usd": -644.0,
+            "exit_reason": "stop debit 6.84 >= 1.00",
+            "mark_suspect": false
+        })];
+        let delta = apply_legacy_stop_fills(&mut closes, 5.0);
+        assert!((delta - 584.0).abs() < 1e-6);
+        assert!((closes[0]["pnl_usd"].as_f64().unwrap() - (-60.0)).abs() < 1e-6);
+        assert_eq!(closes[0]["booked_pnl_usd"], -644.0);
+        assert_eq!(closes[0]["quote_debit"], 6.84);
+        assert_eq!(closes[0]["mark_suspect"], true);
+        assert_eq!(closes[0]["stop_fill_applied"], true);
+        assert_eq!(apply_legacy_stop_fills(&mut closes, 5.0), 0.0);
+        assert!((closes[0]["pnl_usd"].as_f64().unwrap() - (-60.0)).abs() < 1e-6);
+    }
+
+    async fn tick_at(
+        stub: Stub,
+        book: Value,
+        rules: PaperSetup,
+        now: chrono::DateTime<Utc>,
+    ) -> Value {
+        let dir = book_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("book.json");
+        std::fs::write(&path, book.to_string()).unwrap();
+        let account = AccountRef::new(BrokerKind::Public, "paper-test");
+        tick_once(&stub, &account, &rules, &path, true, now)
+            .await
+            .unwrap()
+    }
+
+    fn open_book() -> Value {
+        json!({
+            "cash_usd": 9600.0,
+            "realized_pnl_usd": 0.0,
+            "positions": [position()],
+            "recent_closes": [],
+            "journal": []
+        })
+    }
+
+    fn stopping_quote() -> Stub {
+        Stub {
+            short_ask: 4.2,
+            long_bid: 0.2,
+            strategy: Some(4.0),
+            session_open: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn closed_session_does_not_mark_or_close() {
+        let mut book_in = open_book();
+        book_in["recent_closes"] = json!([{
+            "underlying": "SPY",
+            "pnl_usd": -644.0,
+            "exit_reason": "stop debit 6.84 >= 1.00",
+            "mark_suspect": false
+        }]);
+        book_in["realized_pnl_usd"] = json!(-644.0);
+        book_in["closed_count"] = json!(1);
+        let book = tick_at(
+            Stub {
+                session_open: false,
+                ..stopping_quote()
+            },
+            book_in,
+            setup(),
+            afternoon(),
+        )
+        .await;
+        assert_eq!(book["session"], "closed");
+        assert_eq!(book["open_count"], 1);
+        assert_eq!(book["closed_count"], 1);
+        assert_eq!(book["positions"][0]["debit_to_close"], 1.0);
+        assert!((book["realized_pnl_usd"].as_f64().unwrap() - (-60.0)).abs() < 1e-6);
+        assert!((book["cash_usd"].as_f64().unwrap() - (9600.0 + 584.0)).abs() < 1e-6);
+        assert!(book["journal"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn stop_fills_at_the_stop_line() {
+        let book = tick_at(stopping_quote(), open_book(), setup(), afternoon()).await;
+        assert_eq!(book["open_count"], 0);
+        assert_eq!(book["closed_count"], 1);
+        let close = &book["recent_closes"][0];
+        assert!((close["pnl_usd"].as_f64().unwrap() - (-150.0)).abs() < 1e-6);
+        assert_eq!(close["debit"], 2.5);
+        assert_eq!(close["quote_debit"], 4.0);
+        assert_eq!(close["mark_suspect"], false);
+    }
+
+    #[tokio::test]
+    async fn open_bell_holds_a_stop() {
+        let mut rules = setup();
+        rules.min_minutes_after_open = Some(15);
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-22T13:35:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let book = tick_at(stopping_quote(), open_book(), rules, now).await;
+        assert_eq!(book["open_count"], 1);
+        assert_eq!(book["closed_count"], 0);
+        assert_eq!(book["positions"][0]["debit_to_close"], 4.0);
+        assert_eq!(book["realized_pnl_usd"], 0.0);
     }
 }

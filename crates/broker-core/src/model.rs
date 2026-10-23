@@ -183,21 +183,37 @@ pub struct SessionStatus {
 
 pub fn session_open_local(now: DateTime<Utc>) -> SessionStatus {
     // Weekday 9:30–16:00 America/New_York, without a broker hours endpoint.
-    // Fixed offset EST (UTC-5) is wrong in summer; use EDT/EST via chrono offset approximation:
-    // US equity regular hours are 14:30–21:00 UTC during daylight time and 15:30–22:00 UTC otherwise.
-    // March second Sunday through November first Sunday is daylight time. This calendar is the
-    // Public gap filler; Schwab uses its market-hours endpoint instead.
-    let date = now.date_naive();
-    let weekday = date.format("%u").to_string();
-    let weekend = weekday == "6" || weekday == "7";
-    let daylight = us_daylight(date);
-    let open_mins = if daylight { 14 * 60 + 30 } else { 15 * 60 + 30 };
-    let close_mins = if daylight { 21 * 60 } else { 22 * 60 };
-    let mins = now.time().hour() * 60 + now.time().minute();
+    // EDT is UTC−4, so the cash session is 13:30–20:00 UTC. EST is UTC−5, so it is
+    // 14:30–21:00 UTC. March second Sunday through November first Sunday is daylight
+    // time. This calendar is the Public gap filler; Schwab uses its market-hours endpoint.
+    let mins = now.time().hour() as i32 * 60 + now.time().minute() as i32;
+    let open = cash_session_bounds(now.date_naive()).is_some_and(|(open_mins, close_mins)| {
+        mins >= open_mins && mins < close_mins
+    });
     SessionStatus {
-        open: !weekend && mins >= open_mins && mins < close_mins,
+        open,
         source: "local-us-equity-calendar".into(),
     }
+}
+
+/// Minutes since 9:30 ET. `None` on a weekend or before the cash open.
+pub fn minutes_since_cash_open(now: DateTime<Utc>) -> Option<u32> {
+    let (open_mins, _) = cash_session_bounds(now.date_naive())?;
+    let mins = now.time().hour() as i32 * 60 + now.time().minute() as i32;
+    if mins < open_mins {
+        return None;
+    }
+    Some((mins - open_mins) as u32)
+}
+
+fn cash_session_bounds(date: NaiveDate) -> Option<(i32, i32)> {
+    if matches!(date.weekday(), Weekday::Sat | Weekday::Sun) {
+        return None;
+    }
+    let daylight = us_daylight(date);
+    let open_mins = if daylight { 13 * 60 + 30 } else { 14 * 60 + 30 };
+    let close_mins = if daylight { 20 * 60 } else { 21 * 60 };
+    Some((open_mins, close_mins))
 }
 
 fn us_daylight(date: chrono::NaiveDate) -> bool {
@@ -219,5 +235,45 @@ fn nth_sunday(year: i32, month: u32, n: u32) -> NaiveDate {
             }
         }
         date = date.succ_opt().expect("date");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(rfc3339: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(rfc3339)
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn daylight_session_opens_at_1330_utc() {
+        let before = at("2026-10-22T13:29:00Z");
+        let open = at("2026-10-22T13:30:00Z");
+        assert!(!session_open_local(before).open);
+        assert_eq!(minutes_since_cash_open(before), None);
+        assert!(session_open_local(open).open);
+        assert_eq!(minutes_since_cash_open(open), Some(0));
+        assert_eq!(minutes_since_cash_open(at("2026-10-22T13:45:00Z")), Some(15));
+        assert!(!session_open_local(at("2026-10-22T20:00:00Z")).open);
+    }
+
+    #[test]
+    fn standard_session_opens_at_1430_utc() {
+        let before = at("2026-01-15T14:29:00Z");
+        let open = at("2026-01-15T14:30:00Z");
+        assert!(!session_open_local(before).open);
+        assert!(session_open_local(open).open);
+        assert_eq!(minutes_since_cash_open(open), Some(0));
+        assert!(!session_open_local(at("2026-01-15T21:00:00Z")).open);
+    }
+
+    #[test]
+    fn weekend_is_closed() {
+        let saturday = at("2026-10-24T15:00:00Z");
+        assert!(!session_open_local(saturday).open);
+        assert_eq!(minutes_since_cash_open(saturday), None);
     }
 }

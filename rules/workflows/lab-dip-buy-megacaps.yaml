@@ -1,0 +1,338 @@
+# Swing lab candidate: quality dip buy. Six megacaps, $660 each of the $4,000 sleeve.
+# Buy at or below the 20-day EMA while above the 200-day EMA; sell at +8% or below the 200-day EMA.
+# Backtest 2018-2026 (20-name basket, 5 slots): CAGR 15.0%, max drawdown 30%, 556 trades. The basket is
+# today's survivors, so treat the backtest as optimistic. The backtest's 30-day time stop is not expressed here.
+version: 1
+broker: public
+account: "public:ACCOUNT_ID"
+workflows:
+  - id: dip-msft
+    schedule:
+      cron: "50 15 * * 1-5"
+      timezone: America/New_York
+      active_between: ["15:45", "16:00"]
+    steps:
+      - id: quote
+        fetch: quote
+        symbol: MSFT
+      - id: ema20
+        fetch: ema
+        symbol: MSFT
+        period: 20
+      - id: ema200
+        fetch: ema
+        symbol: MSFT
+        period: 200
+      - id: pos
+        fetch: position
+        symbol: MSFT
+      - id: buy
+        when:
+          all:
+            - session_open: true
+            - gt: ["quote.last", "ema200"]
+            - lte: ["quote.last", "ema20"]
+            - position_qty: {symbol: MSFT, eq: 0}
+            - buying_power_at_least: 650
+        order:
+          side: buy
+          symbol: MSFT
+          notional_usd: 660
+          order_type: market
+      - id: sell_target
+        when:
+          all:
+            - session_open: true
+            - position_qty: {symbol: MSFT, gt: 0}
+            - gte: ["pos.unrealized_pct", 8]
+        order:
+          side: sell
+          symbol: MSFT
+          quantity: pos.quantity
+          order_type: market
+      - id: sell_trend
+        when:
+          all:
+            - session_open: true
+            - position_qty: {symbol: MSFT, gt: 0}
+            - lt: ["quote.last", "ema200"]
+        order:
+          side: sell
+          symbol: MSFT
+          quantity: pos.quantity
+          order_type: market
+  - id: dip-aapl
+    schedule:
+      cron: "50 15 * * 1-5"
+      timezone: America/New_York
+      active_between: ["15:45", "16:00"]
+    steps:
+      - id: quote
+        fetch: quote
+        symbol: AAPL
+      - id: ema20
+        fetch: ema
+        symbol: AAPL
+        period: 20
+      - id: ema200
+        fetch: ema
+        symbol: AAPL
+        period: 200
+      - id: pos
+        fetch: position
+        symbol: AAPL
+      - id: buy
+        when:
+          all:
+            - session_open: true
+            - gt: ["quote.last", "ema200"]
+            - lte: ["quote.last", "ema20"]
+            - position_qty: {symbol: AAPL, eq: 0}
+            - buying_power_at_least: 650
+        order:
+          side: buy
+          symbol: AAPL
+          notional_usd: 660
+          order_type: market
+      - id: sell_target
+        when:
+          all:
+            - session_open: true
+            - position_qty: {symbol: AAPL, gt: 0}
+            - gte: ["pos.unrealized_pct", 8]
+        order:
+          side: sell
+          symbol: AAPL
+          quantity: pos.quantity
+          order_type: market
+      - id: sell_trend
+        when:
+          all:
+            - session_open: true
+            - position_qty: {symbol: AAPL, gt: 0}
+            - lt: ["quote.last", "ema200"]
+        order:
+          side: sell
+          symbol: AAPL
+          quantity: pos.quantity
+          order_type: market
+  - id: dip-googl
+    schedule:
+      cron: "50 15 * * 1-5"
+      timezone: America/New_York
+      active_between: ["15:45", "16:00"]
+    steps:
+      - id: quote
+        fetch: quote
+        symbol: GOOGL
+      - id: ema20
+        fetch: ema
+        symbol: GOOGL
+        period: 20
+      - id: ema200
+        fetch: ema
+        symbol: GOOGL
+        period: 200
+      - id: pos
+        fetch: position
+        symbol: GOOGL
+      - id: buy
+        when:
+          all:
+            - session_open: true
+            - gt: ["quote.last", "ema200"]
+            - lte: ["quote.last", "ema20"]
+            - position_qty: {symbol: GOOGL, eq: 0}
+            - buying_power_at_least: 650
+        order:
+          side: buy
+          symbol: GOOGL
+          notional_usd: 660
+          order_type: market
+      - id: sell_target
+        when:
+          all:
+            - session_open: true
+            - position_qty: {symbol: GOOGL, gt: 0}
+            - gte: ["pos.unrealized_pct", 8]
+        order:
+          side: sell
+          symbol: GOOGL
+          quantity: pos.quantity
+          order_type: market
+      - id: sell_trend
+        when:
+          all:
+            - session_open: true
+            - position_qty: {symbol: GOOGL, gt: 0}
+            - lt: ["quote.last", "ema200"]
+        order:
+          side: sell
+          symbol: GOOGL
+          quantity: pos.quantity
+          order_type: market
+  - id: dip-amzn
+    schedule:
+      cron: "50 15 * * 1-5"
+      timezone: America/New_York
+      active_between: ["15:45", "16:00"]
+    steps:
+      - id: quote
+        fetch: quote
+        symbol: AMZN
+      - id: ema20
+        fetch: ema
+        symbol: AMZN
+        period: 20
+      - id: ema200
+        fetch: ema
+        symbol: AMZN
+        period: 200
+      - id: pos
+        fetch: position
+        symbol: AMZN
+      - id: buy
+        when:
+          all:
+            - session_open: true
+            - gt: ["quote.last", "ema200"]
+            - lte: ["quote.last", "ema20"]
+            - position_qty: {symbol: AMZN, eq: 0}
+            - buying_power_at_least: 650
+        order:
+          side: buy
+          symbol: AMZN
+          notional_usd: 660
+          order_type: market
+      - id: sell_target
+        when:
+          all:
+            - session_open: true
+            - position_qty: {symbol: AMZN, gt: 0}
+            - gte: ["pos.unrealized_pct", 8]
+        order:
+          side: sell
+          symbol: AMZN
+          quantity: pos.quantity
+          order_type: market
+      - id: sell_trend
+        when:
+          all:
+            - session_open: true
+            - position_qty: {symbol: AMZN, gt: 0}
+            - lt: ["quote.last", "ema200"]
+        order:
+          side: sell
+          symbol: AMZN
+          quantity: pos.quantity
+          order_type: market
+  - id: dip-jpm
+    schedule:
+      cron: "50 15 * * 1-5"
+      timezone: America/New_York
+      active_between: ["15:45", "16:00"]
+    steps:
+      - id: quote
+        fetch: quote
+        symbol: JPM
+      - id: ema20
+        fetch: ema
+        symbol: JPM
+        period: 20
+      - id: ema200
+        fetch: ema
+        symbol: JPM
+        period: 200
+      - id: pos
+        fetch: position
+        symbol: JPM
+      - id: buy
+        when:
+          all:
+            - session_open: true
+            - gt: ["quote.last", "ema200"]
+            - lte: ["quote.last", "ema20"]
+            - position_qty: {symbol: JPM, eq: 0}
+            - buying_power_at_least: 650
+        order:
+          side: buy
+          symbol: JPM
+          notional_usd: 660
+          order_type: market
+      - id: sell_target
+        when:
+          all:
+            - session_open: true
+            - position_qty: {symbol: JPM, gt: 0}
+            - gte: ["pos.unrealized_pct", 8]
+        order:
+          side: sell
+          symbol: JPM
+          quantity: pos.quantity
+          order_type: market
+      - id: sell_trend
+        when:
+          all:
+            - session_open: true
+            - position_qty: {symbol: JPM, gt: 0}
+            - lt: ["quote.last", "ema200"]
+        order:
+          side: sell
+          symbol: JPM
+          quantity: pos.quantity
+          order_type: market
+  - id: dip-cost
+    schedule:
+      cron: "50 15 * * 1-5"
+      timezone: America/New_York
+      active_between: ["15:45", "16:00"]
+    steps:
+      - id: quote
+        fetch: quote
+        symbol: COST
+      - id: ema20
+        fetch: ema
+        symbol: COST
+        period: 20
+      - id: ema200
+        fetch: ema
+        symbol: COST
+        period: 200
+      - id: pos
+        fetch: position
+        symbol: COST
+      - id: buy
+        when:
+          all:
+            - session_open: true
+            - gt: ["quote.last", "ema200"]
+            - lte: ["quote.last", "ema20"]
+            - position_qty: {symbol: COST, eq: 0}
+            - buying_power_at_least: 650
+        order:
+          side: buy
+          symbol: COST
+          notional_usd: 660
+          order_type: market
+      - id: sell_target
+        when:
+          all:
+            - session_open: true
+            - position_qty: {symbol: COST, gt: 0}
+            - gte: ["pos.unrealized_pct", 8]
+        order:
+          side: sell
+          symbol: COST
+          quantity: pos.quantity
+          order_type: market
+      - id: sell_trend
+        when:
+          all:
+            - session_open: true
+            - position_qty: {symbol: COST, gt: 0}
+            - lt: ["quote.last", "ema200"]
+        order:
+          side: sell
+          symbol: COST
+          quantity: pos.quantity
+          order_type: market

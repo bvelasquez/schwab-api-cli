@@ -1,0 +1,11 @@
+# Swing candidate: Faber 5-asset tactical allocation
+id: faber_taa
+family: rotation
+label: "Faber 5-asset tactical allocation"
+source: "Faber 2007, A Quantitative Approach to Tactical Asset Allocation."
+thesis: "Holding each asset only above its 10-month average cuts drawdowns across asset classes with few trades."
+backtest_class: Faber
+paper_target: workflow   # baseline | control | shadow_arm | workflow
+biased_universe: false
+universe: [SPY, EFA, AGG, GLD, VNQ]
+doc: "Faber tactical allocation: five assets, 20% each while above the 10-month (210-day) SMA."

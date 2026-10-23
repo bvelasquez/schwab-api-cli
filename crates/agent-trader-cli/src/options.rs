@@ -287,6 +287,8 @@ struct RulesFile {
     #[serde(default)]
     schedule: ScheduleYaml,
     #[serde(default)]
+    execution: ExecutionYaml,
+    #[serde(default)]
     max_open_positions: Option<usize>,
 }
 
@@ -504,6 +506,12 @@ fn hours() -> bool {
     true
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct ExecutionYaml {
+    #[serde(default)]
+    min_minutes_after_open: Option<u32>,
+}
+
 impl RulesFile {
     fn vertical(&self) -> VerticalRules {
         let row = &self.entry_rules.vertical;
@@ -570,6 +578,8 @@ pub(crate) struct PaperSetup {
     pub vertical: VerticalRules,
     pub exits: ExitRules,
     pub max_open: usize,
+    pub market_hours_only: bool,
+    pub min_minutes_after_open: Option<u32>,
 }
 
 pub(crate) fn paper_setup(path: &str) -> Result<PaperSetup> {
@@ -587,6 +597,8 @@ pub(crate) fn paper_setup(path: &str) -> Result<PaperSetup> {
         vertical: rules.vertical(),
         exits: rules.exits(),
         max_open: rules.max_open_positions.unwrap_or(2).max(1),
+        market_hours_only: rules.schedule.market_hours_only,
+        min_minutes_after_open: rules.execution.min_minutes_after_open,
     })
 }
 

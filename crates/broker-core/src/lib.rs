@@ -19,8 +19,9 @@ pub use intent::{
 pub use market::{local_session_status, MarketData};
 pub use mock::MockBroker;
 pub use model::{
-    Balances, Bar, Greeks, OptionChain, OptionContract, OptionStrategyGroup, Order, OrderStatus,
-    PlaceResult, Portfolio, Position, Preflight, Quote, SessionStatus, StrategyLeg, WaitOptions,
+    minutes_since_cash_open, session_open_local, Balances, Bar, Greeks, OptionChain, OptionContract,
+    OptionStrategyGroup, Order, OrderStatus, PlaceResult, Portfolio, Position, Preflight, Quote,
+    SessionStatus, StrategyLeg, WaitOptions,
 };
 pub use osi::{build_osi_symbol, parse_osi_symbol, ParsedOsi};
 pub use registry::{BrokerHandle, BrokerRegistry, DataSource};

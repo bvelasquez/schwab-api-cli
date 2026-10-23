@@ -1,0 +1,11 @@
+# Swing candidate: SPY buy and hold
+id: spy_buy_hold
+family: baseline
+label: "SPY buy and hold"
+source: "Baseline A. Passive index exposure; the bar every active idea has to beat after costs."
+thesis: "Equities earn a risk premium over time; most active rules fail to beat it net of costs and drawdown."
+backtest_class: BuyHold
+paper_target: baseline   # baseline | control | shadow_arm | workflow
+biased_universe: false
+universe: [SPY]
+doc: ""

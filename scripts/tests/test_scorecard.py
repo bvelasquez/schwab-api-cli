@@ -57,7 +57,7 @@ class StemDefaults(unittest.TestCase):
 class MissingFiles(unittest.TestCase):
     def test_missing_state_files_raise_alerts(self):
         with tempfile.TemporaryDirectory() as tmp:
-            alerts = scorecard.build_missing_file_alerts(Path(tmp))
+            alerts = scorecard.build_missing_file_alerts(Path(tmp), include_options=True)
         self.assertEqual(len(alerts), 2)
         self.assertTrue(all("state file missing" in a for a in alerts))
 

@@ -1,0 +1,26 @@
+# Baseline A for the swing lab: buy SPY once with the whole $4,000 paper sleeve and hold.
+# Every other lab-* workflow and the swing books are compared with this book.
+version: 1
+broker: public
+account: "public:ACCOUNT_ID"
+workflows:
+  - id: spy-buy-hold
+    schedule:
+      cron: "40 9-15 * * 1-5"
+      timezone: America/New_York
+      active_between: ["09:30", "16:00"]
+    steps:
+      - id: pos
+        fetch: position
+        symbol: SPY
+      - id: buy
+        when:
+          all:
+            - session_open: true
+            - position_qty: {symbol: SPY, eq: 0}
+            - buying_power_at_least: 3950
+        order:
+          side: buy
+          symbol: SPY
+          notional_usd: 3990
+          order_type: market

@@ -1,0 +1,12 @@
+# Swing candidate: Control plus SPY>SMA50/SMA200 regime gate
+id: pullback_regime_gate
+family: pullback
+label: "Control plus SPY>SMA50/SMA200 regime gate"
+source: "The 2026-10-23 swing review: the book earns in low_vol_trend and loses in elevated_vol."
+thesis: "Only entering when the index is in an uptrend should remove most of the elevated-vol stop-outs."
+backtest_class: PullbackControl
+paper_target: shadow_arm   # baseline | control | shadow_arm | workflow
+biased_universe: true
+universe: [AAPL, MSFT, NVDA, AMZN, GOOGL, META, AVGO, JPM, XOM, UNH, COST, LLY, WMT, HD, PG, V, MA, JNJ, CVX, CAT, SPY, QQQ, IWM, DIA, XLK, XLF, XLE, XLV, XLI, XLP, XLU, XLY, XLB, SMH, GLD, TLT, EFA]
+doc: "Approximation of the live 9947 entry rule: above SMA20 and SMA50, RSI14 48-65, 5.5% stop, 7.5% target, 30-day time stop, 4 slots. Optional SPY regime gate (the review's main finding)."
+params: {"regime_gate": true}

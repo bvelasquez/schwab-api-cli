@@ -1,0 +1,11 @@
+# Swing candidate: 12-1 momentum, top 5 megacaps, monthly
+id: stock_momentum_12_1
+family: momentum
+label: "12-1 momentum, top 5 megacaps, monthly"
+source: "Jegadeesh and Titman 1993; skip-month variant."
+thesis: "Stocks with the best 12-month returns (ex last month) continue to outperform for months."
+backtest_class: StockMomentum
+paper_target: workflow   # baseline | control | shadow_arm | workflow
+biased_universe: true
+universe: [AAPL, MSFT, NVDA, AMZN, GOOGL, META, AVGO, JPM, XOM, UNH, COST, LLY, WMT, HD, PG, V, MA, JNJ, CVX, CAT]
+doc: "Jegadeesh-Titman style 12-1 momentum, top 5 of the megacap basket, monthly, SPY SMA200 gate."

@@ -56,6 +56,12 @@ def parse_args():
         default=None,
         help="Output directory (default: <repo>/rules/scorecards)",
     )
+    p.add_argument(
+        "--include-options",
+        action="store_true",
+        default=os.environ.get("SCORECARD_INCLUDE_OPTIONS") == "1",
+        help="Include options books (paused since 2026-10-23; also SCORECARD_INCLUDE_OPTIONS=1)",
+    )
     p.add_argument("--telegram", action="store_true", help="Send compact summary via Telegram")
     p.add_argument("--json", action="store_true", help="Print full JSON to stdout")
     return p.parse_args()
@@ -804,10 +810,13 @@ def build_drift_alerts(swing: dict, options: dict) -> list[str]:
     return alerts
 
 
-def build_missing_file_alerts(rules: Path) -> list[str]:
+def build_missing_file_alerts(rules: Path, include_options: bool = False) -> list[str]:
     """A wrong default stem once made the scorecard report zero trades for weeks."""
     alerts: list[str] = []
-    for label, name in (("swing", SWING_STATE), ("options", OPTIONS_STATE)):
+    checks = [("swing", SWING_STATE)]
+    if include_options:
+        checks.append(("options", OPTIONS_STATE))
+    for label, name in checks:
         if not (rules / name).is_file():
             msg = f"scorecard: {label} state file missing: {name}"
             print(msg, file=sys.stderr)
@@ -827,9 +836,37 @@ def build_arm_alerts(arms: dict) -> list[str]:
     return alerts
 
 
+def lab_paper_section(rules: Path) -> dict:
+    """Paper books for the swing lab (rules/workflows/lab-*.yaml) against the SPY buy-and-hold book."""
+    books = {}
+    for path in sorted(rules.glob("agent-trader-workflow-lab-*.json")):
+        try:
+            doc = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        start = doc.get("starting_cash_usd") or 4000.0
+        equity = doc.get("equity_usd")
+        if equity is None:
+            continue
+        name = path.stem.removeprefix("agent-trader-workflow-")
+        books[name] = {
+            "equity_usd": equity,
+            "return_pct": (equity / start - 1.0) * 100.0,
+            "realized_usd": doc.get("realized_pnl_usd", 0.0),
+            "closed": doc.get("closed_count", 0),
+            "open": doc.get("open_count", 0),
+            "last_tick": doc.get("last_tick"),
+        }
+    base = books.get("lab-spy-buy-hold")
+    if base:
+        for b in books.values():
+            b["excess_vs_spy_buy_hold_pct"] = b["return_pct"] - base["return_pct"]
+    return books
+
+
 def compact_summary(report: dict) -> str:
     sw = report["swing"]
-    op = report["options"]
+    op = report.get("options") or {}
     lines = [
         f"Scorecard {report['date']}",
         (
@@ -843,11 +880,16 @@ def compact_summary(report: dict) -> str:
             f"  SPY {pct(sw['spy'].get('return_pct'), 2)} | deploy avg {pct(sw.get('avg_deployment_pct'), 1)} | "
             f"excess vs SPY {pct(sw.get('excess_return_vs_spy_pct'), 2)}"
         ),
-        (
+    ]
+    if op:
+        lines.append(
             f"Options: {op['closed_trades']} closes, {op['wins']}W, real {usd(op.get('realized_pnl_usd'))}, "
             f"open mark {usd(op.get('open_position_mark_usd'))}, degraded exits {op.get('exits_on_degraded_quotes')}"
-        ),
-    ]
+        )
+    lab = report.get("swing_lab_paper") or {}
+    if lab:
+        parts = [f"{k.removeprefix('lab-')} {pct(v['return_pct'], 2)}" for k, v in lab.items()]
+        lines.append("Lab paper vs SPY b&h: " + ", ".join(parts))
     arms = report.get("options_arms") or {}
     if arms.get("agents"):
         lines.append(
@@ -916,12 +958,15 @@ def main() -> int:
 
     journal_paths = swing_journal_paths(rules)
     swing = swing_section(rules / SWING_STATE, journal_paths)
-    options = options_section(rules / OPTIONS_STATE, rules / OPTIONS_JOURNAL)
-    options_arms = options_arms_section(rules)
+    if args.include_options:
+        options = options_section(rules / OPTIONS_STATE, rules / OPTIONS_JOURNAL)
+        options_arms = options_arms_section(rules)
+    else:
+        options, options_arms = {}, {}
     drift_alerts = build_drift_alerts(swing, options)
     drift_alerts.extend(build_arm_alerts(options_arms))
     drift_alerts.extend(build_family_alerts(options_arms.get("families") or {}))
-    drift_alerts.extend(build_missing_file_alerts(rules))
+    drift_alerts.extend(build_missing_file_alerts(rules, args.include_options))
     swing.pop("_alerts_inputs", None)
     options.pop("_alerts_inputs", None)
 
@@ -931,6 +976,7 @@ def main() -> int:
         "swing": swing,
         "options": options,
         "options_arms": options_arms,
+        "swing_lab_paper": lab_paper_section(rules),
         "drift_alerts": drift_alerts,
     }
 
