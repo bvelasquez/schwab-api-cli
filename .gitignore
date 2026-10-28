@@ -1,5 +1,6 @@
 # Dependencies
-/target/
+# no trailing slash: target is a symlink into /srv/vms/cargo-targets
+/target
 
 # Secrets and local config — NEVER commit
 .env
