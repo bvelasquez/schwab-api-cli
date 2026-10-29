@@ -1,13 +1,25 @@
 {
-  "rows": 766,
+  "rows": 49,
   "by_reason": {
-    "other": {
-      "n": 704,
-      "mean_hyp_pnl_pct": -0.7714545980073088
+    "below_sma": {
+      "n": 28,
+      "mean_hyp_pnl_pct": 1.9912013610126962
+    },
+    "rsi_out_of_range": {
+      "n": 13,
+      "mean_hyp_pnl_pct": -0.2591441977786969
+    },
+    "near_52w_high": {
+      "n": 4,
+      "mean_hyp_pnl_pct": -0.2505794602514211
+    },
+    "rs_below_min": {
+      "n": 3,
+      "mean_hyp_pnl_pct": -0.0786473507819981
     },
     "ADMITTED": {
-      "n": 62,
-      "mean_hyp_pnl_pct": -1.1180067184544216
+      "n": 1,
+      "mean_hyp_pnl_pct": -2.5988655107213154
     }
   }
 }

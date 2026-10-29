@@ -30,6 +30,17 @@ OPERATOR_CONTEXT = {
         "schwab-auto-login.timer + jarvis-token-keeper: OAuth refresh / invalid_grant",
         "paper-host-watchdog.sh: restart wedged --simulate units + Telegram",
     ],
+    "options_paused": (
+        "Options books are intentionally PAUSED as of 2026-10-23 and have no state or journal "
+        "files; their absence is expected. Never raise their absence as a P0 or recommend "
+        "investigating it. Options resumes only on an explicit operator decision."
+    ),
+    "accounting_epochs": (
+        "Accounting is per epoch (rules/epochs.json). Current metrics cover only the active "
+        "epoch; retired lifetime numbers are never mixed in or quoted as current. A rules "
+        "change makes the epoch drift, and drifted results are not comparable until the "
+        "operator closes and opens a new epoch."
+    ),
     "options_arms_are_experiments": (
         "O0–O8 are A/B arms with fixed hypotheses (see arm_roles). Low credit/width on O3/O short-DTE "
         "arms is often by design (6% floors). Do not recommend pausing an arm for metrics that "
@@ -264,13 +275,21 @@ def public_books(rules: Path) -> dict:
 def build_fact_pack(repo: Path, day: str) -> dict:
     sc = load_scorecard(repo)
     rules = repo / "rules"
-    journal_paths = sc.swing_journal_paths(rules)
-    swing = sc.swing_section(rules / sc.SWING_STATE, journal_paths)
-    options = sc.options_section(rules / sc.OPTIONS_STATE, rules / sc.OPTIONS_JOURNAL)
-    options_arms = sc.options_arms_section(rules)
+    epoch_status = sc.epoch_mod.epoch_status(rules, sc.SWING_BOOK)
+    epoch = epoch_status.get("active")
+    journal_paths = sc.swing_journal_paths(rules, epoch)
+    swing = sc.swing_section(rules / sc.SWING_STATE, journal_paths, epoch)
+    # Options books are paused (no state/journal by design). Reading them here
+    # produced a false P0 every morning, so only read them when explicitly on.
+    include_options = os.environ.get("SCORECARD_INCLUDE_OPTIONS") == "1"
+    if include_options:
+        options = sc.options_section(rules / sc.OPTIONS_STATE, rules / sc.OPTIONS_JOURNAL)
+        options_arms = sc.options_arms_section(rules)
+    else:
+        options, options_arms = {}, {}
     drift = sc.build_drift_alerts(swing, options)
     drift.extend(sc.build_arm_alerts(options_arms))
-    drift.extend(sc.build_missing_file_alerts(rules))
+    drift.extend(sc.build_missing_file_alerts(rules, include_options))
     swing_alert_inputs = dict(swing.get("_alerts_inputs") or {})
     options_alert_inputs = dict(options.get("_alerts_inputs") or {})
     derived = build_derived_signals(
@@ -285,6 +304,14 @@ def build_fact_pack(repo: Path, day: str) -> dict:
     return {
         "date": day,
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "epoch": {
+            "id": (epoch or {}).get("id"),
+            "started_at": (epoch or {}).get("started_at"),
+            "days": epoch_status["days"],
+            "strategy_version": (epoch or {}).get("strategy_version"),
+            "drift": epoch_status["drift"],
+            "rule": "Quote only current-epoch results. Never present retired/lifetime numbers as current.",
+        },
         "operator_context": OPERATOR_CONTEXT,
         "derived_signals": derived,
         "promotion_gate": load_promotion_gate_summary(rules),
