@@ -1,0 +1,51 @@
+# Paper-only research arm. See docs/RESEARCH_ARM_PLAN.md.
+#
+#   agent-trader research validate --rules rules/research/example-megacaps.yaml
+#   agent-trader research tick     --rules rules/research/example-megacaps.yaml
+#
+# `tick` requires PUBLIC_API_KEY (read-only use) and, for a forecast, OPENROUTER_API_KEY.
+# It never applies a patch and never places an order.
+version: 1
+mode: paper
+arm_id: research-megacaps
+broker: public
+account: "public:REPLACE_WITH_PUBLIC_ACCOUNT_ID"   # bare hashes are rejected (they map to Schwab)
+
+interval:
+  cron: "0 10-15 * * 1-5"
+  timezone: America/New_York
+
+forecast:
+  target: forward_5d_excess_return_sign
+  benchmark: SPY
+  horizon_days: 5
+  min_confidence: 0.55
+
+research:
+  feeds:
+    - id: fed-press
+      kind: rss
+      url: "https://www.federalreserve.gov/feeds/press_all.xml"
+      phases: [all]
+  search:
+    enabled: true
+    provider: openrouter_web_search
+    engine: auto
+    model: google/gemini-2.5-flash
+    max_results: 5
+    max_total_results: 20
+    search_context_size: medium
+    max_queries_per_tick: 4
+    allowed_domains: [reuters.com, federalreserve.gov, sec.gov, bls.gov]
+
+universe: [MSFT, AAPL, NVDA, AMZN, GOOGL]
+
+paper:
+  starting_equity_usd: 10000
+  slippage_bps: 5
+  max_quote_age_seconds: 60
+  max_daily_loss_usd: 300
+
+adaptation:
+  live_auto_apply: false
+  allowlist: [playbook.exit.stop_loss_pct, playbook.entry.rsi_14_range]

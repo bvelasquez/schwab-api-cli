@@ -18,10 +18,23 @@ pub struct PublicClient {
     token: Mutex<Option<CachedToken>>,
     last_request: Mutex<Option<Instant>>,
     min_interval: Duration,
+    /// When true, any non-GET to `/userapigateway/trading/*` is refused before
+    /// it reaches the network. Market-data GET/POST still work. Used by the
+    /// research-paper arm so an order can never be submitted (plan L3).
+    read_only: bool,
 }
 
 impl PublicClient {
     pub fn new(secret: String) -> Self {
+        Self::build(secret, false)
+    }
+
+    /// Read-only client: trading writes are refused at the HTTP boundary.
+    pub fn new_read_only(secret: String) -> Self {
+        Self::build(secret, true)
+    }
+
+    fn build(secret: String, read_only: bool) -> Self {
         Self {
             http: Client::builder()
                 .gzip(true)
@@ -31,7 +44,12 @@ impl PublicClient {
             token: Mutex::new(None),
             last_request: Mutex::new(None),
             min_interval: Duration::from_millis(100),
+            read_only,
         }
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     pub fn from_env() -> Result<Self> {
@@ -42,6 +60,17 @@ impl PublicClient {
             anyhow::bail!("PUBLIC_API_KEY is empty");
         }
         Ok(Self::new(secret))
+    }
+
+    /// Read-only variant of [`Self::from_env`]. The research-paper arm uses this.
+    pub fn from_env_read_only() -> Result<Self> {
+        let secret = std::env::var("PUBLIC_API_KEY")
+            .or_else(|_| std::env::var("PUBLIC_PERSONAL_SECRET"))
+            .context("Set PUBLIC_API_KEY (or PUBLIC_PERSONAL_SECRET)")?;
+        if secret.trim().is_empty() {
+            anyhow::bail!("PUBLIC_API_KEY is empty");
+        }
+        Ok(Self::new_read_only(secret))
     }
 
     async fn access_token(&self) -> Result<String> {
@@ -110,6 +139,11 @@ impl PublicClient {
     }
 
     async fn send(&self, method: reqwest::Method, path: &str, body: Option<&Value>) -> Result<Value> {
+        if self.read_only && method != reqwest::Method::GET && is_trading_path(path) {
+            anyhow::bail!(
+                "read-only client refused {method} {path}: trading writes are disabled (research-paper gate)"
+            );
+        }
         self.pace().await;
         let token = self.access_token().await?;
         let url = format!("{BASE}{path}");
@@ -145,10 +179,34 @@ impl PublicClient {
     }
 }
 
+fn is_trading_path(path: &str) -> bool {
+    path.starts_with("/userapigateway/trading/")
+}
+
 fn redact_path(path: &str) -> String {
     match std::env::var("PUBLIC_ACCOUNT_ID") {
         Ok(id) if !id.is_empty() => path.replace(&id, "<account>"),
         _ => path.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trading_paths_are_recognized() {
+        assert!(is_trading_path("/userapigateway/trading/ACC/order"));
+        assert!(is_trading_path("/userapigateway/trading/ACC/order/multileg"));
+        assert!(is_trading_path("/userapigateway/trading/ACC/preflight/single-leg"));
+        assert!(!is_trading_path("/userapigateway/marketdata/ACC/quotes"));
+        assert!(!is_trading_path("/userapiauthservice/personal/access-tokens"));
+    }
+
+    #[test]
+    fn read_only_flag_is_set_only_by_read_only_constructors() {
+        assert!(PublicClient::new_read_only("x".into()).is_read_only());
+        assert!(!PublicClient::new("x".into()).is_read_only());
     }
 }
 

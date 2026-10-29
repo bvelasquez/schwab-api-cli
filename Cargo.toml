@@ -8,6 +8,7 @@ members = [
     "crates/broker-core",
     "crates/broker-schwab",
     "crates/broker-public",
+    "crates/research-core",
     "crates/agent-trader-cli",
     "crates/agent-trader-swing",
 ]

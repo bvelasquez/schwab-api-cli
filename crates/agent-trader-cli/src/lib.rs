@@ -4,6 +4,7 @@ pub mod options;
 pub mod paper;
 mod paths;
 mod plan;
+pub mod research;
 mod registry;
 mod safety;
 

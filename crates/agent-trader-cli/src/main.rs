@@ -63,6 +63,11 @@ enum Command {
     },
     /// Read-only readiness check. Does not place an order.
     Canary { account: String },
+    /// Paper-only research arm: gather web + market context and forecast. Never trades.
+    Research {
+        #[command(subcommand)]
+        command: ResearchCmd,
+    },
     /// Read-only HTML dashboard for paper books. Does not place an order.
     Dashboard {
         /// Swing rules YAML. Repeatable. Defaults to rules/trader-swing-9947.yaml when present.
@@ -111,6 +116,20 @@ enum MarketCmd {
 enum PlanCmd {
     Validate { path: String },
     Run { path: String },
+}
+
+#[derive(Subcommand)]
+enum ResearchCmd {
+    /// Static validation of a research arm config. No network, no credentials.
+    Validate {
+        #[arg(long)]
+        rules: PathBuf,
+    },
+    /// One paper-only research pass. Never applies a patch or places an order.
+    Tick {
+        #[arg(long)]
+        rules: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -181,6 +200,7 @@ async fn main() -> Result<()> {
         Command::Capabilities => capabilities(cli.broker.as_deref()).await?,
         Command::Guard { account, rules_dir } => guard(&account, rules_dir.as_deref())?,
         Command::Canary { account } => canary(&account).await?,
+        Command::Research { command } => research_cmd(command, &flags).await?,
         Command::Dashboard {
             rules_file,
             options_rules,
@@ -372,6 +392,23 @@ async fn run_options_agent(
         schwab_cli::output::OutputSink::stdout(),
     );
     schwab_cli::agent::run_agent_loop(&runtime, rules, once, None).await
+}
+
+async fn research_cmd(command: ResearchCmd, flags: &agent_trader::TradingFlags) -> Result<()> {
+    if flags.trust || flags.yes {
+        anyhow::bail!("the research arm is paper-only; --trust/--yes are not accepted");
+    }
+    match command {
+        ResearchCmd::Validate { rules } => {
+            let report = agent_trader::research::run_validate(&rules)?;
+            print_json(report);
+        }
+        ResearchCmd::Tick { rules } => {
+            let report = agent_trader::research::run_tick(&rules).await?;
+            print_json(report);
+        }
+    }
+    Ok(())
 }
 
 fn import_schwab() -> Result<()> {

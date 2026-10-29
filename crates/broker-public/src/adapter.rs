@@ -37,6 +37,21 @@ impl PublicBackend {
         })
     }
 
+    /// Read-only backend for the research-paper arm. Trading writes are refused
+    /// at the HTTP boundary in addition to the `PaperOnlyBroker` wrapper.
+    pub fn from_env_read_only() -> Result<Self> {
+        let default_account_id = std::env::var("PUBLIC_ACCOUNT_ID").unwrap_or_default();
+        Ok(Self {
+            client: PublicClient::from_env_read_only()?,
+            default_account_id,
+            chain_cache: Mutex::new(HashMap::new()),
+        })
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.client.is_read_only()
+    }
+
     pub fn into_arcs(self) -> (Arc<dyn Broker>, Arc<dyn MarketData>) {
         let backend = Arc::new(self);
         let trading: Arc<dyn Broker> = backend.clone();
