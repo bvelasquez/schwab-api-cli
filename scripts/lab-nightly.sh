@@ -3,6 +3,7 @@
 # Read-only with respect to trading. Reads rules/ state, journals, and recorded chains;
 # writes only rules/analysis/ and rules/benchmarks/. Runs every step even when one fails,
 # then exits nonzero so systemd marks the unit failed.
+# PAUSED 2026-10-23: options are archived; schwab-lab.timer is disabled. Resume: docs/OPTIONS_STRATEGY_LAB.md.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="${SCHWAB_REPO:-$(dirname "$here")}"

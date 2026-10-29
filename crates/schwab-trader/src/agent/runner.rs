@@ -115,6 +115,15 @@ pub async fn run_agent_loop(
     };
 
     let mut state = load_state(rules_path, &rules.trader_id)?;
+    if runtime.simulate {
+        // Create the paper ledger up front. Without it a freshly reset book reads $0 equity,
+        // which looks like a 100% drawdown and halts trading before the first entry.
+        let fresh = state.sim.is_none();
+        let start = crate::sim::ensure_ledger(&mut state, &rules).starting_cash_usd;
+        if fresh && state.sleeve_peak_equity_usd <= 0.0 {
+            state.sleeve_peak_equity_usd = start;
+        }
+    }
     let mut shadow = ShadowArms::default();
     shadow.sync(rules_path, &rules);
 

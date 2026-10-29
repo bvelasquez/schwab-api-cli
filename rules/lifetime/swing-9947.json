@@ -1,0 +1,27 @@
+{
+  "book": "swing-9947",
+  "closed_epochs": [
+    {
+      "close_reason": "reset 2026-10-23; retired from current metrics",
+      "ended_at": "2026-10-23T19:52:00Z",
+      "id": "swing-9947-legacy",
+      "started_at": "2026-07-01T13:30:00Z",
+      "strategy_version": "pre-reset",
+      "summary": {
+        "closed_trades": 47,
+        "note": "authoritative pre-reset totals; archived journal is a partial slice",
+        "profit_factor": 0.72,
+        "realized_usd": -162.98,
+        "return_pct": -4.07,
+        "source": "rules/archive/swing-reset-2026-10-23/scorecard-before-reset.json",
+        "win_rate_pct": 38.3
+      }
+    }
+  ],
+  "note": "Lifetime is retired history. Never merge into current-window metrics.",
+  "totals": {
+    "epochs": 1,
+    "realized_usd": -162.98,
+    "trades": 47
+  }
+}

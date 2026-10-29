@@ -1,0 +1,46 @@
+# Baseline B for the swing lab: hold SPY while it is above its 200-day SMA, otherwise cash.
+# Backtest 2018-2026: CAGR 9.3%, max drawdown 20% (SPY buy and hold: 13.5% / 33%).
+# Checked once a day near the close.
+version: 1
+broker: public
+account: "public:ACCOUNT_ID"
+workflows:
+  - id: spy-trend200
+    schedule:
+      cron: "50 15 * * 1-5"
+      timezone: America/New_York
+      active_between: ["15:45", "16:00"]
+    steps:
+      - id: quote
+        fetch: quote
+        symbol: SPY
+      - id: sma200
+        fetch: sma
+        symbol: SPY
+        period: 200
+      - id: pos
+        fetch: position
+        symbol: SPY
+      - id: buy
+        when:
+          all:
+            - session_open: true
+            - gt: ["quote.last", "sma200"]
+            - position_qty: {symbol: SPY, eq: 0}
+            - buying_power_at_least: 3950
+        order:
+          side: buy
+          symbol: SPY
+          notional_usd: 3990
+          order_type: market
+      - id: sell
+        when:
+          all:
+            - session_open: true
+            - lt: ["quote.last", "sma200"]
+            - position_qty: {symbol: SPY, gt: 0}
+        order:
+          side: sell
+          symbol: SPY
+          quantity: pos.quantity
+          order_type: market

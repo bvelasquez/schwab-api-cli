@@ -287,7 +287,16 @@ pub(crate) fn apply_report(book: &mut Value, report: &Value, prices: &std::colle
     book["note"] = json!("Paper workflow. Quotes only. No order was sent.");
     book["cash_usd"] = json!(cash);
     book["starting_cash_usd"] = json!(STARTING_CASH);
-    book["equity_usd"] = json!(cash + unrealized);
+    // Equity is cash plus the market value of open shares, not cash plus unrealized P/L alone.
+    let market_value: f64 = positions
+        .iter()
+        .map(|row| {
+            let qty = row["quantity"].as_f64().unwrap_or(0.0);
+            let px = row["last_price"].as_f64().or_else(|| row["entry_price"].as_f64()).unwrap_or(0.0);
+            qty * px
+        })
+        .sum();
+    book["equity_usd"] = json!(cash + market_value);
     book["unrealized_pnl_usd"] = json!(unrealized);
     book["realized_pnl_usd"] = json!(realized);
     book["open_count"] = json!(positions.len());
@@ -466,6 +475,8 @@ mod tests {
         apply_report(&mut book, &report, &prices, now);
         assert!((book["cash_usd"].as_f64().unwrap() - 3750.0).abs() < 1e-6);
         assert_eq!(book["positions"][0]["quantity"], 2.5);
+        // equity counts the shares at market, not just cash plus unrealized P/L
+        assert!((book["equity_usd"].as_f64().unwrap() - 4000.0).abs() < 1e-6);
         assert_eq!(book["kind"], "workflow");
         assert_eq!(book["live_orders"], false);
         let again = json!({

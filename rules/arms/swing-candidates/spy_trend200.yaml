@@ -1,0 +1,11 @@
+# Swing candidate: SPY above SMA200, else cash
+id: spy_trend200
+family: baseline
+label: "SPY above SMA200, else cash"
+source: "Baseline B. 200-day moving average timing, Faber 2007 and long-standing practitioner use."
+thesis: "Staying out below the 200-day average avoids most of the deep drawdowns at a modest cost in whipsaws."
+backtest_class: Trend200
+paper_target: baseline   # baseline | control | shadow_arm | workflow
+biased_universe: false
+universe: [SPY]
+doc: "SPY when close is above its 200-day SMA, otherwise cash."

@@ -408,9 +408,11 @@ fn agent_trader_paper_file(path: &Path) -> Option<Value> {
 }
 
 fn rules_dir(paths: &DashboardPaths) -> &Path {
+    // Options are paused, so fall back to the swing rules directory when no options file is given.
     paths
         .options
         .first()
+        .or_else(|| paths.swing.first())
         .and_then(|p| p.parent())
         .map(|p| {
             if p.as_os_str().is_empty() {
@@ -461,6 +463,27 @@ fn lab_section(paths: &DashboardPaths) -> Value {
                 "by_symbol_and_dte": doc.get("by_symbol_and_dte").cloned().unwrap_or(Value::Null),
                 "paper_fills_vs_quotes": doc.get("paper_fills_vs_quotes").cloned().unwrap_or(Value::Null),
             })
+        }),
+        "swing_lab": lab_artifact(&rules_dir.join("analysis").join("swing-lab.json"), |doc| {
+            let rows: Vec<Value> = doc
+                .get("results")
+                .and_then(Value::as_array)
+                .map(|rows| {
+                    rows.iter()
+                        .map(|r| {
+                            json!({
+                                "id": r.get("id"), "label": r.get("label"), "family": r.get("family"),
+                                "biased_universe": r.get("biased_universe"), "paper_target": r.get("paper_target"),
+                                "full": r.get("full"), "oos": r.get("oos"), "trade": r.get("trade"),
+                                "excess_cagr_vs_spy_pct": r.get("excess_cagr_vs_spy_pct"),
+                                "cagr_pct_at_15bps": r.get("cagr_pct_at_15bps"),
+                                "checks_passed": r.get("checks_passed"),
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            json!({ "meta": doc.get("meta").cloned().unwrap_or(Value::Null), "results": rows })
         }),
         "promotion_gate": lab_artifact(&rules_dir.join("analysis").join("options-promotion-gate.json"), |doc| doc.clone()),
     })

@@ -1,0 +1,47 @@
+{
+  "books": {
+    "swing-9947": {
+      "active": {
+        "ended_at": null,
+        "id": "swing-9947-20261028T2043",
+        "note": "adaptive strategy: regime-sized entries, 5.5/7.5 geometry, 52w soft zone",
+        "notes": [
+          {
+            "at": "2026-10-28T20:48:00Z",
+            "note": "amended before any session: rules tightened after epoch opened (target/RSI/range caps); zero trades in window so no results are discarded"
+          }
+        ],
+        "opened_by": "operator",
+        "start_equity_usd": 4000.0,
+        "started_at": "2026-10-28T20:43:25Z",
+        "strategy_fingerprint": "6a02add1678afc5a0c96d337584e1a529465923f65945c1e16475325527c52f2",
+        "strategy_version": "adaptive-v2",
+        "summary": {}
+      },
+      "book": "swing-9947",
+      "closed": [
+        {
+          "close_reason": "reset 2026-10-23; retired from current metrics",
+          "ended_at": "2026-10-23T19:52:00Z",
+          "id": "swing-9947-legacy",
+          "note": "imported from rules/archive/swing-reset-2026-10-23/trader-journal-trader-swing-9947.jsonl",
+          "opened_by": "import",
+          "started_at": "2026-07-01T13:30:00Z",
+          "strategy_fingerprint": null,
+          "strategy_version": "pre-reset",
+          "summary": {
+            "closed_trades": 47,
+            "note": "authoritative pre-reset totals; archived journal is a partial slice",
+            "profit_factor": 0.72,
+            "realized_usd": -162.98,
+            "return_pct": -4.07,
+            "source": "rules/archive/swing-reset-2026-10-23/scorecard-before-reset.json",
+            "win_rate_pct": 38.3
+          }
+        }
+      ],
+      "rules_file": "trader-swing-9947.yaml"
+    }
+  },
+  "schema": 1
+}

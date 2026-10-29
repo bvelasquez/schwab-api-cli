@@ -153,8 +153,8 @@
   <div class="meta" id="updated">loading…</div>
 </header>
 <nav class="tabs" id="tabs">
-  <button type="button" class="tab on" data-tab="options">Options</button>
-  <button type="button" class="tab" data-tab="swing">Swing</button>
+  <button type="button" class="tab" data-tab="options" hidden>Options</button>
+  <button type="button" class="tab on" data-tab="swing">Swing</button>
   <button type="button" class="tab" data-tab="workflows">Workflows</button>
 </nav>
 <main id="books"></main>
@@ -818,6 +818,79 @@ function appendEvidence(card, lab, options) {
     card.appendChild(el("p", { className: "empty" }, pg.data.note || "A pass is not a production change. Operator OK is required."));
   }
 }
+function renderSwingLab(lab) {
+  const art = lab && lab.swing_lab;
+  if (!art || !art.present || !art.data) return null;
+  const rows = art.data.results || [];
+  const meta = art.data.meta || {};
+  const card = el("section", { className: "book lab" });
+  card.appendChild(el("h2", null, "Strategy lab (backtest, daily bars)"));
+  card.appendChild(el("p", { className: "meta" },
+    (meta.generated || "") + " · $" + (meta.start_capital || 4000) + " sleeve · " + (meta.slippage_bps || 5) + " bps per side · SPY buy and hold is the baseline · " +
+    "* = survivor stock basket, optimistic · a pass earns a paper test, not capital"));
+  card.appendChild(table(
+    [{label:"Strategy"},{label:"CAGR", num:true},{label:"Max DD", num:true},{label:"Sharpe", num:true},{label:"vs SPY", num:true},{label:"OOS CAGR", num:true},{label:"@15 bps", num:true},{label:"Trades", num:true},{label:"Win", num:true},{label:"Checks", num:true},{label:"Paper"}],
+    rows.map((r) => {
+      const f = r.full || {}, o = r.oos || {}, t = r.trade || {};
+      return [
+        cell(r.label + (r.biased_universe ? " *" : "")),
+        cell(pct(f.cagr_pct), cls(f.cagr_pct)),
+        cell(f.max_drawdown_pct == null ? "—" : f.max_drawdown_pct.toFixed(1) + "%"),
+        cell(f.sharpe == null ? "—" : f.sharpe.toFixed(2)),
+        cell(pct(r.excess_cagr_vs_spy_pct), cls(r.excess_cagr_vs_spy_pct)),
+        cell(pct(o.cagr_pct), cls(o.cagr_pct)),
+        cell(pct(r.cagr_pct_at_15bps), cls(r.cagr_pct_at_15bps)),
+        cell(t.trades || 0),
+        cell(t.win_rate_pct == null ? "—" : Math.round(t.win_rate_pct) + "%"),
+        cell((r.checks_passed == null ? "—" : r.checks_passed) + "/5"),
+        cell(r.paper_target)
+      ];
+    })
+  ));
+  return card;
+}
+function sumRealized(rows) {
+  return rows.reduce((n, b) => n + bookRealized(b), 0);
+}
+function renderWorkflowSummary(books, title, noun) {
+  const ok = books.filter((b) => !b.error && b.equity_usd != null);
+  if (!ok.length) return null;
+  const START = 4000;
+  const ret = (b) => (b.equity_usd == null ? null : ((b.equity_usd - START) / START) * 100);
+  const name = (b) => b.name || b.rules_file || "workflow";
+  const base = ok.find((b) => /buy-?hold/i.test(name(b)));
+  const baseRet = base ? ret(base) : null;
+  const totalEq = ok.reduce((n, b) => n + (b.equity_usd || 0), 0);
+  const open = ok.reduce((n, b) => n + (b.positions || []).length, 0);
+  const card = el("section", { className: "book lab" });
+  card.appendChild(el("h2", null, title || "Workflow results"));
+  const metrics = el("div", { className: "metrics" });
+  metrics.appendChild(metric(noun || "Workflows", String(ok.length)));
+  metrics.appendChild(metric("Total equity", usd(totalEq)));
+  metrics.appendChild(metric("Total P/L", usd2(totalEq - START * ok.length), cls(totalEq - START * ok.length)));
+  metrics.appendChild(metric("Realized", usd2(sumRealized(ok)), cls(sumRealized(ok))));
+  metrics.appendChild(metric("Open positions", String(open)));
+  if (baseRet != null) metrics.appendChild(metric("SPY b&h", pct2(baseRet), cls(baseRet)));
+  card.appendChild(metrics);
+  card.appendChild(table(
+    [{label:noun ? "Book" : "Workflow"},{label:"Equity", num:true},{label:"Return", num:true},{label:"vs SPY b&h", num:true},{label:"Realized", num:true},{label:"Open", num:true},{label:"Closed", num:true},{label:"Last tick"}],
+    ok.map((b) => {
+      const r = ret(b);
+      const ex = r != null && baseRet != null ? r - baseRet : null;
+      return [
+        cell(name(b)),
+        cell(usd(b.equity_usd)),
+        cell(pct2(r), cls(r)),
+        cell(pct2(ex), cls(ex)),
+        cell(usd2(bookRealized(b)), cls(bookRealized(b))),
+        cell((b.positions || []).length),
+        cell(b.closed_count != null ? b.closed_count : (b.recent_closes || []).length),
+        cell(ago(b.last_tick))
+      ];
+    })
+  ));
+  return card;
+}
 function renderLab(options, lab, families) {
   families = families || [];
   const card = el("section", { className: "book lab" });
@@ -1325,7 +1398,8 @@ function workflowDecisions(book) {
   return wrap;
 }
 
-let tab = location.hash === "#swing" ? "swing" : location.hash === "#workflows" ? "workflows" : "options";
+// Options are paused (archived 2026-10-23); the tab only appears when options books are loaded.
+let tab = location.hash === "#options" ? "options" : location.hash === "#workflows" ? "workflows" : "swing";
 let latest = null;
 
 function paint() {
@@ -1338,7 +1412,12 @@ function paint() {
   const optBtn = document.querySelector('button[data-tab="options"]');
   const swBtn = document.querySelector('button[data-tab="swing"]');
   const wfBtn = document.querySelector('button[data-tab="workflows"]');
-  if (optBtn) optBtn.textContent = "Options" + (options.length ? " · " + options.length : "");
+  if (optBtn) {
+    optBtn.hidden = options.length === 0;
+    optBtn.textContent = "Options" + (options.length ? " · " + options.length : "");
+  }
+  if (tab === "options" && options.length === 0) tab = "swing";
+  document.querySelectorAll("button.tab").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
   if (swBtn) swBtn.textContent = "Swing" + (swing.length ? " · " + swing.length : "");
   if (wfBtn) wfBtn.textContent = "Workflows" + (workflows.length ? " · " + workflows.length : "");
   const y = window.scrollY;
@@ -1350,6 +1429,16 @@ function paint() {
     const ok = options.filter((b) => !b.error);
     const families = latest.families ? latest.families.families || [] : [];
     if (ok.length) nodes.push(renderLab(ok, latest.lab, families));
+  }
+  if (tab === "swing") {
+    const liveSum = renderWorkflowSummary(swing, "Current paper trades (live books)", "Books");
+    if (liveSum) nodes.push(liveSum);
+    const labCard = renderSwingLab(latest.lab);
+    if (labCard) nodes.push(labCard);
+  }
+  if (tab === "workflows") {
+    const sum = renderWorkflowSummary(workflows);
+    if (sum) nodes.push(sum);
   }
   if (!shown.length) nodes.push(el("p", { className: "empty" }, "No " + tab + " books are loaded."));
   nodes.push(...agent.map(renderBook), ...rest.map(renderBook));

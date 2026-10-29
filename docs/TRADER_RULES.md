@@ -807,3 +807,4 @@ schwab-trader watch --rules-file rules/my-trader.yaml --trust --yes
 
 - [TRADER_ROLLOUT.md](TRADER_ROLLOUT.md) — live deployment checklist
 - [OPTIONS_RULES.md](OPTIONS_RULES.md) — options agent on same account
+- [EPOCHS.md](EPOCHS.md) — accounting epochs, drift, and deploying to jarvis

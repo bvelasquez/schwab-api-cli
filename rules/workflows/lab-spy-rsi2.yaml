@@ -1,0 +1,56 @@
+# Swing lab candidate: Connors RSI(2) pullback on SPY (Connors and Alvarez 2008).
+# Buy when SPY is above its 200-day SMA and RSI(2) is below 10; sell when it closes above its 5-day SMA.
+# Backtest 2018-2026 (SPY and QQQ): CAGR 5.7%, max drawdown 8%, 153 trades, 12% exposure.
+# The backtest also has a 10-day time stop, which workflows cannot express.
+version: 1
+broker: public
+account: "public:ACCOUNT_ID"
+workflows:
+  - id: spy-rsi2
+    schedule:
+      cron: "50 15 * * 1-5"
+      timezone: America/New_York
+      active_between: ["15:45", "16:00"]
+    steps:
+      - id: quote
+        fetch: quote
+        symbol: SPY
+      - id: sma200
+        fetch: sma
+        symbol: SPY
+        period: 200
+      - id: sma5
+        fetch: sma
+        symbol: SPY
+        period: 5
+      - id: rsi2
+        fetch: rsi
+        symbol: SPY
+        period: 2
+      - id: pos
+        fetch: position
+        symbol: SPY
+      - id: buy
+        when:
+          all:
+            - session_open: true
+            - gt: ["quote.last", "sma200"]
+            - lt: ["rsi2", 10]
+            - position_qty: {symbol: SPY, eq: 0}
+            - buying_power_at_least: 3950
+        order:
+          side: buy
+          symbol: SPY
+          notional_usd: 3990
+          order_type: market
+      - id: sell
+        when:
+          all:
+            - session_open: true
+            - gt: ["quote.last", "sma5"]
+            - position_qty: {symbol: SPY, gt: 0}
+        order:
+          side: sell
+          symbol: SPY
+          quantity: pos.quantity
+          order_type: market

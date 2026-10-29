@@ -57,9 +57,15 @@ class StemDefaults(unittest.TestCase):
 class MissingFiles(unittest.TestCase):
     def test_missing_state_files_raise_alerts(self):
         with tempfile.TemporaryDirectory() as tmp:
-            alerts = scorecard.build_missing_file_alerts(Path(tmp))
-        self.assertEqual(len(alerts), 2)
-        self.assertTrue(all("state file missing" in a for a in alerts))
+            rules = Path(tmp)
+            # Options books are paused as of 2026-10-23, so their absence is
+            # expected and must not raise a P0 by default.
+            alerts = scorecard.build_missing_file_alerts(rules)
+            self.assertEqual(len(alerts), 1)
+            self.assertIn("swing", alerts[0])
+            with_options = scorecard.build_missing_file_alerts(rules, include_options=True)
+        self.assertEqual(len(with_options), 2)
+        self.assertTrue(all("state file missing" in a for a in with_options))
 
     def test_present_files_raise_no_alert(self):
         with tempfile.TemporaryDirectory() as tmp:

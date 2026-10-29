@@ -17,9 +17,41 @@ import argparse
 import json
 import math
 import statistics
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import epochs as epoch_mod  # noqa: E402
+
 MIN_DAYS = 40
+
+
+def book_from_stem(stem: str) -> str:
+    for prefix in ("trader-", "beneficiary-", "research-"):
+        stem = stem.replace(prefix, "")
+    return stem
+
+
+def filter_days(days: dict[str, dict], epoch: dict | None) -> dict[str, dict]:
+    """Keep only day summaries inside the active epoch.
+
+    Comparability is per epoch: an arm cannot be promoted on days collected
+    under a different strategy, so pre-epoch days are dropped rather than
+    averaged in.
+    """
+    if epoch is None:
+        return {}
+    start, end = epoch_mod.window(epoch)
+    lo = start.date().isoformat() if start else None
+    hi = end.date().isoformat() if end else None
+    out = {}
+    for day, row in days.items():
+        if lo and day < lo:
+            continue
+        if hi and day >= hi:
+            continue
+        out[day] = row
+    return out
 
 
 def load_days(path: Path) -> dict[str, dict]:
@@ -40,7 +72,7 @@ def load_days(path: Path) -> dict[str, dict]:
     return days
 
 
-def gap_slippage(path: Path) -> float | None:
+def gap_slippage(path: Path, epoch: dict | None = None) -> float | None:
     vals = []
     if not path.is_file():
         return None
@@ -50,6 +82,8 @@ def gap_slippage(path: Path) -> float | None:
         try:
             ev = json.loads(line)
         except json.JSONDecodeError:
+            continue
+        if not epoch_mod.includes(ev.get("ts"), epoch):
             continue
         v = (ev.get("payload") or {}).get("stop_gap_slippage_pct")
         if isinstance(v, (int, float)):
@@ -89,6 +123,11 @@ def main() -> int:
     ap.add_argument("--rules-dir", type=Path, default=Path("rules"))
     ap.add_argument("--trader-id", default=None)
     ap.add_argument("--control", default="research-base")
+    ap.add_argument(
+        "--book",
+        default=None,
+        help="Ledger book key (default: derived from trader id, e.g. swing-9947)",
+    )
     args = ap.parse_args()
     stem = args.trader_id or "swing-beneficiary-9947"
     rules = args.rules_dir / "trader-swing-9947.yaml"
@@ -98,21 +137,28 @@ def main() -> int:
                 stem = line.split(":", 1)[1].strip().strip('"')
                 break
     ctrl_path = args.rules_dir / f"trader-shadow-journal-{stem}-{args.control}.jsonl"
-    ctrl = load_days(ctrl_path)
+    book = args.book or book_from_stem(stem)
+    status = epoch_mod.epoch_status(args.rules_dir, book)
+    epoch = status["active"]
+    ctrl = filter_days(load_days(ctrl_path), epoch)
     verdicts = []
     for path in sorted(args.rules_dir.glob(f"trader-shadow-journal-{stem}-research-*.jsonl")):
         arm_id = path.name.removeprefix(f"trader-shadow-journal-{stem}-").removesuffix(".jsonl")
         if arm_id == args.control:
             continue
-        arm = load_days(path)
+        arm = filter_days(load_days(path), epoch)
         stats = paired(arm, ctrl)
         eq = [arm[d].get("equity_usd", 0.0) for d in sorted(arm)]
         ceq = [ctrl[d].get("equity_usd", 0.0) for d in sorted(ctrl)]
         dd = max_dd(eq)
         cdd = max_dd(ceq)
-        gap = gap_slippage(path)
-        cgap = gap_slippage(ctrl_path)
+        gap = gap_slippage(path, epoch)
+        cgap = gap_slippage(ctrl_path, epoch)
         reasons = []
+        if epoch is None:
+            reasons.append("no active epoch — results are not comparable")
+        elif status["drift"]:
+            reasons.append("strategy drift: rules changed since epoch opened")
         if stats["n"] < MIN_DAYS:
             reasons.append(f"days {stats['n']} < {MIN_DAYS}")
         if stats["ci_low"] is None or stats["ci_low"] <= 0:
@@ -131,6 +177,13 @@ def main() -> int:
         })
     report = {
         "control": args.control,
+        "book": book,
+        "epoch": {
+            "id": (epoch or {}).get("id"),
+            "started_at": (epoch or {}).get("started_at"),
+            "strategy_version": (epoch or {}).get("strategy_version"),
+            "drift": status["drift"],
+        },
         "min_days": MIN_DAYS,
         "arms": verdicts,
         "note": "A pass is not a production change. Operator OK is required. Real money is a separate decision.",

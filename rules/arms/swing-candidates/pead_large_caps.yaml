@@ -1,0 +1,9 @@
+# Swing candidate: Post-earnings-announcement drift (not backtestable with current data)
+id: pead_large_caps
+family: event
+label: "Post-earnings-announcement drift"
+source: "Bernard and Thomas 1989; Ball and Brown 1968."
+thesis: "Prices keep drifting in the direction of an earnings surprise for weeks."
+paper_target: shadow_arm
+backtested: false
+reason: "Needs point-in-time earnings dates and surprises. Only rules/earnings-calendar.json (forward dates) exists. Paper-test it from the calendar going forward instead of backtesting."

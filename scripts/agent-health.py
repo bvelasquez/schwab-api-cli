@@ -10,6 +10,9 @@ different state-file names:
 
 Options paper arms (O0..On) are discovered from rules/ and checked the same way.
 
+The paper loops run as agent-trader-* units. SCHWAB_OPTIONS_UNIT and
+SCHWAB_SWING_UNIT still override the pilot and swing unit names.
+
 Override paths with SCHWAB_REPO, SCHWAB_OPTIONS_RULES, SCHWAB_SWING_RULES,
 SCHWAB_OPTIONS_UNIT, and SCHWAB_SWING_UNIT.
 """
@@ -35,21 +38,21 @@ SWING_NAME = "swing"
 AGENTS = {
     OPTIONS_NAME: (
         BASE / f"rules/agent-sim-state-{_stem(OPTIONS_RULES)}.json",
-        os.environ.get("SCHWAB_OPTIONS_UNIT", "schwab-options-8709.service"),
+        os.environ.get("SCHWAB_OPTIONS_UNIT", "agent-trader-options-8709.service"),
     ),
     SWING_NAME: (
         BASE / f"rules/trader-state-{_stem(SWING_RULES)}.json",
-        os.environ.get("SCHWAB_SWING_UNIT", "schwab-swing-9947.service"),
+        os.environ.get("SCHWAB_SWING_UNIT", "agent-trader-swing-9947.service"),
     ),
 }
-# Options paper arms: rules/agent-sim-state-options-arm-oN.json <-> schwab-options-arm-oN.service.
+# Options paper arms: rules/agent-sim-state-options-arm-oN.json <-> agent-trader-options-arm-oN.service.
 # They share the options state schema, so they are reported like the pilot.
 ARM_KIND = {}
 for _p in sorted((BASE / "rules").glob("agent-sim-state-options-arm-o*.json")):
     if ".bak" in _p.name:
         continue
     _arm = _p.stem.removeprefix("agent-sim-state-options-")
-    AGENTS[_arm] = (_p, f"schwab-options-{_arm}.service")
+    AGENTS[_arm] = (_p, f"agent-trader-options-{_arm}.service")
     ARM_KIND[_arm] = OPTIONS_NAME
 
 

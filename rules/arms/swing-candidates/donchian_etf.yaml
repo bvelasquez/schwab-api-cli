@@ -1,0 +1,11 @@
+# Swing candidate: Donchian 20/10 breakout on liquid ETFs
+id: donchian_etf
+family: trend
+label: "Donchian 20/10 breakout on liquid ETFs"
+source: "Donchian channel breakout; Turtle Trading system 1 (Dennis and Eckhardt, 1983)."
+thesis: "Breakouts to new 20-day highs start trends that run longer than the 10-day-low exit gives back."
+backtest_class: Donchian
+paper_target: shadow_arm   # baseline | control | shadow_arm | workflow
+biased_universe: false
+universe: [SPY, QQQ, IWM, DIA, XLK, XLF, XLE, XLV, XLI, XLP, XLU, XLY, XLB, SMH, GLD, TLT, EFA]
+doc: "Turtle-style system 1: buy a 20-day high, exit on a 10-day low, SPY above SMA200 for new entries."

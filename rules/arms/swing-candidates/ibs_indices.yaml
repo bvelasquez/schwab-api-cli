@@ -1,0 +1,11 @@
+# Swing candidate: IBS mean reversion on SPY/QQQ/IWM
+id: ibs_indices
+family: mean_reversion
+label: "IBS mean reversion on SPY/QQQ/IWM"
+source: "Internal bar strength studies (Connors/Alvarez lineage; QuantifiedStrategies write-ups)."
+thesis: "Closing in the bottom fifth of the day range in an uptrend predicts a next-day bounce in index ETFs."
+backtest_class: IBSRevert
+paper_target: shadow_arm   # baseline | control | shadow_arm | workflow
+biased_universe: false
+universe: [SPY, QQQ, IWM]
+doc: "Internal bar strength: buy index ETFs that close in the bottom of their range above SMA200."

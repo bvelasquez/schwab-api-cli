@@ -1,0 +1,11 @@
+# Swing candidate: Global equities momentum (SPY/EFA/AGG)
+id: gem_dual_momentum
+family: rotation
+label: "Global equities momentum (SPY/EFA/AGG)"
+source: "Antonacci, Dual Momentum Investing 2014."
+thesis: "Relative momentum picks the stronger equity region; absolute momentum versus T-bills rotates to bonds in bear markets."
+backtest_class: GEM
+paper_target: workflow   # baseline | control | shadow_arm | workflow
+biased_universe: false
+universe: [SPY, EFA, AGG, BIL]
+doc: "Antonacci Global Equities Momentum: SPY vs EFA on 12-month return, else AGG."

@@ -22,6 +22,9 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import epochs as epoch_mod  # noqa: E402
+
 def _stem(env_name: str, default: str) -> str:
     return Path(os.environ.get(env_name, default)).stem
 
@@ -30,6 +33,8 @@ def _stem(env_name: str, default: str) -> str:
 # scorecard silently reported zero trades and the drift alerts were blind.
 _SWING_STEM = _stem("SCHWAB_SWING_RULES", "trader-swing-9947.yaml")
 _OPTIONS_STEM = _stem("SCHWAB_OPTIONS_RULES", "options-pilot-8709.yaml")
+# Ledger key for this book: trader-swing-9947 -> swing-9947
+SWING_BOOK = _SWING_STEM.removeprefix("trader-") or _SWING_STEM
 SWING_STATE = f"trader-state-{_SWING_STEM}.json"
 SWING_JOURNAL = f"trader-journal-{_SWING_STEM}.jsonl"
 OPTIONS_STATE = f"agent-sim-state-{_OPTIONS_STEM}.json"
@@ -56,8 +61,19 @@ def parse_args():
         default=None,
         help="Output directory (default: <repo>/rules/scorecards)",
     )
+    p.add_argument(
+        "--include-options",
+        action="store_true",
+        default=os.environ.get("SCORECARD_INCLUDE_OPTIONS") == "1",
+        help="Include options books (paused since 2026-10-23; also SCORECARD_INCLUDE_OPTIONS=1)",
+    )
     p.add_argument("--telegram", action="store_true", help="Send compact summary via Telegram")
     p.add_argument("--json", action="store_true", help="Print full JSON to stdout")
+    p.add_argument(
+        "--lifetime",
+        action="store_true",
+        help="Also print retired (closed-epoch) totals, clearly separated from current",
+    )
     return p.parse_args()
 
 
@@ -73,22 +89,21 @@ def load_json(path: Path):
     return json.loads(path.read_text())
 
 
-def swing_journal_paths(rules: Path) -> list[Path]:
-    """Archived/rotated journals first, active journal last (chronological merge)."""
+def swing_journal_paths(rules: Path, epoch: dict | None = None) -> list[Path]:
+    """Rotated siblings first, active journal last (chronological merge).
+
+    Archived epochs under rules/archive/ are deliberately excluded: they belong
+    to closed/lifetime history. Per-event epoch filtering happens in
+    scan_swing_journals, so a rotated file that straddles the boundary still
+    contributes only its in-epoch records.
+    """
     active = rules / SWING_JOURNAL
     rotated = sorted(
         p
         for p in rules.glob(f"{SWING_JOURNAL}.*")
         if p.is_file()
     )
-    archived = sorted(rules.glob(f"**/{SWING_JOURNAL}*"))
-    ordered: list[Path] = []
-    seen: set[Path] = set()
-    for p in [*archived, *rotated]:
-        if p == active or not p.is_file() or p in seen:
-            continue
-        seen.add(p)
-        ordered.append(p)
+    ordered: list[Path] = [p for p in rotated if p != active]
     if active.is_file():
         ordered.append(active)
     return ordered
@@ -164,12 +179,13 @@ def usd(x: float | None, digits: int = 2) -> str:
     return f"${x:,.{digits}f}"
 
 
-def scan_swing_journals(paths: list[Path]):
+def scan_swing_journals(paths: list[Path], epoch: dict | None = None):
     exits: list[dict] = []
     entries: list[dict] = []
     tick_by_day: dict[str, dict] = {}
     spy_first: float | None = None
     spy_last: float | None = None
+    skipped_out_of_epoch = 0
     for line in iter_journal_lines(paths):
         if "sim_exit_filled" not in line and "sim_entry_filled" not in line and "sim_tick_summary" not in line:
             continue
@@ -179,6 +195,9 @@ def scan_swing_journals(paths: list[Path]):
             continue
         typ = rec.get("type")
         ts = rec.get("ts", "")
+        if not epoch_mod.includes(ts, epoch):
+            skipped_out_of_epoch += 1
+            continue
         payload = rec.get("payload") or {}
         if typ == "sim_exit_filled":
             exits.append({"ts": ts, "session": session_date(ts), **payload})
@@ -203,11 +222,13 @@ def scan_swing_journals(paths: list[Path]):
                 "rejected": rejected,
                 "ts": ts,
             }
-    return exits, entries, tick_by_day, spy_first, spy_last
+    return exits, entries, tick_by_day, spy_first, spy_last, skipped_out_of_epoch
 
 
-def swing_section(state_path: Path, journal_paths: list[Path]) -> dict:
-    exits, entries, tick_by_day, spy_first, spy_last = scan_swing_journals(journal_paths)
+def swing_section(state_path: Path, journal_paths: list[Path], epoch: dict | None = None) -> dict:
+    exits, entries, tick_by_day, spy_first, spy_last, skipped = scan_swing_journals(
+        journal_paths, epoch
+    )
     pnls_pct = [float(e["pnl_pct"]) for e in exits if e.get("pnl_pct") is not None]
     pnls_usd = [float(e["pnl_usd"]) for e in exits if e.get("pnl_usd") is not None]
     wins = [p for p in pnls_pct if p > 0]
@@ -229,7 +250,11 @@ def swing_section(state_path: Path, journal_paths: list[Path]) -> dict:
     # Journals rotate, so the live journal can hold far fewer exits than the ledger
     # (jarvis 2026-10-12: 4 journal exits versus 41 in sim.closed_trades). Prefer
     # the state ledger whenever it is the larger record.
-    state_closed = [t for t in (sim.get("closed_trades") or []) if isinstance(t, dict)]
+    state_closed = [
+        t
+        for t in (sim.get("closed_trades") or [])
+        if isinstance(t, dict) and epoch_mod.includes(t.get("closed_at") or t.get("ts"), epoch)
+    ]
     if len(state_closed) > len(exits):
         exits = [
             {
@@ -256,7 +281,16 @@ def swing_section(state_path: Path, journal_paths: list[Path]) -> dict:
         ]
     start_eq = float(sim.get("starting_cash_usd") or 0) or SWING_STARTING_CASH
     cash_base = SWING_STARTING_CASH or start_eq
-    snaps = sim.get("equity_snapshots") or []
+    all_snaps = [s for s in (sim.get("equity_snapshots") or []) if isinstance(s, dict)]
+    snaps = [s for s in all_snaps if epoch_mod.includes(s.get("ts") or s.get("at"), epoch)]
+    equity_source = "state"
+    if not snaps and all_snaps:
+        # Undated snapshots cannot be proven in-epoch; keep the latest for the
+        # equity value but flag it instead of silently pretending it is current.
+        snaps = [all_snaps[-1]]
+        equity_source = "state_unfiltered"
+    if not snaps:
+        equity_source = "starting_cash"
     if snaps:
         now_eq = float(snaps[-1].get("equity_usd") or start_eq)
         peak_eq = max(float(s.get("equity_usd") or start_eq) for s in snaps)
@@ -348,6 +382,13 @@ def swing_section(state_path: Path, journal_paths: list[Path]) -> dict:
         "rejection_funnel_last_5_sessions": {d: dict(funnel[d]) for d in last5},
         "sessions_since_last_entry": sessions_since_entry,
         "realized_usd_by_profile": dict(profile_pnl),
+        "epoch": {
+            "id": (epoch or {}).get("id"),
+            "started_at": (epoch or {}).get("started_at"),
+            "strategy_version": (epoch or {}).get("strategy_version"),
+            "events_outside_epoch_ignored": skipped,
+            "equity_source": equity_source,
+        },
         "_alerts_inputs": {
             "sessions_since_entry": sessions_since_entry,
             "stop_share_last10_pct": stop_share,
@@ -804,10 +845,13 @@ def build_drift_alerts(swing: dict, options: dict) -> list[str]:
     return alerts
 
 
-def build_missing_file_alerts(rules: Path) -> list[str]:
+def build_missing_file_alerts(rules: Path, include_options: bool = False) -> list[str]:
     """A wrong default stem once made the scorecard report zero trades for weeks."""
     alerts: list[str] = []
-    for label, name in (("swing", SWING_STATE), ("options", OPTIONS_STATE)):
+    checks = [("swing", SWING_STATE)]
+    if include_options:
+        checks.append(("options", OPTIONS_STATE))
+    for label, name in checks:
         if not (rules / name).is_file():
             msg = f"scorecard: {label} state file missing: {name}"
             print(msg, file=sys.stderr)
@@ -827,11 +871,47 @@ def build_arm_alerts(arms: dict) -> list[str]:
     return alerts
 
 
+def lab_paper_section(rules: Path) -> dict:
+    """Paper books for the swing lab (rules/workflows/lab-*.yaml) against the SPY buy-and-hold book."""
+    books = {}
+    for path in sorted(rules.glob("agent-trader-workflow-lab-*.json")):
+        try:
+            doc = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        start = doc.get("starting_cash_usd") or 4000.0
+        equity = doc.get("equity_usd")
+        if equity is None:
+            continue
+        name = path.stem.removeprefix("agent-trader-workflow-")
+        books[name] = {
+            "equity_usd": equity,
+            "return_pct": (equity / start - 1.0) * 100.0,
+            "realized_usd": doc.get("realized_pnl_usd", 0.0),
+            "closed": doc.get("closed_count", 0),
+            "open": doc.get("open_count", 0),
+            "last_tick": doc.get("last_tick"),
+        }
+    base = books.get("lab-spy-buy-hold")
+    if base:
+        for b in books.values():
+            b["excess_vs_spy_buy_hold_pct"] = b["return_pct"] - base["return_pct"]
+    return books
+
+
 def compact_summary(report: dict) -> str:
     sw = report["swing"]
-    op = report["options"]
+    op = report.get("options") or {}
     lines = [
         f"Scorecard {report['date']}",
+    ]
+    ep = report.get("epoch") or {}
+    if ep.get("id"):
+        lines.append(
+            f"Epoch {ep['id']} — current window only, since {str(ep.get('started_at'))[:10]} "
+            f"({ep.get('days')}d, {ep.get('strategy_version')})"
+        )
+    lines += [
         (
             f"Swing: {sw['closed_trades']} closes, WR {pct(sw.get('win_rate_pct'), 1)}, "
             f"mean pnl {pct(sw.get('mean_pnl_pct'), 2)} "
@@ -843,11 +923,16 @@ def compact_summary(report: dict) -> str:
             f"  SPY {pct(sw['spy'].get('return_pct'), 2)} | deploy avg {pct(sw.get('avg_deployment_pct'), 1)} | "
             f"excess vs SPY {pct(sw.get('excess_return_vs_spy_pct'), 2)}"
         ),
-        (
+    ]
+    if op:
+        lines.append(
             f"Options: {op['closed_trades']} closes, {op['wins']}W, real {usd(op.get('realized_pnl_usd'))}, "
             f"open mark {usd(op.get('open_position_mark_usd'))}, degraded exits {op.get('exits_on_degraded_quotes')}"
-        ),
-    ]
+        )
+    lab = report.get("swing_lab_paper") or {}
+    if lab:
+        parts = [f"{k.removeprefix('lab-')} {pct(v['return_pct'], 2)}" for k, v in lab.items()]
+        lines.append("Lab paper vs SPY b&h: " + ", ".join(parts))
     arms = report.get("options_arms") or {}
     if arms.get("agents"):
         lines.append(
@@ -871,6 +956,14 @@ def compact_summary(report: dict) -> str:
             lines.append(f"  (+{len(alerts) - 5} more)")
     else:
         lines.append("Alerts: none")
+    lt = report.get("lifetime") or {}
+    if lt.get("closed_epochs"):
+        totals = lt.get("totals") or {}
+        lines.append(
+            f"LIFETIME (retired, excluded from every current metric): "
+            f"{totals.get('epochs')} epochs, {totals.get('trades')} closes, "
+            f"{usd(totals.get('realized_usd'))}"
+        )
     return "\n".join(lines)
 
 
@@ -914,14 +1007,29 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     today = dt.date.today().isoformat()
 
-    journal_paths = swing_journal_paths(rules)
-    swing = swing_section(rules / SWING_STATE, journal_paths)
-    options = options_section(rules / OPTIONS_STATE, rules / OPTIONS_JOURNAL)
-    options_arms = options_arms_section(rules)
+    epoch_status = epoch_mod.epoch_status(rules, SWING_BOOK)
+    epoch = epoch_status.get("active")
+    journal_paths = swing_journal_paths(rules, epoch)
+    swing = swing_section(rules / SWING_STATE, journal_paths, epoch)
+    if args.include_options:
+        options = options_section(rules / OPTIONS_STATE, rules / OPTIONS_JOURNAL)
+        options_arms = options_arms_section(rules)
+    else:
+        options, options_arms = {}, {}
     drift_alerts = build_drift_alerts(swing, options)
     drift_alerts.extend(build_arm_alerts(options_arms))
     drift_alerts.extend(build_family_alerts(options_arms.get("families") or {}))
-    drift_alerts.extend(build_missing_file_alerts(rules))
+    drift_alerts.extend(build_missing_file_alerts(rules, args.include_options))
+    if not epoch_status["ledger_present"]:
+        drift_alerts.insert(0, "no epoch ledger (rules/epochs.json) — current metrics are undefined")
+    elif epoch is None:
+        drift_alerts.insert(0, f"no active epoch for {SWING_BOOK} — current metrics are undefined")
+    elif epoch_status["drift"]:
+        drift_alerts.insert(
+            0,
+            f"STRATEGY DRIFT: rules changed since epoch {epoch['id']} opened — these results "
+            "mix strategies; run scripts/epoch.py close/open before comparing further",
+        )
     swing.pop("_alerts_inputs", None)
     options.pop("_alerts_inputs", None)
 
@@ -931,7 +1039,18 @@ def main() -> int:
         "swing": swing,
         "options": options,
         "options_arms": options_arms,
+        "swing_lab_paper": lab_paper_section(rules),
         "drift_alerts": drift_alerts,
+        "epoch": {
+            "id": (epoch or {}).get("id"),
+            "book": SWING_BOOK,
+            "started_at": (epoch or {}).get("started_at"),
+            "days": epoch_status["days"],
+            "strategy_version": (epoch or {}).get("strategy_version"),
+            "drift": epoch_status["drift"],
+            "ledger_present": epoch_status["ledger_present"],
+        },
+        "lifetime": epoch_mod.load_lifetime(rules, SWING_BOOK) if args.lifetime else None,
     }
 
     out_path = out_dir / f"{today}.json"

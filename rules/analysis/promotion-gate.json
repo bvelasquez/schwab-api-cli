@@ -1,6 +1,222 @@
 {
   "control": "research-base",
+  "book": "swing-9947",
+  "epoch": {
+    "id": "swing-9947-20261028T2043",
+    "started_at": "2026-10-28T20:43:25Z",
+    "strategy_version": "adaptive-v2",
+    "drift": false
+  },
   "min_days": 40,
-  "arms": [],
+  "arms": [
+    {
+      "arm": "research-corr-groups",
+      "eligible": false,
+      "reasons": [
+        "days 0 < 40",
+        "day-paired CI does not sit above 0"
+      ],
+      "paired": {
+        "n": 0,
+        "mean": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      "operator_ok_required": true,
+      "applied": false
+    },
+    {
+      "arm": "research-dip",
+      "eligible": false,
+      "reasons": [
+        "days 0 < 40",
+        "day-paired CI does not sit above 0"
+      ],
+      "paired": {
+        "n": 0,
+        "mean": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      "operator_ok_required": true,
+      "applied": false
+    },
+    {
+      "arm": "research-downsize-event",
+      "eligible": false,
+      "reasons": [
+        "days 0 < 40",
+        "day-paired CI does not sit above 0"
+      ],
+      "paired": {
+        "n": 0,
+        "mean": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      "operator_ok_required": true,
+      "applied": false
+    },
+    {
+      "arm": "research-exit-event",
+      "eligible": false,
+      "reasons": [
+        "days 0 < 40",
+        "day-paired CI does not sit above 0"
+      ],
+      "paired": {
+        "n": 0,
+        "mean": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      "operator_ok_required": true,
+      "applied": false
+    },
+    {
+      "arm": "research-gap",
+      "eligible": false,
+      "reasons": [
+        "days 0 < 40",
+        "day-paired CI does not sit above 0"
+      ],
+      "paired": {
+        "n": 0,
+        "mean": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      "operator_ok_required": true,
+      "applied": false
+    },
+    {
+      "arm": "research-llm-agent",
+      "eligible": false,
+      "reasons": [
+        "days 0 < 40",
+        "day-paired CI does not sit above 0"
+      ],
+      "paired": {
+        "n": 0,
+        "mean": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      "operator_ok_required": true,
+      "applied": false
+    },
+    {
+      "arm": "research-midcap",
+      "eligible": false,
+      "reasons": [
+        "days 0 < 40",
+        "day-paired CI does not sit above 0"
+      ],
+      "paired": {
+        "n": 0,
+        "mean": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      "operator_ok_required": true,
+      "applied": false
+    },
+    {
+      "arm": "research-no-blocklist",
+      "eligible": false,
+      "reasons": [
+        "days 0 < 40",
+        "day-paired CI does not sit above 0"
+      ],
+      "paired": {
+        "n": 0,
+        "mean": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      "operator_ok_required": true,
+      "applied": false
+    },
+    {
+      "arm": "research-pullback",
+      "eligible": false,
+      "reasons": [
+        "days 0 < 40",
+        "day-paired CI does not sit above 0"
+      ],
+      "paired": {
+        "n": 0,
+        "mean": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      "operator_ok_required": true,
+      "applied": false
+    },
+    {
+      "arm": "research-rangecap",
+      "eligible": false,
+      "reasons": [
+        "days 0 < 40",
+        "day-paired CI does not sit above 0"
+      ],
+      "paired": {
+        "n": 0,
+        "mean": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      "operator_ok_required": true,
+      "applied": false
+    },
+    {
+      "arm": "research-regime",
+      "eligible": false,
+      "reasons": [
+        "days 0 < 40",
+        "day-paired CI does not sit above 0"
+      ],
+      "paired": {
+        "n": 0,
+        "mean": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      "operator_ok_required": true,
+      "applied": false
+    },
+    {
+      "arm": "research-skip-event",
+      "eligible": false,
+      "reasons": [
+        "days 0 < 40",
+        "day-paired CI does not sit above 0"
+      ],
+      "paired": {
+        "n": 0,
+        "mean": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      "operator_ok_required": true,
+      "applied": false
+    },
+    {
+      "arm": "research-wide-universe",
+      "eligible": false,
+      "reasons": [
+        "days 0 < 40",
+        "day-paired CI does not sit above 0"
+      ],
+      "paired": {
+        "n": 0,
+        "mean": null,
+        "ci_low": null,
+        "ci_high": null
+      },
+      "operator_ok_required": true,
+      "applied": false
+    }
+  ],
   "note": "A pass is not a production change. Operator OK is required. Real money is a separate decision."
 }

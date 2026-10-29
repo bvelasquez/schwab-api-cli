@@ -1,0 +1,11 @@
+# Swing candidate: Quality dip buy: above EMA200, at/below EMA20
+id: dip_buy_ema
+family: pullback
+label: "Quality dip buy: above EMA200, at/below EMA20"
+source: "Generalises rules/workflows/example-msft-dip.yaml; trend-pullback entries are standard in swing literature."
+thesis: "Large, trending companies that dip to a short average while above the long average usually resume the trend."
+backtest_class: DipBuy
+paper_target: workflow   # baseline | control | shadow_arm | workflow
+biased_universe: true
+universe: [AAPL, MSFT, NVDA, AMZN, GOOGL, META, AVGO, JPM, XOM, UNH, COST, LLY, WMT, HD, PG, V, MA, JNJ, CVX, CAT]
+doc: "The workflow idea at scale: quality stock above its EMA200 that dips to its EMA20."
