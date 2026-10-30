@@ -759,9 +759,11 @@ fn build_prompt(
 }
 
 fn parse_forecast(content: &str, config: &ArmConfig) -> Result<Forecast> {
-    let trimmed = strip_code_fence(content);
+    let Some(json) = extract_json_object(content) else {
+        bail!("forecast response contained no JSON object");
+    };
     let mut value: Value =
-        serde_json::from_str(&trimmed).context("forecast content was not valid JSON")?;
+        serde_json::from_str(&json).context("forecast content was not valid JSON")?;
     // Fill in fields the model may omit, so validation failures are about content.
     if let Some(object) = value.as_object_mut() {
         object
@@ -797,6 +799,45 @@ fn strip_code_fence(content: &str) -> String {
         .to_string()
 }
 
+/// Pull the first balanced JSON object out of a model response. Models routinely
+/// add a sentence before or after the object, or wrap it in a fence, so parsing
+/// the whole message fails for reasons that are not content errors. Strings and
+/// escapes are respected so a `}` inside a citation title cannot close early.
+fn extract_json_object(content: &str) -> Option<String> {
+    let text = strip_code_fence(content);
+    if serde_json::from_str::<Value>(&text).is_ok() {
+        return Some(text);
+    }
+    let start = text.find('{')?;
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (offset, ch) in text[start..].char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(text[start..start + offset + 1].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -806,6 +847,46 @@ mod tests {
         assert_eq!(strip_code_fence("{\"a\":1}"), "{\"a\":1}");
         assert_eq!(strip_code_fence("```json\n{\"a\":1}\n```"), "{\"a\":1}");
         assert_eq!(strip_code_fence("```\n{\"a\":1}\n```"), "{\"a\":1}");
+    }
+
+    #[test]
+    fn extract_json_tolerates_surrounding_prose() {
+        let content =
+            "Here is the forecast:\n```json\n{\"a\":1}\n```\nLet me know if you need more.";
+        assert_eq!(extract_json_object(content).unwrap(), "{\"a\":1}");
+        assert_eq!(
+            extract_json_object("Sure! {\"a\": {\"b\": 2}} and that is it").unwrap(),
+            "{\"a\": {\"b\": 2}}"
+        );
+    }
+
+    #[test]
+    fn extract_json_respects_braces_inside_strings() {
+        let content = r#"prefix {"title": "a } brace", "n": 1} suffix"#;
+        let extracted = extract_json_object(content).unwrap();
+        let value: Value = serde_json::from_str(&extracted).unwrap();
+        assert_eq!(value["n"], 1);
+        assert_eq!(value["title"], "a } brace");
+    }
+
+    #[test]
+    fn extract_json_reports_truncated_or_absent_objects() {
+        assert!(extract_json_object("no object here").is_none());
+        assert!(extract_json_object("{\"a\": 1").is_none());
+    }
+
+    #[test]
+    fn parse_forecast_accepts_a_fenced_object_with_prose() {
+        let config = ArmConfig {
+            arm_id: "arm".into(),
+            account: Some("public:ACC".into()),
+            universe: vec!["MSFT".into()],
+            ..Default::default()
+        };
+        let raw = "Forecast below.\n```json\n{\"signals\":[{\"symbol\":\"MSFT\",\"direction\":\"up\",\"confidence\":0.7}]}\n```\n";
+        let forecast = parse_forecast(raw, &config).unwrap();
+        assert_eq!(forecast.arm_id, "arm");
+        forecast.validate().unwrap();
     }
 
     #[test]
