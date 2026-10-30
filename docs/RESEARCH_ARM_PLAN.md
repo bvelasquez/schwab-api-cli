@@ -32,7 +32,7 @@ Goal: one interval-driven agent that reads live Public.com market data plus conf
 | Loop / timer unit examples | `deploy/systemd/user/agent-trader-research.{service,timer}.example` | §9 |
 | Example arm | `rules/research/example-megacaps.yaml` | App. C |
 
-Tests: 80 in `research-core`, 2 in `broker-public`, 40 in `agent-trader-cli`, all green. `--trust`/`--yes` are rejected by the research path (L1).
+Tests: 81 in `research-core`, 2 in `broker-public`, 40 in `agent-trader-cli`, all green. `--trust`/`--yes` are rejected by the research path (L1).
 
 **Not built yet:** configured-feed fetcher (§6 channel 1 — `research.feeds` is parsed but not fetched; web search is the only context channel), offline IC evaluation on `rules/lab-data/` (Phase 2), promotion-gate wiring to `rules/analysis/promotion-gate.json` (§8 stage D operator sign-off), and live (Phase 4, a separate artifact).
 

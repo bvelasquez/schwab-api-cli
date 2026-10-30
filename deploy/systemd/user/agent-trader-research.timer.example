@@ -1,12 +1,16 @@
 # Research-paper arm schedule: one paper-only tick per hour, weekdays 10:00-15:00 ET.
 # Paper only: the research path rejects --trust/--yes.
 #
-# The service is oneshot, so enable/start the timer, not the service:
+# This is the alternative to the long-lived `research run` loop in
+# agent-trader-research.service.example. To use it, set that unit to Type=oneshot
+# with `research tick` in ExecStart, then:
 #   systemctl --user enable --now agent-trader-research.timer
 #   systemctl --user start agent-trader-research.service    # run one tick now
 #   journalctl --user -u agent-trader-research.service -n 20
 #
-# Use this timer OR `agent-trader research run` (a long-lived loop); not both.
+# Use this timer OR `research run`, never both. Prefer the loop for a wide
+# universe: a oneshot tick has no bar cache, so it costs one daily-bar request
+# per symbol every time it fires.
 
 [Unit]
 Description=Hourly weekday research tick (paper-only)

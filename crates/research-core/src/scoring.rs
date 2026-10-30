@@ -301,6 +301,10 @@ pub fn spearman(a: &[f64], b: &[f64]) -> Option<f64> {
 #[serde(default)]
 pub struct Scorecard {
     pub scored_days: usize,
+    /// Days whose forecast produced a defined rank IC. This, not `scored_days`,
+    /// is what the stage-B gate counts: a day where the model marks everything
+    /// `flat` has no cross-sectional information to measure.
+    pub ic_days: usize,
     pub signals_scored: usize,
     pub hit_rate_pct: f64,
     pub mean_excess_pct: f64,
@@ -348,6 +352,7 @@ impl Scorecard {
         let last_scored_date = scores.iter().map(|score| score.as_of_date.clone()).max();
         let mut scorecard = Self {
             scored_days: scores.len(),
+            ic_days: ics.len(),
             signals_scored: signals.len(),
             hit_rate_pct,
             mean_excess_pct,
@@ -363,15 +368,16 @@ impl Scorecard {
     }
 
     fn passes_gate(&self) -> bool {
-        self.scored_days >= MIN_DAYS
+        self.ic_days >= MIN_DAYS
             && self.mean_rank_ic.is_some_and(|ic| ic >= MIN_MEAN_IC)
             && self.ic_t_stat.is_some_and(|t| t >= MIN_T)
     }
 
     fn gate_reason_text(&self) -> String {
-        if self.scored_days < MIN_DAYS {
+        if self.ic_days < MIN_DAYS {
             return format!(
-                "{} of {MIN_DAYS} scored days (mean IC {}, t {})",
+                "{} of {MIN_DAYS} days with a defined IC ({} scored days; mean IC {}, t {})",
+                self.ic_days,
                 self.scored_days,
                 self.mean_rank_ic
                     .map(|ic| format!("{ic:.3}"))
@@ -403,6 +409,7 @@ impl Scorecard {
     pub fn to_json(&self) -> Value {
         json!({
             "scored_days": self.scored_days,
+            "ic_days": self.ic_days,
             "signals_scored": self.signals_scored,
             "hit_rate_pct": self.hit_rate_pct,
             "mean_excess_pct": self.mean_excess_pct,
@@ -620,6 +627,27 @@ mod tests {
             rank_ic: Some(ic),
             missing_symbols: vec![],
         }
+    }
+
+    #[test]
+    fn a_flat_day_does_not_count_toward_the_ic_gate() {
+        // 20 scored days, none with a defined IC (everything marked flat).
+        let flat: Vec<ForecastScore> = (0..MIN_DAYS)
+            .map(|i| {
+                let mut s = score_with_ic(&format!("2026-09-{:02}", i + 1), 0.0);
+                s.rank_ic = None;
+                s
+            })
+            .collect();
+        let card = Scorecard::from_scores(&flat);
+        assert_eq!(card.scored_days, MIN_DAYS);
+        assert_eq!(card.ic_days, 0);
+        assert!(!card.gate_pass);
+        assert!(
+            card.gate_reason.contains("defined IC"),
+            "{}",
+            card.gate_reason
+        );
     }
 
     #[test]

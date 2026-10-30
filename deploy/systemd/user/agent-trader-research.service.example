@@ -9,10 +9,11 @@
 #   OPENROUTER_API_KEY=...    (forecast + web search)
 # Keep PUBLIC_PERSONAL_SECRET unset: its presence fails the startup gate.
 #
-# Type=oneshot: pair with agent-trader-research.timer.example for an hourly tick.
-# For a long-lived loop instead, set Type=simple and
-#   ExecStart=... research run --rules ... --interval-seconds 1800
-# Do not run both at once.
+# Type=simple: one long-lived loop. Prefer this for a wide universe, because the
+# in-process bar cache keeps a 40-name cross-section from costing one daily-bar
+# request per symbol per tick. For a handful of symbols you can instead use
+# Type=oneshot with `research tick` driven by agent-trader-research.timer.example
+# (do not run both).
 #
 # Patches: proposals are always versioned. --apply-patches lets the arm trade the
 # newest accepted bounded patch on the following tick (self-adaptation). Remove it
@@ -25,7 +26,12 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=oneshot
+Type=simple
 WorkingDirectory=%h/projects/schwabinvestbot
 EnvironmentFile=%h/.config/agent-trader/research.env
-ExecStart=%h/.cargo/bin/agent-trader research tick --rules %h/projects/schwabinvestbot/rules/research/megacaps.yaml --apply-patches
+ExecStart=%h/.cargo/bin/agent-trader research run --rules %h/projects/schwabinvestbot/rules/research/megacaps.yaml --interval-seconds 1800 --apply-patches
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=default.target

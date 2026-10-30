@@ -924,7 +924,8 @@ function renderResearch(research) {
     }
     if (sc.scored_days != null) {
       const need = (sc.criteria || {}).min_days || 20;
-      metrics.appendChild(metric("Scored days", sc.scored_days + "/" + need));
+      metrics.appendChild(metric("IC days", (sc.ic_days == null ? 0 : sc.ic_days) + "/" + need));
+      metrics.appendChild(metric("Scored", String(sc.scored_days == null ? 0 : sc.scored_days)));
       metrics.appendChild(metric("Rank IC", sc.mean_rank_ic == null ? "—" : Number(sc.mean_rank_ic).toFixed(3), sc.mean_rank_ic > 0 ? "up" : sc.mean_rank_ic < 0 ? "down" : "watch"));
       metrics.appendChild(metric("IC t", sc.ic_t_stat == null ? "—" : Number(sc.ic_t_stat).toFixed(2), sc.ic_t_stat >= 2 ? "up" : "watch"));
       metrics.appendChild(metric("Hit rate", sc.hit_rate_pct == null ? "—" : Number(sc.hit_rate_pct).toFixed(0) + "%"));

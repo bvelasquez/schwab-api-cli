@@ -726,8 +726,10 @@ fn build_prompt(
     let system = format!(
         "You are the research analyst for a PAPER-ONLY trading arm. You never place orders. \
          Produce a forecast for the target `{}` over the next {} trading days relative to {}. \
-         Emit exactly one signal per symbol in the universe; use direction `flat` with a low \
-         confidence when you have no view, so the ranking stays cross-sectional. \
+         Emit exactly one signal per symbol in the universe and rank them from most to least \
+         attractive with `expected_return_pct`. Use direction `flat` only for a name you truly \
+         have no view on, not as a default: a whole-universe `flat` day has no cross-sectional \
+         information, so the scorecard cannot measure it. \
          You may use the web_search tool to gather news and macro context. \
          The universe mixes single names, sector and segment ETFs, international ETFs, \
          rates/credit/commodity ETFs and REITs, so rank across all of them on the same \
