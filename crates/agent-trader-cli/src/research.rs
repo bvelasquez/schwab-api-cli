@@ -32,7 +32,10 @@ use serde_json::{json, Value};
 use crate::paths::state_dir;
 
 /// Daily bars are re-fetched at most this often inside a long-running loop.
-const BAR_CACHE_TTL: Duration = Duration::from_secs(1_800);
+/// Daily bars only change once per session, and the indicators exclude today's
+/// forming bar, so a four-hour staleness is immaterial and keeps a wide universe
+/// from turning into one bar request per symbol per tick.
+const BAR_CACHE_TTL: Duration = Duration::from_secs(4 * 3_600);
 
 /// A Public-only registry whose trading handle refuses every write.
 pub struct PaperRegistry {
@@ -235,7 +238,7 @@ pub async fn run_tick(rules: &Path, options: &TickOptions, cache: &mut BarCache)
                 &system,
                 &user,
                 &search_params,
-                4096,
+                8192,
             )
             .await?;
         citations = result
@@ -713,7 +716,12 @@ fn build_prompt(
     let system = format!(
         "You are the research analyst for a PAPER-ONLY trading arm. You never place orders. \
          Produce a forecast for the target `{}` over the next {} trading days relative to {}. \
+         Emit exactly one signal per symbol in the universe; use direction `flat` with a low \
+         confidence when you have no view, so the ranking stays cross-sectional. \
          You may use the web_search tool to gather news and macro context. \
+         The universe mixes single names, sector and segment ETFs, international ETFs, \
+         rates/credit/commodity ETFs and REITs, so rank across all of them on the same \
+         benchmark-relative horizon. \
          Long-only: only symbols you mark `up` and with confidence >= {} will be bought. \
          A `down` or `flat` call on a held symbol closes it. \
          Respond with ONLY a JSON object matching this shape: \

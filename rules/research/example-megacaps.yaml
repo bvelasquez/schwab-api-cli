@@ -43,7 +43,61 @@ research:
     max_queries_per_tick: 4
     allowed_domains: [reuters.com, federalreserve.gov, sec.gov, bls.gov]
 
-universe: [MSFT, AAPL, NVDA, AMZN, GOOGL]
+# A varied cross-section, not five mega-caps: broad market, size, the eleven
+# sector SPDRs, segments/themes, international, rates/credit/commodities/REITs and
+# a dozen single names. The forecast ranks all of these on the same
+# benchmark-relative horizon, so rank IC has a population to measure.
+#
+# ETFs need no special handling: Public treats them as EQUITY instruments, the
+# same path the SPY benchmark already uses. Inverse and leveraged ETFs are left
+# out on purpose - 5-day decay would contaminate the score.
+universe:
+  # Broad market and size
+  - QQQ
+  - IWM
+  - DIA
+  # Sector SPDRs
+  - XLK
+  - XLF
+  - XLV
+  - XLE
+  - XLI
+  - XLY
+  - XLP
+  - XLU
+  - XLB
+  - XLRE
+  - XLC
+  # Segments and themes
+  - SMH
+  - XBI
+  - KRE
+  - XOP
+  - ITB
+  # International
+  - EEM
+  - EFA
+  - FXI
+  # Rates, credit, commodities, REITs
+  - TLT
+  - IEF
+  - HYG
+  - LQD
+  - GLD
+  - VNQ
+  # Single names across sectors
+  - MSFT
+  - NVDA
+  - AMZN
+  - GOOGL
+  - META
+  - JPM
+  - UNH
+  - XOM
+  - CAT
+  - WMT
+  - LLY
+  - TSLA
 
 paper:
   starting_equity_usd: 10000
