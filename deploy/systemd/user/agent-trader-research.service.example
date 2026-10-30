@@ -1,0 +1,29 @@
+# Research-paper arm (Public quotes, local fills, zero orders).
+# Paper only: never add --trust or --yes; the research path rejects them.
+#
+# Copy rules/research/example-megacaps.yaml to rules/research/megacaps.yaml, put
+# your real `public:<account id>` in it, and point ExecStart at that file.
+#
+# Env file (%h/.config/agent-trader/research.env) needs:
+#   PUBLIC_API_KEY=...        (read-only use)
+#   OPENROUTER_API_KEY=...    (forecast + web search)
+# Keep PUBLIC_PERSONAL_SECRET unset: its presence fails the startup gate.
+#
+# Type=oneshot: pair with agent-trader-research.timer.example for an hourly tick.
+# For a long-lived loop instead, set Type=simple and
+#   ExecStart=... research run --rules ... --interval-seconds 1800
+# Do not run both at once.
+#
+# Patches: proposals are always versioned. Add --apply-patches only when you want
+# the arm to trade the newest accepted bounded patch on the following tick.
+
+[Unit]
+Description=agent-trader research arm (paper-only; never places an order)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/schwabinvestbot
+EnvironmentFile=%h/.config/agent-trader/research.env
+ExecStart=%h/.cargo/bin/agent-trader research tick --rules %h/projects/schwabinvestbot/rules/research/megacaps.yaml

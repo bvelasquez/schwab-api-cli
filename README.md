@@ -14,6 +14,19 @@ Agent-first Rust CLI for the [Charles Schwab Trader API](https://developer.schwa
 
 A second CLI, `agent-trader`, talks to Schwab and Public.com through one order model. The account on the plan or rules file picks the backend, so both can run together. The `schwab` and `schwab-trader` binaries are unchanged until you cut an arm over. See [docs/AGENT_TRADER.md](docs/AGENT_TRADER.md).
 
+### Research arm (paper only, Public data)
+
+`agent-trader research` is an experiment: an LLM reads live Public.com quotes plus web search, forecasts 5-day excess return versus SPY, and **paper-trades the result locally**. It is structurally incapable of placing an order — no `--trust`, no `--yes`, Public is read-only at the HTTP layer, the broker is wrapped in a refusing `PaperOnlyBroker`, and a tripwire file records any attempted write.
+
+```bash
+agent-trader research validate --rules rules/research/example-megacaps.yaml
+agent-trader research tick     --rules rules/research/example-megacaps.yaml
+agent-trader research run      --rules rules/research/example-megacaps.yaml --interval-seconds 1800
+agent-trader research rollback --rules rules/research/example-megacaps.yaml
+```
+
+Fills, stops, targets, ATR trailing, the RSI entry band and the daily-loss kill switch are simulated in `crates/research-core/src/book.rs`. The book renders on the paper dashboard as a normal book plus a Research tab with the forecast, citations, patch history and the forward-return scorecard (rank IC, day-clustered t, 20-day stage-B gate). Playbook patches are versioned under `rules/research/<file>.versions/`; they are only activated with `--apply-patches`. Plan and safety invariants: [docs/RESEARCH_ARM_PLAN.md](docs/RESEARCH_ARM_PLAN.md).
+
 ## Features
 
 - **OAuth 2.0** — browser login, token refresh, secure local storage
@@ -24,6 +37,7 @@ A second CLI, `agent-trader`, talks to Schwab and Public.com through one order m
 - **Trade plans** — YAML/JSON multi-step rebalances; LLM-authored, CLI-validated
 - **Options agent** — long-running daemon from `rules/*.yaml`; put credit spreads, mechanical exits, phased schedule (regular / overnight), OpenRouter LLM advisor, Telegram alerts
 - **Equity swing trader** — separate `schwab-trader` CLI for short/medium-term stock swings; capital sleeve, post-fill OCO brackets, Perplexity picks ([docs/TRADER_RULES.md](docs/TRADER_RULES.md))
+- **Research arm** — paper-only Public.com + web-search forecast, simulated fills, rank-IC scorecard, no live path
 - **Order wait** — poll until limit orders fill before advancing a plan
 - **Safety config** — `safety.json` enforces max trade size, symbols, order types (cannot be bypassed)
 - **Trust mode** — autonomous agent execution requires `--trust --yes`
@@ -136,6 +150,7 @@ Global flags: `--json`, `--yes`, `--trust`, `--dry-run`
 | [docs/AGENT_SCHEDULE.md](docs/AGENT_SCHEDULE.md) | Operators | Regular / overnight / at-open sessions |
 | [docs/TRADER_RULES.md](docs/TRADER_RULES.md) | Operators | Equity swing trader (`schwab-trader`) |
 | [docs/REMOTE_PAPER_HOST.md](docs/REMOTE_PAPER_HOST.md) | Operators | Remote paper host (systemd user units, deploy scripts) |
+| [docs/RESEARCH_ARM_PLAN.md](docs/RESEARCH_ARM_PLAN.md) | Operators | Paper-only research arm: hard gate, fill model, patch rails, scorecard |
 
 Machine-readable discovery: `schwab instructions --json`, `schwab plan schema --json`, `schwab agent schema --json`, `schwab plan prompt --json`.
 

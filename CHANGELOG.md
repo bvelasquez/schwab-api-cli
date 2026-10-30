@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+`agent-trader`. Research-paper arm (Public.com quotes, web search, zero orders).
+
+- Phase 3 of `docs/RESEARCH_ARM_PLAN.md` landed. `agent-trader research run` drives the loop: forecast, local paper fills, bounded playbook patches, and forward-return scoring.
+- Paper book: slot sizing from simulated equity, ask/bid fills with `slippage_bps`, stop/target/ATR-trailing/time/thesis exits, a one-day re-entry cooldown after a stop or thesis exit, and a `max_daily_loss_usd` kill switch that survives restarts.
+- Entry guard reads RSI(14) from the playbook band; indicators see only bars before the decision date.
+- Playbook patches are versioned to `rules/research/<file>.versions/` with an `active.json` pointer; `--apply-patches` activates, `research rollback` reverts. Only the `playbook` subtree is read back, so an overlay cannot change account, mode, gate, universe or credentials.
+- Forecast scoring writes `scores-<arm>.jsonl` and a scorecard: hit rate, mean rank IC, day-clustered t, and the 20-day stage-B gate from `rules/analysis/llm-ic-eval.json`.
+- Paper dashboard: the research book renders as a normal book, and the Research tab shows paper equity, return versus SPY, scorecard, patch note and per-tick history.
+- New `deploy/systemd/user/agent-trader-research.service.example`. Paper only: `--trust`/`--yes` are rejected on the research path.
+
 ## 0.1.9 — 2026-10-13
 
 `schwab-api-cli` and `schwab-trader`. Same library crates as 0.1.8 (`schwab-api-cli-core` 0.1.2, `schwab-api-cli-market-data` 0.1.1).

@@ -2,9 +2,14 @@
 #
 #   agent-trader research validate --rules rules/research/example-megacaps.yaml
 #   agent-trader research tick     --rules rules/research/example-megacaps.yaml
+#   agent-trader research run      --rules rules/research/example-megacaps.yaml --interval-seconds 1800
+#   agent-trader research rollback --rules rules/research/example-megacaps.yaml
 #
-# `tick` requires PUBLIC_API_KEY (read-only use) and, for a forecast, OPENROUTER_API_KEY.
-# It never applies a patch and never places an order.
+# `tick`/`run` need PUBLIC_API_KEY (read-only use) and, for a forecast,
+# OPENROUTER_API_KEY. The arm simulates fills locally into
+# `rules/research/agent-trader-research-<arm_id>.json`; it never applies a live
+# patch and never places an order. Playbook patches are versioned under
+# `rules/research/<file>.versions/` and only activated with --apply-patches.
 version: 1
 mode: paper
 arm_id: research-megacaps
@@ -45,7 +50,26 @@ paper:
   slippage_bps: 5
   max_quote_age_seconds: 60
   max_daily_loss_usd: 300
+  max_open_positions: 5
+  max_hold_days: 5
+
+# The only thing the patch engine may change. Every patched field is read by the
+# paper fill model: stop/target/trailing drive exits, the RSI band drives entries.
+playbook:
+  exit:
+    profit_target_pct: 8.0
+    stop_loss_pct: 4.0
+    trailing:
+      trail_atr_multiple: 2.0
+      activate_after_profit_pct: 4.0
+  entry:
+    rsi_14_range: [35.0, 70.0]
 
 adaptation:
   live_auto_apply: false
-  allowlist: [playbook.exit.stop_loss_pct, playbook.entry.rsi_14_range]
+  allowlist:
+    - playbook.exit.stop_loss_pct
+    - playbook.exit.profit_target_pct
+    - playbook.exit.trailing.trail_atr_multiple
+    - playbook.exit.trailing.activate_after_profit_pct
+    - playbook.entry.rsi_14_range

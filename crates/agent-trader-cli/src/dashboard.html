@@ -913,7 +913,26 @@ function renderResearch(research) {
     metrics.appendChild(metric("Citations", String((arm.citations || []).length)));
     metrics.appendChild(metric("Orders placed", String(arm.orders_placed == null ? 0 : arm.orders_placed), arm.orders_placed ? "down" : "up"));
     metrics.appendChild(metric("Place attempts", String(arm.place_attempts == null ? 0 : arm.place_attempts), arm.place_attempts ? "down" : "up"));
+    const bk = arm.book || {};
+    const sc = arm.scorecard || {};
+    if (bk.equity_usd != null) {
+      metrics.appendChild(metric("Paper equity", usd(bk.equity_usd)));
+      metrics.appendChild(metric("Return", pct2(bk.return_pct), cls(bk.return_pct)));
+      metrics.appendChild(metric("vs SPY", pct2(bk.excess_return_pct), cls(bk.excess_return_pct)));
+      metrics.appendChild(metric("Open", String(bk.open_count == null ? 0 : bk.open_count)));
+      metrics.appendChild(metric("Closed", String(bk.closed_count == null ? 0 : bk.closed_count)));
+    }
+    if (sc.scored_days != null) {
+      const need = (sc.criteria || {}).min_days || 20;
+      metrics.appendChild(metric("Scored days", sc.scored_days + "/" + need));
+      metrics.appendChild(metric("Rank IC", sc.mean_rank_ic == null ? "—" : Number(sc.mean_rank_ic).toFixed(3), sc.mean_rank_ic > 0 ? "up" : sc.mean_rank_ic < 0 ? "down" : "watch"));
+      metrics.appendChild(metric("IC t", sc.ic_t_stat == null ? "—" : Number(sc.ic_t_stat).toFixed(2), sc.ic_t_stat >= 2 ? "up" : "watch"));
+      metrics.appendChild(metric("Hit rate", sc.hit_rate_pct == null ? "—" : Number(sc.hit_rate_pct).toFixed(0) + "%"));
+      metrics.appendChild(metric("Signal gate", sc.gate_pass ? "PASS" : "not yet", sc.gate_pass ? "up" : "watch"));
+    }
     card.appendChild(metrics);
+    if (bk.halted) card.appendChild(el("p", { className: "halt" }, "Halted: " + bk.halted));
+    if (sc.gate_reason) card.appendChild(el("p", { className: "meta" }, "Signal gate: " + sc.gate_reason));
     if (!arm.gate_ok) {
       card.appendChild(el("p", { className: "empty" }, "GATE FAILURES: " + ((arm.gate_failures || []).join(", ") || "unknown")));
     }
@@ -935,6 +954,7 @@ function renderResearch(research) {
     if (alerts.length) card.appendChild(el("p", { className: "empty" }, "Risk: " + alerts.join(" · ")));
     const patches = f.plan_patch || [];
     card.appendChild(el("h3", null, "Proposed plan patches" + (patches.length ? "" : " — none")));
+    if (arm.patch_note) card.appendChild(el("p", { className: "meta" }, "Patch: " + arm.patch_note));
     if (patches.length) {
       card.appendChild(table(
         [{label:"Path", wrap:true},{label:"Value"},{label:"Reason", wrap:true}],
@@ -964,14 +984,17 @@ function renderResearch(research) {
   if (hist.length) {
     wrap.appendChild(el("h3", null, "Tick history (newest last)"));
     wrap.appendChild(table(
-      [{label:"Time"},{label:"Arm"},{label:"Gate"},{label:"Regime"},{label:"Signals", num:true},{label:"Citations", num:true},{label:"Orders", num:true}],
+      [{label:"Time"},{label:"Arm"},{label:"Gate"},{label:"Regime"},{label:"Equity", num:true},{label:"vs SPY", num:true},{label:"Signals", num:true},{label:"Citations", num:true},{label:"IC", num:true},{label:"Orders", num:true}],
       hist.map((h) => [
         cell(h.at ? new Date(h.at).toLocaleString() : "—"),
         cell(h.arm_id),
         cell(h.gate_ok ? "ok" : "FAIL", h.gate_ok ? "up" : "down"),
         cell(h.regime),
+        cell(usd(h.equity_usd)),
+        cell(pct2(h.excess_return_pct), cls(h.excess_return_pct)),
         cell(h.signals),
         cell(h.citations),
+        cell(h.mean_rank_ic == null ? null : Number(h.mean_rank_ic).toFixed(3)),
         cell(h.orders_placed)
       ])
     ));
@@ -1279,7 +1302,7 @@ function renderBook(book) {
   const card = el("section", { className: agent ? "book agent-trader" : "book" });
   const head = el("div", { className: "row" });
   const title = el("div", { className: "title" });
-  const kind = book.kind === "options" ? "Options" : book.kind === "workflow" ? "Workflow" : "Swing";
+  const kind = book.kind === "options" ? "Options" : book.kind === "workflow" ? "Workflow" : book.kind === "research" ? "Research" : "Swing";
   title.appendChild(document.createTextNode(agent
     ? "agent-trader · " + (book.broker_label || "Public API") + " · " + kind
     : kind + " · " + (book.name || book.rules_file)));
@@ -1520,7 +1543,8 @@ function paint() {
   const all = latest.books || [];
   const options = all.filter((b) => b.kind === "options");
   const workflows = all.filter((b) => b.kind === "workflow");
-  const swing = all.filter((b) => b.kind !== "options" && b.kind !== "workflow");
+  const researchBooks = all.filter((b) => b.kind === "research");
+  const swing = all.filter((b) => b.kind !== "options" && b.kind !== "workflow" && b.kind !== "research");
   const optBtn = document.querySelector('button[data-tab="options"]');
   const swBtn = document.querySelector('button[data-tab="swing"]');
   const wfBtn = document.querySelector('button[data-tab="workflows"]');
@@ -1534,15 +1558,15 @@ function paint() {
   if (wfBtn) wfBtn.textContent = "Workflows" + (workflows.length ? " · " + workflows.length : "");
   const resBtn = document.querySelector('button[data-tab="research"]');
   const research = latest.research;
-  const hasResearch = !!(research && research.present && (research.arms || []).length);
+  const hasResearch = !!(research && research.present && (research.arms || []).length) || researchBooks.length > 0;
   if (resBtn) {
     resBtn.hidden = !hasResearch;
-    resBtn.textContent = "Research" + (hasResearch ? " · " + research.arms.length : "");
+    resBtn.textContent = "Research" + (hasResearch ? " · " + (research && research.arms ? research.arms.length : researchBooks.length) : "");
   }
   if (tab === "research" && !hasResearch) tab = "swing";
   const y = window.scrollY;
   const nodes = [];
-  const shown = tab === "research" ? [] : (tab === "swing" ? swing : tab === "workflows" ? workflows : options);
+  const shown = tab === "research" ? researchBooks : (tab === "swing" ? swing : tab === "workflows" ? workflows : options);
   const agent = shown.filter((b) => b.stack === "agent-trader");
   const rest = shown.filter((b) => b.stack !== "agent-trader");
   if (tab === "options") {

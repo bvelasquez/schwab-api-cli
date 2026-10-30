@@ -125,8 +125,32 @@ enum ResearchCmd {
         #[arg(long)]
         rules: PathBuf,
     },
-    /// One paper-only research pass. Never applies a patch or places an order.
+    /// One paper-only research pass: forecast, paper fills, patch proposal,
+    /// scoring. Never places an order.
     Tick {
+        #[arg(long)]
+        rules: PathBuf,
+        /// Promote accepted playbook patches to the active versioned overlay.
+        #[arg(long)]
+        apply_patches: bool,
+    },
+    /// Continuous paper-only loop. Drives the same pass on an interval.
+    Run {
+        #[arg(long)]
+        rules: PathBuf,
+        /// Seconds between passes. The paper book also refuses entries when the
+        /// US cash session is closed.
+        #[arg(long, default_value_t = 1800)]
+        interval_seconds: u64,
+        /// Run a single pass and exit.
+        #[arg(long)]
+        once: bool,
+        /// Promote accepted playbook patches to the active versioned overlay.
+        #[arg(long)]
+        apply_patches: bool,
+    },
+    /// Drop the active playbook overlay and fall back to the arm YAML.
+    Rollback {
         #[arg(long)]
         rules: PathBuf,
     },
@@ -403,9 +427,26 @@ async fn research_cmd(command: ResearchCmd, flags: &agent_trader::TradingFlags) 
             let report = agent_trader::research::run_validate(&rules)?;
             print_json(report);
         }
-        ResearchCmd::Tick { rules } => {
-            let report = agent_trader::research::run_tick(&rules).await?;
+        ResearchCmd::Tick {
+            rules,
+            apply_patches,
+        } => {
+            let options = agent_trader::research::TickOptions { apply_patches };
+            let report =
+                agent_trader::research::run_tick(&rules, &options, &mut Default::default()).await?;
             print_json(report);
+        }
+        ResearchCmd::Run {
+            rules,
+            interval_seconds,
+            once,
+            apply_patches,
+        } => {
+            let options = agent_trader::research::TickOptions { apply_patches };
+            agent_trader::research::run_loop(&rules, &options, interval_seconds, once).await?;
+        }
+        ResearchCmd::Rollback { rules } => {
+            print_json(agent_trader::research::run_rollback(&rules)?);
         }
     }
     Ok(())

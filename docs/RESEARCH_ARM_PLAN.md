@@ -1,6 +1,6 @@
 # Research-paper arm — plan (Public.com, paper only)
 
-Status: **plan / not implemented**. This document is the working plan. Build against it phase by phase.
+Status: **Phases 1 and 3 landed (paper loop is live-capable); Phase 2 offline eval and Phase 4 live are not built.** This document is the working plan.
 
 Decisions locked: forecast target (§0.1) and web-search provider (§0.2).
 
@@ -12,7 +12,7 @@ Goal: one interval-driven agent that reads live Public.com market data plus conf
 
 ## Implementation status
 
-**Landed — Phase 1 safety spine.**
+**Landed — Phase 1 safety spine and Phase 3 paper loop.**
 
 | Piece | Location | Plan ref |
 |---|---|---|
@@ -23,12 +23,56 @@ Goal: one interval-driven agent that reads live Public.com market data plus conf
 | Bounded patch engine (allowlist + rails) | `crates/research-core/src/patch.rs` | §5 |
 | OpenRouter `web_search` client | `crates/research-core/src/web_search.rs` | §0.2, §6 |
 | Read-only HTTP mode (trading writes refused) | `crates/broker-public/src/client.rs` | §4 L3 |
-| `research validate` / `research tick` (Phase 1: gate → gather → optional forecast → journal) | `crates/agent-trader-cli/src/research.rs` | §3, §9 |
+| Paper book: sizing, fills, marks, exits, kill switch | `crates/research-core/src/book.rs` | §7 |
+| RSI/ATR over point-in-time daily bars | `crates/research-core/src/indicators.rs` | §7 |
+| Versioned playbook overlay + rollback | `crates/research-core/src/playbook.rs` | §5 |
+| Forward-return scoring + rank IC + stage-B gate | `crates/research-core/src/scoring.rs` | §8 |
+| `research validate` / `tick` / `run` / `rollback` | `crates/agent-trader-cli/src/research.rs` | §3, §9 |
+| Research tab + research paper book on the dashboard | `crates/agent-trader-cli/src/{dashboard.rs,dashboard.html}` | §9 |
+| Loop / timer unit examples | `deploy/systemd/user/agent-trader-research.{service,timer}.example` | §9 |
 | Example arm | `rules/research/example-megacaps.yaml` | App. C |
 
-Tests: 29 in `research-core`, 2 in `broker-public`, 2 in `agent-trader-cli`, all green. `--trust`/`--yes` are rejected by the research path (L1).
+Tests: 74 in `research-core`, 2 in `broker-public`, 36 in `agent-trader-cli`, all green. `--trust`/`--yes` are rejected by the research path (L1).
 
-**Not built yet (next phases):** feed fetcher, paper ledger + fill model (§7), versioned plan store, promotion-gate wiring (§8), interval scheduler, offline IC evaluation on `rules/lab-data/`.
+**Not built yet:** configured-feed fetcher (§6 channel 1 — `research.feeds` is parsed but not fetched; web search is the only context channel), offline IC evaluation on `rules/lab-data/` (Phase 2), promotion-gate wiring to `rules/analysis/promotion-gate.json` (§8 stage D operator sign-off), and live (Phase 4, a separate artifact).
+
+### Phase 3 as built
+
+`agent-trader research run --rules rules/research/<arm>.yaml --interval-seconds 1800`
+(optionally `--apply-patches`) drives one pass:
+
+1. gate → read-only Public quotes → daily bars per symbol + benchmark → session state;
+2. playbook = active overlay if any, else the arm YAML;
+3. load the arm's paper book, mark positions, run exits (stop, target, time, thesis,
+   ATR trailing ratchet), apply the daily-loss kill switch, then size entries from
+   `equity / max_open_positions` for `up` signals at or above `min_confidence`
+   inside the RSI band, with an entry cooldown after a stop/thesis exit;
+4. LLM + web-search forecast (prompt includes quotes, positions, playbook and the
+   scorecard so far);
+5. version every accepted patch; activate only with `--apply-patches`;
+6. score pending forecasts whose forward window has elapsed, append to
+   `scores-<arm>.jsonl`, recompute the stage-B scorecard;
+7. write the book to `rules/research/agent-trader-research-<arm>.json` (dashboard)
+   plus `state/paper-research/`, journal the tick, re-check the tripwire.
+
+Deviations from the original plan text, all deliberate:
+
+- **Overlay store, not a rewritten YAML copy.** Versions live in
+  `rules/research/<file>.versions/<ts>.json` with an `active.json` pointer. The
+  arm YAML keeps its comments and operator edits, rollback is deleting the
+  pointer, and only the `playbook` subtree is ever read back, so an overlay can
+  never change account, mode, gate, universe or credentials.
+- **`max_quote_age_seconds` is not enforced.** Public's quote payload carries no
+  exchange timestamp, so a staleness test would be theatre: quotes are fetched at
+  the top of a tick and used immediately. The field stays in the schema for
+  backends that do expose a quote timestamp. The guard that *does* matter is
+  point-in-time: indicators see only bars strictly before the decision date.
+- **Long only.** The plan already excludes shorts; `down`/`flat`/missing signals
+  close a held name ("thesis") instead of opening a short.
+- **Daily buckets are US Eastern exchange dates.** Bar dates are exchange dates,
+  so halts, cooldowns and the pending-forecast decision date all use the ET
+  calendar (`indicators::exchange_date`), not the UTC date. A 21:00 ET tick is
+  already the next day in UTC.
 
 ---
 
@@ -269,13 +313,17 @@ Rules for research integrity:
 
 Results are only as good as this model. It must be explicit and logged.
 
-- **Fill rule**: market/limit against next Public quote/bar; a limit fills only if price crosses. Reject if the quote is older than `max_quote_age_seconds`.
-- **Costs**: `slippage_bps` (default 5), spread modeled; Public equity commission = $0. Report results at 0 and 15 bps (matches the swing lab).
-- **Marks**: Public quotes each tick; mark the paper ledger to market.
-- **Sizing**: uses the **paper ledger's simulated equity**, never live buying power. Live balances are read-only reference only.
-- **Point-in-time discipline**: context sees only data and news timestamped **before** the decision. No future bars. This is the primary defense against a backtest that lies.
-- **Session gate**: local US equity calendar (Public has no hours endpoint).
-- **Ledger**: separate state dir (`.../agent-trader/paper-research/`), separate lock namespace, never reconciled against live positions.
+As built (`crates/research-core/src/book.rs`):
+
+- **Fill rule**: a market fill against the quote fetched at the top of the tick: ask for buys, bid for sells, last/mid fallback. Skips the symbol when no usable price exists. `max_quote_age_seconds` is not enforced (Public quotes carry no timestamp; see "Phase 3 as built").
+- **Costs**: `slippage_bps` (default 5) applied against the book on both sides, plus the real half spread (entry marks to the last immediately). Public equity commission = $0.
+- **Marks**: Public quotes each tick; the paper book is marked to market every pass.
+- **Sizing**: `equity / max_open_positions` per slot, capped by cash; whole shares; never live buying power.
+- **Exits**: stop, profit target, ATR trailing ratchet (only up), time stop at `max_hold_days` trading days, and a "thesis" exit when the signal that opened the trade is gone, plus a one-trading-day re-entry cooldown after a stop/thesis exit.
+- **Kill switch**: realised loss at or below `-max_daily_loss_usd` halts new entries for the rest of the UTC day; the halt persists in the book across restarts.
+- **Point-in-time discipline**: RSI/ATR see only bars strictly before the decision date; scoring uses only closes after it. No future bars in a decision.
+- **Session gate**: local US equity calendar (Public has no hours endpoint). Closed session blocks entries; marks and exits still run.
+- **Ledger**: `rules/research/agent-trader-research-<arm>.json` for the dashboard plus a copy in `.../agent-trader/paper-research/`; never reconciled against live positions.
 
 ---
 
@@ -299,9 +347,9 @@ Real money is untouched through this entire plan. Promotion to live is a **separ
 | Phase | Deliverable | Exit criteria |
 |---|---|---|
 | **0 — Freeze interfaces** | Written spec: mutable artifact, forecast target/horizon, source allowlist, interval, fill model. | This document accepted; no code. |
-| **1 — Read-only research loop** | `agent-trader research tick` gathers Public data + feeds + `web_search`, writes `forecast.json` + proposed patch to the journal. **No apply, no `place`.** | Reproducible run; citations captured; cost/tick measured. |
+| **1 — Read-only research loop** | `agent-trader research tick` gathers Public data + `web_search`, writes the forecast + proposed patch to the journal. **No apply, no `place`.** — **landed** | Reproducible run; citations captured; cost/tick measured. |
 | **2 — Offline prediction gate** | Evaluate the forecast on `rules/lab-data/` with point-in-time discipline. | Clears stage B — or a documented "signal is noise". Both are valid results. |
-| **3 — Paper apply loop (destination)** | Bounded patches → paper fills → ledger + scorecard, hard gate L1–L5 active. | Stages A–C; no gate violations; no `unsafe_attempt`. |
+| **3 — Paper apply loop (destination)** | Bounded patches → paper fills → ledger + scorecard, hard gate L1–L5 active. — **landed** (`research run`) | Stages A–C; no gate violations; no `unsafe_attempt`. |
 | **4 — (separate plan)** | Live, if ever. New binary, new config, operator sign-off. | Not in this plan. |
 
 ---

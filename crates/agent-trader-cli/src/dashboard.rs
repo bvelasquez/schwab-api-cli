@@ -381,16 +381,42 @@ fn agent_trader_paper_books(dir: &Path) -> Vec<Value> {
             .filter_map(|entry| entry.ok())
             .filter_map(|entry| {
                 let name = entry.file_name().to_string_lossy().into_owned();
-                (name.starts_with("agent-trader-workflow-") && name.ends_with(".json"))
-                    .then_some(name)
+                ((name.starts_with("agent-trader-workflow-")
+                    || name.starts_with("agent-trader-research-"))
+                    && name.ends_with(".json"))
+                .then_some(name)
             })
             .collect();
         extra.sort();
         names.extend(extra);
     }
-    names
+    let mut books: Vec<Value> = names
         .into_iter()
         .filter_map(|name| agent_trader_paper_file(&dir.join(name)))
+        .collect();
+    // The research arm keeps its book beside its journals, not in rules/.
+    books.extend(research_paper_books(&research_dir()));
+    books
+}
+
+/// Research paper books written by `agent-trader research` (`book-<arm>.json`).
+fn research_paper_books(dir: &Path) -> Vec<Value> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("book-") && name.ends_with(".json"))
+        })
+        .collect();
+    paths.sort();
+    paths
+        .iter()
+        .filter_map(|path| agent_trader_paper_file(path))
         .collect()
 }
 
@@ -404,7 +430,11 @@ fn agent_trader_paper_file(path: &Path) -> Option<Value> {
         return None;
     }
     let kind = book.get("kind").and_then(|value| value.as_str());
-    if kind != Some("options") && kind != Some("swing") && kind != Some("workflow") {
+    if kind != Some("options")
+        && kind != Some("swing")
+        && kind != Some("workflow")
+        && kind != Some("research")
+    {
         return None;
     }
     Some(book)
@@ -533,7 +563,12 @@ fn research_arm_summary(record: &Value) -> Value {
         "place_attempts": record.get("place_attempts").cloned().unwrap_or(json!(0)),
         "citations": record.get("citations").cloned().unwrap_or(json!([])),
         "forecast_note": record.get("forecast_note").cloned().unwrap_or(Value::Null),
+        "proposed_patches": record.get("proposed_patches").cloned().unwrap_or(json!([])),
         "applied_patches": record.get("applied_patches").cloned().unwrap_or(json!([])),
+        "patch_note": record.get("patch_note").cloned().unwrap_or(Value::Null),
+        "patch_version": record.get("patch_version").cloned().unwrap_or(Value::Null),
+        "book": record.get("book").cloned().unwrap_or(Value::Null),
+        "scorecard": record.get("scorecard").cloned().unwrap_or(Value::Null),
         "forecast": record.get("forecast").cloned().unwrap_or(Value::Null),
     })
 }
@@ -548,6 +583,11 @@ fn research_history_row(record: &Value) -> Value {
         "citations": record.get("citations").and_then(Value::as_array).map(|c| c.len()).unwrap_or(0),
         "orders_placed": record.get("orders_placed").cloned().unwrap_or(json!(0)),
         "place_attempts": record.get("place_attempts").cloned().unwrap_or(json!(0)),
+        "equity_usd": record.pointer("/book/equity_usd").cloned().unwrap_or(Value::Null),
+        "excess_return_pct": record.pointer("/book/excess_return_pct").cloned().unwrap_or(Value::Null),
+        "realized_pnl_usd": record.pointer("/book/realized_pnl_usd").cloned().unwrap_or(Value::Null),
+        "open_count": record.pointer("/book/open_count").cloned().unwrap_or(Value::Null),
+        "mean_rank_ic": record.pointer("/scorecard/mean_rank_ic").cloned().unwrap_or(Value::Null),
     })
 }
 
@@ -1780,6 +1820,72 @@ mod tests {
         assert_eq!(arm["forecast"]["signals"].as_array().unwrap().len(), 1);
         assert_eq!(section["history"].as_array().unwrap().len(), 2);
         assert_eq!(section["history"][1]["regime"], "risk_on");
+    }
+
+    #[test]
+    fn research_paper_book_is_loaded_as_a_book() {
+        let dir = tempfile::tempdir().unwrap();
+        let book = json!({
+            "stack": "agent-trader", "broker": "public", "kind": "research",
+            "name": "research-megacaps", "equity_usd": 10_120.5, "positions": [],
+            "plan": {"stop_loss_pct": 4.0}
+        });
+        std::fs::write(
+            dir.path()
+                .join("agent-trader-research-research-megacaps.json"),
+            book.to_string(),
+        )
+        .unwrap();
+        let books = agent_trader_paper_books(dir.path());
+        assert_eq!(books.len(), 1);
+        assert_eq!(books[0]["kind"], "research");
+        assert_eq!(books[0]["equity_usd"], 10_120.5);
+    }
+
+    #[test]
+    fn research_state_dir_book_is_loaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let book = json!({
+            "stack": "agent-trader", "broker": "public", "kind": "research",
+            "name": "research-megacaps", "equity_usd": 9_980.0,
+            "positions": [{"symbol": "MSFT", "quantity": 10.0, "entry_price": 100.0,
+                           "last_price": 101.0, "stop_price": 96.0, "profit_limit": 108.0}],
+            "plan": {"stop_loss_pct": 4.0}
+        });
+        std::fs::write(
+            dir.path().join("book-research-megacaps.json"),
+            book.to_string(),
+        )
+        .unwrap();
+        // State files and journals in the same dir must not be mistaken for books.
+        std::fs::write(dir.path().join("state-research-megacaps.json"), "{}").unwrap();
+        std::fs::write(dir.path().join("journal-research-megacaps.jsonl"), "{}\n").unwrap();
+        let books = research_paper_books(dir.path());
+        assert_eq!(books.len(), 1);
+        assert_eq!(books[0]["kind"], "research");
+        assert_eq!(books[0]["positions"][0]["symbol"], "MSFT");
+    }
+
+    #[test]
+    fn research_section_exposes_scorecard_and_book() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = dir.path().join("journal-arm.jsonl");
+        let record = json!({
+            "kind": "research_tick", "phase": 3, "arm_id": "arm",
+            "at": "2026-10-29T21:00:00Z", "orders_placed": 0, "place_attempts": 0,
+            "gate": {"ok": true, "checks": []},
+            "book": {"equity_usd": 10_050.0, "excess_return_pct": 0.4, "open_count": 2},
+            "scorecard": {"scored_days": 3, "mean_rank_ic": 0.05, "gate_pass": false},
+            "forecast": Value::Null
+        });
+        std::fs::write(&journal, format!("{record}\n")).unwrap();
+        let section = research_section(dir.path());
+        let arm = &section["arms"][0];
+        assert_eq!(arm["book"]["equity_usd"], 10_050.0);
+        assert_eq!(arm["scorecard"]["scored_days"], 3);
+        let history = &section["history"][0];
+        assert_eq!(history["equity_usd"], 10_050.0);
+        assert_eq!(history["mean_rank_ic"], 0.05);
     }
 
     #[test]

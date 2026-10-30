@@ -25,7 +25,7 @@ HOST="${JARVIS_SSH:-jarvis}"
 RUN_USER="${JARVIS_USER:-jarvis}"
 DEST="${JARVIS_DEST:-/home/${RUN_USER}/projects/schwabinvestbot}"
 CRATES="${DEPLOY_CRATES:-crates/agent-trader-cli crates/agent-trader-swing}"
-UNITS="${DEPLOY_UNITS:-agent-trader-dashboard.service agent-trader-swing-9947.service agent-trader-swing-paper.service agent-trader-workflows.service}"
+UNITS="${DEPLOY_UNITS:-agent-trader-dashboard.service agent-trader-swing-9947.service agent-trader-swing-paper.service agent-trader-workflows.service agent-trader-research.service}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"

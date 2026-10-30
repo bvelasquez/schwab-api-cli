@@ -8,6 +8,8 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::playbook::Playbook;
+
 /// The only forecast target this arm accepts (plan §0.1).
 pub const EXPECTED_TARGET: &str = "forward_5d_excess_return_sign";
 
@@ -25,6 +27,9 @@ pub struct ArmConfig {
     pub research: ResearchConfig,
     pub universe: Vec<String>,
     pub paper: PaperConfig,
+    /// The mutable artifact: the only thing the patch engine may change
+    /// (plan §5). Bounded by the allowlist and rails in [`crate::patch`].
+    pub playbook: Playbook,
     pub adaptation: AdaptationConfig,
 }
 
@@ -42,6 +47,7 @@ impl Default for ArmConfig {
             research: ResearchConfig::default(),
             universe: Vec::new(),
             paper: PaperConfig::default(),
+            playbook: Playbook::default(),
             adaptation: AdaptationConfig::default(),
         }
     }
@@ -138,8 +144,15 @@ impl Default for SearchConfig {
 pub struct PaperConfig {
     pub starting_equity_usd: f64,
     pub slippage_bps: f64,
+    /// Reserved: Public quotes carry no exchange timestamp, so the arm fetches
+    /// quotes at the top of each tick and uses them immediately. Kept in the
+    /// schema for backends that do expose a quote timestamp.
     pub max_quote_age_seconds: u64,
     pub max_daily_loss_usd: f64,
+    /// Concurrent positions. Sizing is `equity / max_open_positions` per slot.
+    pub max_open_positions: u32,
+    /// Time stop in trading days, measured from the entry date.
+    pub max_hold_days: u32,
 }
 
 impl Default for PaperConfig {
@@ -149,6 +162,8 @@ impl Default for PaperConfig {
             slippage_bps: 5.0,
             max_quote_age_seconds: 60,
             max_daily_loss_usd: 300.0,
+            max_open_positions: 5,
+            max_hold_days: 5,
         }
     }
 }
@@ -174,10 +189,20 @@ impl ArmConfig {
     /// The account address. Bare ids are rejected: they default to Schwab in
     /// `broker_core::parse_account_address`, which this arm must never reach.
     pub fn account_address(&self) -> Result<String> {
-        if let Some(account) = self.account.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(account) = self
+            .account
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             return Ok(account.to_string());
         }
-        if let Some(hash) = self.account_hash.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Some(hash) = self
+            .account_hash
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             bail!(
                 "research arm requires `account: public:<id>`; bare hash `{hash}` maps to Schwab and is not permitted"
             );
@@ -197,10 +222,7 @@ impl ArmConfig {
             );
         }
         let address = self.account_address()?;
-        if !address
-            .to_ascii_lowercase()
-            .starts_with("public:")
-        {
+        if !address.to_ascii_lowercase().starts_with("public:") {
             bail!("research arm account must be `public:<id>` (got `{address}`)");
         }
         if self.arm_id.trim().is_empty() {
@@ -216,7 +238,9 @@ impl ArmConfig {
             bail!("research arm forecast.horizon_days must be > 0");
         }
         if self.adaptation.live_auto_apply {
-            bail!("research arm refuses `adaptation.live_auto_apply: true`; this arm is paper-only");
+            bail!(
+                "research arm refuses `adaptation.live_auto_apply: true`; this arm is paper-only"
+            );
         }
         if self.universe.is_empty() {
             bail!("research arm needs a non-empty `universe`");
@@ -226,6 +250,28 @@ impl ArmConfig {
                 "research arm interval.cron must have 5 fields (got `{}`)",
                 self.interval.cron
             );
+        }
+        self.playbook.validate()?;
+        if self.paper.starting_equity_usd <= 0.0 {
+            bail!("research arm paper.starting_equity_usd must be > 0");
+        }
+        if !(0.0..=100.0).contains(&self.paper.slippage_bps) {
+            bail!("research arm paper.slippage_bps must be within 0..=100");
+        }
+        if self.paper.max_open_positions == 0 {
+            bail!("research arm paper.max_open_positions must be >= 1");
+        }
+        if self.paper.max_hold_days == 0 {
+            bail!("research arm paper.max_hold_days must be >= 1");
+        }
+        if self.paper.max_daily_loss_usd < 0.0 {
+            bail!("research arm paper.max_daily_loss_usd must be >= 0");
+        }
+        if !(0.0..=1.0).contains(&self.forecast.min_confidence) {
+            bail!("research arm forecast.min_confidence must be within 0..=1");
+        }
+        if self.universe.iter().any(|symbol| symbol.trim().is_empty()) {
+            bail!("research arm universe has an empty symbol");
         }
         if self.research.search.enabled {
             let search = &self.research.search;

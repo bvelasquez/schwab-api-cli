@@ -1,0 +1,20 @@
+# Research-paper arm schedule: one paper-only tick per hour, weekdays 10:00-15:00 ET.
+# Paper only: the research path rejects --trust/--yes.
+#
+# The service is oneshot, so enable/start the timer, not the service:
+#   systemctl --user enable --now agent-trader-research.timer
+#   systemctl --user start agent-trader-research.service    # run one tick now
+#   journalctl --user -u agent-trader-research.service -n 20
+#
+# Use this timer OR `agent-trader research run` (a long-lived loop); not both.
+
+[Unit]
+Description=Hourly weekday research tick (paper-only)
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 10..15:00:00 America/New_York
+Persistent=true
+Unit=agent-trader-research.service
+
+[Install]
+WantedBy=timers.target
