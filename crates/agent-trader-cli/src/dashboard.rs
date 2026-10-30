@@ -48,6 +48,8 @@ const JOURNAL_CHUNK_BYTES: u64 = 256 * 1024;
 const JOURNAL_SEARCH_BYTES: u64 = 8 * 1024 * 1024;
 const JOURNAL_LIMIT: usize = 40;
 const CLOSE_LIMIT: usize = 12;
+/// Ticks shown in the research tab history.
+const RESEARCH_HISTORY_LIMIT: usize = 60;
 /// A nightly artifact older than this is shown as stale on the dashboard.
 const LAB_STALE_HOURS: f64 = 36.0;
 
@@ -113,6 +115,7 @@ pub fn snapshot(paths: &DashboardPaths) -> Value {
         "underlyings": underlying_prices(rules_dir(paths)),
         "families": families,
         "lab": lab_section(paths),
+        "research": research_section(&research_dir()),
     })
 }
 
@@ -405,6 +408,147 @@ fn agent_trader_paper_file(path: &Path) -> Option<Value> {
         return None;
     }
     Some(book)
+}
+
+/// Directory holding the research-paper arm journals. Defaults to
+/// `<state_dir>/paper-research`; `AGENT_TRADER_RESEARCH_DIR` overrides it.
+fn research_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("AGENT_TRADER_RESEARCH_DIR") {
+        if !dir.trim().is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
+    crate::paths::state_dir()
+        .map(|dir| dir.join("paper-research"))
+        .unwrap_or_else(|_| PathBuf::from("paper-research"))
+}
+
+/// Latest research-arm tick per arm plus a bounded tick history.
+/// The arm is paper-only; `orders_placed` and `place_attempts` must be zero.
+fn research_section(dir: &Path) -> Value {
+    let mut files: Vec<PathBuf> = match std::fs::read_dir(dir) {
+        Ok(entries) => entries
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("journal-") && name.ends_with(".jsonl"))
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    files.sort();
+    if files.is_empty() {
+        return json!({"present": false, "dir": dir.display().to_string(), "arms": [], "history": []});
+    }
+    let mut records: Vec<Value> = Vec::new();
+    for file in &files {
+        records.extend(research_tail(file));
+    }
+    records.sort_by(|a, b| {
+        let key = |v: &Value| v.get("at").and_then(Value::as_str).unwrap_or("").to_string();
+        key(a).cmp(&key(b))
+    });
+    if records.is_empty() {
+        return json!({"present": false, "dir": dir.display().to_string(), "arms": [], "history": []});
+    }
+    let start = records.len().saturating_sub(RESEARCH_HISTORY_LIMIT);
+    let history: Vec<Value> = records[start..].iter().map(research_history_row).collect();
+    let mut latest: std::collections::BTreeMap<String, Value> = std::collections::BTreeMap::new();
+    for record in &records {
+        let arm = record
+            .get("arm_id")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        latest.insert(arm, research_arm_summary(record));
+    }
+    json!({
+        "present": true,
+        "dir": dir.display().to_string(),
+        "arms": latest.into_values().collect::<Vec<_>>(),
+        "history": history,
+    })
+}
+
+/// Last `RESEARCH_HISTORY_LIMIT` `research_tick` records from one journal file.
+fn research_tail(path: &Path) -> Vec<Value> {
+    let Ok(mut file) = File::open(path) else {
+        return Vec::new();
+    };
+    let Ok(len) = file.metadata().map(|m| m.len()) else {
+        return Vec::new();
+    };
+    let mut records = Vec::new();
+    let mut end = len;
+    let search_floor = len.saturating_sub(JOURNAL_SEARCH_BYTES);
+    while end > search_floor && records.len() < RESEARCH_HISTORY_LIMIT {
+        let start = end.saturating_sub(JOURNAL_CHUNK_BYTES).max(search_floor);
+        let Ok(text) = read_range(&mut file, start, end) else {
+            break;
+        };
+        end = start;
+        for line in text.lines().rev() {
+            let Ok(record) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            if record.get("kind").and_then(Value::as_str) != Some("research_tick") {
+                continue;
+            }
+            records.push(record);
+            if records.len() == RESEARCH_HISTORY_LIMIT {
+                break;
+            }
+        }
+        if start == 0 {
+            break;
+        }
+    }
+    records.reverse();
+    records
+}
+
+fn research_arm_summary(record: &Value) -> Value {
+    let failures: Vec<Value> = record
+        .pointer("/gate/checks")
+        .and_then(Value::as_array)
+        .map(|checks| {
+            checks
+                .iter()
+                .filter(|check| check.get("passed").and_then(Value::as_bool) != Some(true))
+                .filter_map(|check| check.get("name").cloned())
+                .collect()
+        })
+        .unwrap_or_default();
+    json!({
+        "arm_id": record.get("arm_id").cloned().unwrap_or(Value::Null),
+        "phase": record.get("phase").cloned().unwrap_or(Value::Null),
+        "last_tick": record.get("at").cloned().unwrap_or(Value::Null),
+        "account": record.get("account").cloned().unwrap_or(Value::Null),
+        "gate_ok": record.pointer("/gate/ok").and_then(Value::as_bool).unwrap_or(false),
+        "gate_failures": failures,
+        "quote_count": record.get("quote_count").cloned().unwrap_or(Value::Null),
+        "orders_placed": record.get("orders_placed").cloned().unwrap_or(json!(0)),
+        "place_attempts": record.get("place_attempts").cloned().unwrap_or(json!(0)),
+        "citations": record.get("citations").cloned().unwrap_or(json!([])),
+        "forecast_note": record.get("forecast_note").cloned().unwrap_or(Value::Null),
+        "applied_patches": record.get("applied_patches").cloned().unwrap_or(json!([])),
+        "forecast": record.get("forecast").cloned().unwrap_or(Value::Null),
+    })
+}
+
+fn research_history_row(record: &Value) -> Value {
+    json!({
+        "at": record.get("at").cloned().unwrap_or(Value::Null),
+        "arm_id": record.get("arm_id").cloned().unwrap_or(Value::Null),
+        "gate_ok": record.pointer("/gate/ok").and_then(Value::as_bool).unwrap_or(false),
+        "regime": record.pointer("/forecast/regime").cloned().unwrap_or(Value::Null),
+        "signals": record.pointer("/forecast/signals").and_then(Value::as_array).map(|s| s.len()).unwrap_or(0),
+        "citations": record.get("citations").and_then(Value::as_array).map(|c| c.len()).unwrap_or(0),
+        "orders_placed": record.get("orders_placed").cloned().unwrap_or(json!(0)),
+        "place_attempts": record.get("place_attempts").cloned().unwrap_or(json!(0)),
+    })
 }
 
 fn rules_dir(paths: &DashboardPaths) -> &Path {
@@ -1583,5 +1727,78 @@ mod tests {
         assert_eq!(profiles[1]["profile"], "low_vol_trend");
         assert_eq!(profiles[1]["n"], 1);
         assert_eq!(profiles[1]["net_usd"], 73.99);
+    }
+
+    #[test]
+    fn research_section_reports_missing_dir_without_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let section = research_section(&dir.path().join("missing"));
+        assert_eq!(section["present"], false);
+        assert!(section["arms"].as_array().unwrap().is_empty());
+        assert!(section["history"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn research_section_summarizes_latest_tick_and_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = dir.path().join("journal-research-megacaps.jsonl");
+        let rec = |at: &str, regime: &str| {
+            json!({
+                "kind": "research_tick", "phase": 1, "arm_id": "research-megacaps",
+                "at": at, "account": "public:ACC", "quote_count": 5,
+                "orders_placed": 0, "place_attempts": 0,
+                "citations": [{"url": "https://x.test/a", "title": "A"}],
+                "gate": {"ok": true, "checks": [{"name": "mode_paper", "passed": true}]},
+                "forecast": {
+                    "target": "forward_5d_excess_return_sign", "benchmark": "SPY",
+                    "horizon_days": 5, "regime": regime,
+                    "signals": [{"symbol": "MSFT", "direction": "up", "confidence": 0.6,
+                                 "expected_return_pct": 0.8, "rank": 1, "citations": []}],
+                    "risk_alerts": [], "plan_patch": [], "notes": "n"
+                },
+                "forecast_note": ""
+            })
+        };
+        std::fs::write(
+            &journal,
+            format!(
+                "{}\n{}\nnot json\n",
+                rec("2026-10-29T20:00:00Z", "chop"),
+                rec("2026-10-29T21:00:00Z", "risk_on")
+            ),
+        )
+        .unwrap();
+        let section = research_section(dir.path());
+        assert_eq!(section["present"], true);
+        assert_eq!(section["arms"].as_array().unwrap().len(), 1);
+        let arm = &section["arms"][0];
+        assert_eq!(arm["arm_id"], "research-megacaps");
+        assert_eq!(arm["gate_ok"], true);
+        assert_eq!(arm["orders_placed"], 0);
+        assert_eq!(arm["place_attempts"], 0);
+        assert_eq!(arm["forecast"]["regime"], "risk_on");
+        assert_eq!(arm["forecast"]["signals"].as_array().unwrap().len(), 1);
+        assert_eq!(section["history"].as_array().unwrap().len(), 2);
+        assert_eq!(section["history"][1]["regime"], "risk_on");
+    }
+
+    #[test]
+    fn research_section_surfaces_gate_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = dir.path().join("journal-arm.jsonl");
+        let record = json!({
+            "kind": "research_tick", "arm_id": "arm", "at": "2026-10-29T21:00:00Z",
+            "orders_placed": 0, "place_attempts": 0,
+            "gate": {"ok": false, "checks": [
+                {"name": "no_schwab_backend", "passed": true},
+                {"name": "mode_paper", "passed": false}
+            ]},
+            "forecast": Value::Null
+        });
+        std::fs::write(&journal, format!("{record}\n")).unwrap();
+        let section = research_section(dir.path());
+        let arm = &section["arms"][0];
+        assert_eq!(arm["gate_ok"], false);
+        assert_eq!(arm["gate_failures"][0], "mode_paper");
     }
 }

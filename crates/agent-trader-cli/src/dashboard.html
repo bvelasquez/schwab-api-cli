@@ -156,6 +156,7 @@
   <button type="button" class="tab" data-tab="options" hidden>Options</button>
   <button type="button" class="tab on" data-tab="swing">Swing</button>
   <button type="button" class="tab" data-tab="workflows">Workflows</button>
+  <button type="button" class="tab" data-tab="research" hidden>Research</button>
 </nav>
 <main id="books"></main>
 <script>
@@ -894,6 +895,89 @@ function renderWorkflowSummary(books, title, noun) {
   ));
   return card;
 }
+function renderResearch(research) {
+  if (!research || !research.present || !(research.arms || []).length) return null;
+  const wrap = el("section", { className: "book lab" });
+  wrap.appendChild(el("h2", null, "Research arm (paper-only, never places orders)"));
+  (research.arms || []).forEach((arm) => {
+    const f = arm.forecast || {};
+    const sig = f.signals || [];
+    const card = el("section", { className: "book" });
+    card.appendChild(el("h2", null, "Arm · " + (arm.arm_id || "unknown")));
+    const metrics = el("div", { className: "metrics" });
+    metrics.appendChild(metric("Mode", "paper"));
+    metrics.appendChild(metric("Gate", arm.gate_ok ? "8/8 ok" : "FAILED", arm.gate_ok ? "up" : "down"));
+    metrics.appendChild(metric("Last tick", ago(arm.last_tick)));
+    metrics.appendChild(metric("Regime", f.regime || "—"));
+    metrics.appendChild(metric("Signals", String(sig.length)));
+    metrics.appendChild(metric("Citations", String((arm.citations || []).length)));
+    metrics.appendChild(metric("Orders placed", String(arm.orders_placed == null ? 0 : arm.orders_placed), arm.orders_placed ? "down" : "up"));
+    metrics.appendChild(metric("Place attempts", String(arm.place_attempts == null ? 0 : arm.place_attempts), arm.place_attempts ? "down" : "up"));
+    card.appendChild(metrics);
+    if (!arm.gate_ok) {
+      card.appendChild(el("p", { className: "empty" }, "GATE FAILURES: " + ((arm.gate_failures || []).join(", ") || "unknown")));
+    }
+    if (arm.forecast_note) card.appendChild(el("p", { className: "empty" }, arm.forecast_note));
+    card.appendChild(el("h3", null, "Forecast — " + (f.target || "—") + " vs " + (f.benchmark || "SPY") + " · " + (f.horizon_days || 0) + "d"));
+    card.appendChild(table(
+      [{label:"Symbol"},{label:"Direction"},{label:"Confidence", num:true},{label:"Exp return", num:true},{label:"Rank", num:true},{label:"Citations", num:true}],
+      sig.map((s) => [
+        cell(s.symbol),
+        cell(s.direction, s.direction === "up" ? "up" : s.direction === "down" ? "down" : ""),
+        cell(s.confidence == null ? null : Math.round(s.confidence * 100) + "%"),
+        cell(s.expected_return_pct == null ? null : (s.expected_return_pct >= 0 ? "+" : "") + Number(s.expected_return_pct).toFixed(2) + "%", cls(s.expected_return_pct)),
+        cell(s.rank),
+        cell((s.citations || []).length)
+      ])
+    ));
+    if (f.notes) card.appendChild(el("p", { className: "meta" }, f.notes));
+    const alerts = f.risk_alerts || [];
+    if (alerts.length) card.appendChild(el("p", { className: "empty" }, "Risk: " + alerts.join(" · ")));
+    const patches = f.plan_patch || [];
+    card.appendChild(el("h3", null, "Proposed plan patches" + (patches.length ? "" : " — none")));
+    if (patches.length) {
+      card.appendChild(table(
+        [{label:"Path", wrap:true},{label:"Value"},{label:"Reason", wrap:true}],
+        patches.map((p) => [cell(p.path), cell(typeof p.value === "object" ? JSON.stringify(p.value) : p.value), cell(p.reason)])
+      ));
+    }
+    card.appendChild(el("p", { className: "empty" }, "Applied this tick: " + (((arm.applied_patches || []).length) ? arm.applied_patches.length : "none (Phase 1)") + " · this arm never places orders."));
+    const cites = arm.citations || [];
+    if (cites.length) {
+      card.appendChild(el("h3", null, "Sources"));
+      const ul = el("ul", { className: "cites" });
+      cites.forEach((c) => {
+        const li = document.createElement("li");
+        const a = document.createElement("a");
+        a.href = c.url || "#";
+        a.target = "_blank";
+        a.rel = "noopener";
+        a.textContent = c.title || c.url || "source";
+        li.appendChild(a);
+        ul.appendChild(li);
+      });
+      card.appendChild(ul);
+    }
+    wrap.appendChild(card);
+  });
+  const hist = research.history || [];
+  if (hist.length) {
+    wrap.appendChild(el("h3", null, "Tick history (newest last)"));
+    wrap.appendChild(table(
+      [{label:"Time"},{label:"Arm"},{label:"Gate"},{label:"Regime"},{label:"Signals", num:true},{label:"Citations", num:true},{label:"Orders", num:true}],
+      hist.map((h) => [
+        cell(h.at ? new Date(h.at).toLocaleString() : "—"),
+        cell(h.arm_id),
+        cell(h.gate_ok ? "ok" : "FAIL", h.gate_ok ? "up" : "down"),
+        cell(h.regime),
+        cell(h.signals),
+        cell(h.citations),
+        cell(h.orders_placed)
+      ])
+    ));
+  }
+  return wrap;
+}
 function renderLab(options, lab, families) {
   families = families || [];
   const card = el("section", { className: "book lab" });
@@ -1427,7 +1511,7 @@ function workflowDecisions(book) {
 }
 
 // Options are paused (archived 2026-10-23); the tab only appears when options books are loaded.
-let tab = location.hash === "#options" ? "options" : location.hash === "#workflows" ? "workflows" : "swing";
+let tab = location.hash === "#options" ? "options" : location.hash === "#workflows" ? "workflows" : location.hash === "#research" ? "research" : "swing";
 let latest = null;
 
 function paint() {
@@ -1448,9 +1532,17 @@ function paint() {
   document.querySelectorAll("button.tab").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
   if (swBtn) swBtn.textContent = "Swing" + (swing.length ? " · " + swing.length : "");
   if (wfBtn) wfBtn.textContent = "Workflows" + (workflows.length ? " · " + workflows.length : "");
+  const resBtn = document.querySelector('button[data-tab="research"]');
+  const research = latest.research;
+  const hasResearch = !!(research && research.present && (research.arms || []).length);
+  if (resBtn) {
+    resBtn.hidden = !hasResearch;
+    resBtn.textContent = "Research" + (hasResearch ? " · " + research.arms.length : "");
+  }
+  if (tab === "research" && !hasResearch) tab = "swing";
   const y = window.scrollY;
   const nodes = [];
-  const shown = tab === "swing" ? swing : tab === "workflows" ? workflows : options;
+  const shown = tab === "research" ? [] : (tab === "swing" ? swing : tab === "workflows" ? workflows : options);
   const agent = shown.filter((b) => b.stack === "agent-trader");
   const rest = shown.filter((b) => b.stack !== "agent-trader");
   if (tab === "options") {
@@ -1468,7 +1560,11 @@ function paint() {
     const sum = renderWorkflowSummary(workflows);
     if (sum) nodes.push(sum);
   }
-  if (!shown.length) nodes.push(el("p", { className: "empty" }, "No " + tab + " books are loaded."));
+  if (tab === "research") {
+    const card = renderResearch(latest.research);
+    if (card) nodes.push(card);
+  }
+  if (!shown.length && tab !== "research") nodes.push(el("p", { className: "empty" }, "No " + tab + " books are loaded."));
   nodes.push(...agent.map(renderBook), ...rest.map(renderBook));
   books.replaceChildren(...nodes);
   window.scrollTo(0, y);
