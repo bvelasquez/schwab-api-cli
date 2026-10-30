@@ -567,6 +567,7 @@ fn research_arm_summary(record: &Value) -> Value {
         "applied_patches": record.get("applied_patches").cloned().unwrap_or(json!([])),
         "patch_note": record.get("patch_note").cloned().unwrap_or(Value::Null),
         "patch_version": record.get("patch_version").cloned().unwrap_or(Value::Null),
+        "mutable": record.get("mutable").cloned().unwrap_or(Value::Null),
         "book": record.get("book").cloned().unwrap_or(Value::Null),
         "scorecard": record.get("scorecard").cloned().unwrap_or(Value::Null),
         "forecast": record.get("forecast").cloned().unwrap_or(Value::Null),

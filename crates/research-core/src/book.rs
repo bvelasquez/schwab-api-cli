@@ -767,6 +767,8 @@ impl PaperBook {
                 "profit_target_pct": playbook.exit.profit_target_pct,
                 "time_stop_days": config.paper.max_hold_days,
                 "max_hold_days": config.paper.max_hold_days,
+                "max_open_positions": config.paper.max_open_positions,
+                "min_confidence": config.forecast.min_confidence,
                 "trail_activate_pct": playbook.exit.trailing.activate_after_profit_pct,
                 "trail_atr_multiple": playbook.exit.trailing.trail_atr_multiple,
                 "rsi_14_range": playbook.entry.rsi_14_range,

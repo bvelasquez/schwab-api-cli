@@ -32,7 +32,7 @@ Goal: one interval-driven agent that reads live Public.com market data plus conf
 | Loop / timer unit examples | `deploy/systemd/user/agent-trader-research.{service,timer}.example` | §9 |
 | Example arm | `rules/research/example-megacaps.yaml` | App. C |
 
-Tests: 74 in `research-core`, 2 in `broker-public`, 36 in `agent-trader-cli`, all green. `--trust`/`--yes` are rejected by the research path (L1).
+Tests: 80 in `research-core`, 2 in `broker-public`, 40 in `agent-trader-cli`, all green. `--trust`/`--yes` are rejected by the research path (L1).
 
 **Not built yet:** configured-feed fetcher (§6 channel 1 — `research.feeds` is parsed but not fetched; web search is the only context channel), offline IC evaluation on `rules/lab-data/` (Phase 2), promotion-gate wiring to `rules/analysis/promotion-gate.json` (§8 stage D operator sign-off), and live (Phase 4, a separate artifact).
 
@@ -49,7 +49,9 @@ Tests: 74 in `research-core`, 2 in `broker-public`, 36 in `agent-trader-cli`, al
    inside the RSI band, with an entry cooldown after a stop/thesis exit;
 4. LLM + web-search forecast (prompt includes quotes, positions, playbook and the
    scorecard so far);
-5. version every accepted patch; activate only with `--apply-patches`;
+5. version every accepted patch; activate only with `--apply-patches`. The active
+   overlay is the full `Mutable` tree, so the agent can adapt exits, entry
+   selectivity, sizing and hold time — not just stops;
 6. score pending forecasts whose forward window has elapsed, append to
    `scores-<arm>.jsonl`, recompute the stage-B scorecard;
 7. write the book to `rules/research/agent-trader-research-<arm>.json` (dashboard)
@@ -276,7 +278,7 @@ On success, journal `paper_gate_ok` with hashes of binary + rules + gate config.
 
 The agent mutates a **research rules file**, not static trade plans. Static `plans/*.yaml` stay human/LLM-authored and unchanged.
 
-- Mutable: `rules/research/<arm>.yaml` (a workflow-style or rules-style file).
+- Mutable: `rules/research/<arm>.yaml` (a workflow-style or rules-style file), specifically the `Mutable` tree: `playbook.*` (exits + RSI entry band), `paper.max_open_positions`, `paper.max_hold_days`, `forecast.min_confidence`. Risk controls, the cost model, the baseline equity, the scoring contract, account/mode/gate/universe and the allowlist itself are **never** patchable.
 - Every tick that proposes a patch writes a **new version** to `rules/research/<arm>.versions/<ts>.yaml` plus a diff and a rollback pointer.
 - The active file is only replaced after schema + allowlist + rails + self-test pass.
 - Patch format follows the existing engine: `{ "path": "<dotted>", "value": <scalar|range>, "reason": "<cite sources + ids>" }`.

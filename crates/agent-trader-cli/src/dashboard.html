@@ -955,6 +955,26 @@ function renderResearch(research) {
     const patches = f.plan_patch || [];
     card.appendChild(el("h3", null, "Proposed plan patches" + (patches.length ? "" : " — none")));
     if (arm.patch_note) card.appendChild(el("p", { className: "meta" }, "Patch: " + arm.patch_note));
+    const mut = arm.mutable || {};
+    if (Object.keys(mut).length) {
+      const pb = mut.playbook || {};
+      const ex = pb.exit || {};
+      const tr = ex.trailing || {};
+      const en = pb.entry || {};
+      const mp = mut.paper || {};
+      const mf = mut.forecast || {};
+      card.appendChild(el("h3", null, "Adaptive settings (the agent may change these)"));
+      card.appendChild(table(
+        [{label:"Setting"},{label:"Value", wrap:true}],
+        [
+          ["Stop / target", (ex.stop_loss_pct ?? "—") + "% / " + (ex.profit_target_pct ?? "—") + "%"],
+          ["Trailing stop", (tr.trail_atr_multiple ?? "—") + "× ATR once +" + (tr.activate_after_profit_pct ?? "—") + "%"],
+          ["RSI(14) band", Array.isArray(en.rsi_14_range) ? en.rsi_14_range.join(" – ") : "—"],
+          ["Max open / hold", (mp.max_open_positions ?? "—") + " positions / " + (mp.max_hold_days ?? "—") + " days"],
+          ["Min confidence", mf.min_confidence ?? "—"]
+        ].map(([k, v]) => [cell(k), cell(v)])
+      ));
+    }
     if (patches.length) {
       card.appendChild(table(
         [{label:"Path", wrap:true},{label:"Value"},{label:"Reason", wrap:true}],

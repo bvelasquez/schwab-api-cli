@@ -67,9 +67,16 @@ playbook:
 
 adaptation:
   live_auto_apply: false
+  # The full code ceiling: exits, entry selectivity, sizing and hold time. Each
+  # path is clamped to a hard rail (see research-core::patch::rail_for). Risk
+  # controls (max_daily_loss_usd), the cost model (slippage_bps), the baseline
+  # equity, the scoring contract and the allowlist itself are never patchable.
   allowlist:
     - playbook.exit.stop_loss_pct
     - playbook.exit.profit_target_pct
     - playbook.exit.trailing.trail_atr_multiple
     - playbook.exit.trailing.activate_after_profit_pct
     - playbook.entry.rsi_14_range
+    - paper.max_open_positions
+    - paper.max_hold_days
+    - forecast.min_confidence

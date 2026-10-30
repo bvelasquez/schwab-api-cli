@@ -78,7 +78,11 @@ impl Broker for PaperOnlyBroker {
         self.inner.open_orders(account).await
     }
 
-    async fn order_history(&self, account: &AccountRef, since: DateTime<Utc>) -> Result<Vec<Order>> {
+    async fn order_history(
+        &self,
+        account: &AccountRef,
+        since: DateTime<Utc>,
+    ) -> Result<Vec<Order>> {
         self.inner.order_history(account, since).await
     }
 

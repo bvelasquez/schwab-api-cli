@@ -21,6 +21,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::config::ArmConfig;
 use crate::patch::{apply_patches, AppliedPatch, Patch};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -143,6 +144,127 @@ impl Playbook {
     }
 }
 
+/// Everything the agent may adapt, and nothing else.
+///
+/// The arm YAML is the immutable base; an active overlay is this whole tree. Only
+/// these fields are ever read back, so an overlay can never touch account, mode,
+/// the gate, the universe, the cost model, the kill switch, or the scoring
+/// contract. Every path here has a rail in [`crate::patch::rail_for`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Mutable {
+    pub playbook: Playbook,
+    pub paper: MutablePaper,
+    pub forecast: MutableForecast,
+}
+
+impl Default for Mutable {
+    fn default() -> Self {
+        Self {
+            playbook: Playbook::default(),
+            paper: MutablePaper::default(),
+            forecast: MutableForecast::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct MutablePaper {
+    pub max_open_positions: u32,
+    pub max_hold_days: u32,
+}
+
+impl Default for MutablePaper {
+    fn default() -> Self {
+        Self {
+            max_open_positions: 5,
+            max_hold_days: 5,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct MutableForecast {
+    pub min_confidence: f64,
+}
+
+impl Default for MutableForecast {
+    fn default() -> Self {
+        Self {
+            min_confidence: 0.55,
+        }
+    }
+}
+
+impl Mutable {
+    /// The arm YAML's values: the base an overlay starts from.
+    pub fn from_config(config: &ArmConfig) -> Self {
+        Self {
+            playbook: config.playbook.clone(),
+            paper: MutablePaper {
+                max_open_positions: config.paper.max_open_positions,
+                max_hold_days: config.paper.max_hold_days,
+            },
+            forecast: MutableForecast {
+                min_confidence: config.forecast.min_confidence,
+            },
+        }
+    }
+
+    /// Write the adapted values back onto a config clone so the book, the prompt
+    /// and the dashboard all see the effective settings.
+    pub fn apply_to(&self, config: &mut ArmConfig) {
+        config.playbook = self.playbook.clone();
+        config.paper.max_open_positions = self.paper.max_open_positions;
+        config.paper.max_hold_days = self.paper.max_hold_days;
+        config.forecast.min_confidence = self.forecast.min_confidence;
+    }
+
+    /// Sane bounds for a value read from YAML or an overlay. Looser than the
+    /// patch rails on purpose: a human may set a value the agent could not.
+    pub fn validate(&self) -> Result<()> {
+        self.playbook.validate()?;
+        if !(1..=50).contains(&self.paper.max_open_positions) {
+            bail!("paper.max_open_positions must be within 1..=50");
+        }
+        if !(1..=60).contains(&self.paper.max_hold_days) {
+            bail!("paper.max_hold_days must be within 1..=60");
+        }
+        if !(0.0..=1.0).contains(&self.forecast.min_confidence) {
+            bail!("forecast.min_confidence must be within 0..=1");
+        }
+        Ok(())
+    }
+
+    /// The patch engine roots at this whole tree.
+    pub fn to_root(&self) -> Value {
+        serde_json::to_value(self).unwrap_or(Value::Null)
+    }
+
+    pub fn from_root(root: &Value) -> Result<Self> {
+        let mutable: Mutable =
+            serde_json::from_value(root.clone()).context("versioned overlay does not parse")?;
+        mutable.validate()?;
+        Ok(mutable)
+    }
+
+    /// Apply bounded patches. Returns the patched tree, the applied diff, and the
+    /// resulting root value (for storage). Fails closed: nothing is returned
+    /// unless every patch clears the allowlist and the rails.
+    pub fn apply(
+        &self,
+        patches: &[Patch],
+        allowlist: &[String],
+    ) -> Result<(Mutable, Vec<AppliedPatch>, Value)> {
+        let mut root = self.to_root();
+        let applied = apply_patches(&mut root, patches, allowlist)?;
+        let patched = Mutable::from_root(&root)?;
+        Ok((patched, applied, root))
+    }
+}
+
 /// Directory that holds overlays for `rules/research/<arm>.yaml`.
 pub fn versions_dir(rules_path: &Path) -> PathBuf {
     let stem = rules_path
@@ -160,10 +282,10 @@ fn active_pointer(rules_path: &Path) -> PathBuf {
     versions_dir(rules_path).join("active.json")
 }
 
-/// The playbook the arm must trade this tick: the active overlay if one exists,
+/// The settings the arm must trade this tick: the active overlay if one exists,
 /// otherwise the arm YAML. A broken overlay is an error, never a silent fallback,
 /// so a bad patch cannot quietly change behavior.
-pub fn load_active(rules_path: &Path, fallback: &Playbook) -> Result<Playbook> {
+pub fn load_active(rules_path: &Path, fallback: &Mutable) -> Result<Mutable> {
     let pointer = active_pointer(rules_path);
     if !pointer.is_file() {
         return Ok(fallback.clone());
@@ -175,12 +297,20 @@ pub fn load_active(rules_path: &Path, fallback: &Playbook) -> Result<Playbook> {
     let file = doc
         .get("file")
         .and_then(Value::as_str)
-        .context("active playbook pointer is missing `file`")?;
+        .context("active pointer is missing `file`")?;
     let path = versions_dir(rules_path).join(file);
     let raw = std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
     let version: Value =
         serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
-    Playbook::from_root(&version)
+    // Prefer the full mutable tree; fall back to a legacy `playbook`-only file by
+    // merging its playbook over the current base.
+    if version.get("mutable").is_some() {
+        let tree = version.get("mutable").cloned().unwrap_or(Value::Null);
+        return Mutable::from_root(&tree);
+    }
+    let mut merged = fallback.clone();
+    merged.playbook = Playbook::from_root(&version)?;
+    Ok(merged)
 }
 
 /// Write one version. `activate` promotes it to the live overlay (atomic rename).
@@ -192,7 +322,7 @@ pub fn write_version(
     meta: Value,
     activate: bool,
 ) -> Result<PathBuf> {
-    let playbook = Playbook::from_root(root)?;
+    let mutable = Mutable::from_root(root)?;
     let dir = versions_dir(rules_path);
     std::fs::create_dir_all(&dir)?;
     let stamp = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
@@ -200,7 +330,8 @@ pub fn write_version(
     let path = dir.join(&name);
     let record = json!({
         "ts": Utc::now().to_rfc3339(),
-        "playbook": playbook,
+        "mutable": mutable,
+        "playbook": mutable.playbook,
         "applied": applied,
         "meta": meta,
         "active": activate,
@@ -323,27 +454,61 @@ mod tests {
     fn version_store_round_trips_and_rolls_back() {
         let dir = tempfile::tempdir().unwrap();
         let rules = dir.path().join("arm.yaml");
-        let base = Playbook::default();
+        let base = Mutable::default();
         let (patched, applied, root) = base
             .apply(
-                &[Patch {
-                    path: "playbook.exit.stop_loss_pct".into(),
-                    value: json!(3.0),
-                    reason: "test".into(),
-                }],
+                &[
+                    Patch {
+                        path: "playbook.exit.stop_loss_pct".into(),
+                        value: json!(3.0),
+                        reason: "test".into(),
+                    },
+                    Patch {
+                        path: "paper.max_open_positions".into(),
+                        value: json!(8),
+                        reason: "test".into(),
+                    },
+                ],
                 &allow(),
             )
             .unwrap();
         let path = write_version(&rules, &root, &applied, json!({"why": "test"}), true).unwrap();
         assert!(path.is_file());
         let loaded = load_active(&rules, &base).unwrap();
-        assert_eq!(loaded.exit.stop_loss_pct, patched.exit.stop_loss_pct);
+        assert_eq!(
+            loaded.playbook.exit.stop_loss_pct,
+            patched.playbook.exit.stop_loss_pct
+        );
+        assert_eq!(loaded.paper.max_open_positions, 8);
         assert_eq!(list_versions(&rules).len(), 1);
 
         let removed = clear_active(&rules).unwrap();
         assert!(removed.is_some());
         let rolled = load_active(&rules, &base).unwrap();
-        assert_eq!(rolled.exit.stop_loss_pct, base.exit.stop_loss_pct);
+        assert_eq!(rolled, base);
+    }
+
+    #[test]
+    fn a_legacy_playbook_only_overlay_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let rules = dir.path().join("arm.yaml");
+        let versions = versions_dir(&rules);
+        std::fs::create_dir_all(&versions).unwrap();
+        let legacy = json!({
+            "playbook": { "exit": { "stop_loss_pct": 2.5, "profit_target_pct": 9.0 } }
+        });
+        std::fs::write(versions.join("20260101T000000Z.json"), legacy.to_string()).unwrap();
+        std::fs::write(
+            versions.join("active.json"),
+            r#"{"file":"20260101T000000Z.json"}"#,
+        )
+        .unwrap();
+        let mut base = Mutable::default();
+        base.paper.max_open_positions = 4;
+        let loaded = load_active(&rules, &base).unwrap();
+        assert_eq!(loaded.playbook.exit.stop_loss_pct, 2.5);
+        // Non-playbook fields keep the base value.
+        assert_eq!(loaded.paper.max_open_positions, 4);
     }
 
     #[test]
@@ -353,14 +518,57 @@ mod tests {
         let versions = versions_dir(&rules);
         std::fs::create_dir_all(&versions).unwrap();
         std::fs::write(versions.join("active.json"), r#"{"file":"missing.json"}"#).unwrap();
-        assert!(load_active(&rules, &Playbook::default()).is_err());
+        assert!(load_active(&rules, &Mutable::default()).is_err());
     }
 
     #[test]
-    fn overlay_cannot_override_non_playbook_fields() {
-        // Even if a version file contains extra keys, from_root only reads `playbook`.
+    fn overlay_cannot_override_non_mutable_fields() {
+        // Extra keys in a version file are ignored: from_root only reads the tree.
         let root = json!({"playbook": Playbook::default(), "account": "schwab:HASH"});
-        let parsed = Playbook::from_root(&root).unwrap();
-        assert_eq!(parsed, Playbook::default());
+        let parsed = Mutable::from_root(&root).unwrap();
+        assert_eq!(parsed.playbook, Playbook::default());
+        assert_eq!(parsed.paper, MutablePaper::default());
+    }
+
+    #[test]
+    fn from_config_and_apply_to_round_trip() {
+        let mut config = ArmConfig {
+            arm_id: "arm".into(),
+            account: Some("public:ACC".into()),
+            universe: vec!["MSFT".into()],
+            ..Default::default()
+        };
+        config.paper.max_open_positions = 3;
+        config.paper.max_hold_days = 7;
+        config.forecast.min_confidence = 0.6;
+        config.playbook.exit.stop_loss_pct = 3.5;
+
+        let mutable = Mutable::from_config(&config);
+        assert_eq!(mutable.paper.max_open_positions, 3);
+        assert_eq!(mutable.paper.max_hold_days, 7);
+        assert_eq!(mutable.forecast.min_confidence, 0.6);
+        assert_eq!(mutable.playbook.exit.stop_loss_pct, 3.5);
+
+        let mut other = config.clone();
+        let mut adapted = mutable.clone();
+        adapted.paper.max_open_positions = 9;
+        adapted.forecast.min_confidence = 0.4;
+        adapted.apply_to(&mut other);
+        assert_eq!(other.paper.max_open_positions, 9);
+        assert_eq!(other.forecast.min_confidence, 0.4);
+        assert_eq!(other.paper.max_hold_days, 7);
+    }
+
+    #[test]
+    fn mutable_validate_rejects_absurd_values() {
+        let mut mutable = Mutable::default();
+        mutable.paper.max_open_positions = 0;
+        assert!(mutable.validate().is_err());
+        let mut mutable = Mutable::default();
+        mutable.paper.max_hold_days = 0;
+        assert!(mutable.validate().is_err());
+        let mut mutable = Mutable::default();
+        mutable.forecast.min_confidence = 1.5;
+        assert!(mutable.validate().is_err());
     }
 }

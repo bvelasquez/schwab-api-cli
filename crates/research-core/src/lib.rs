@@ -31,5 +31,5 @@ pub use forecast::{Forecast, Signal};
 pub use gate::{run_self_test, GateInputs, GateReport};
 pub use paper_broker::PaperOnlyBroker;
 pub use patch::{apply_patches, AppliedPatch, Patch};
-pub use playbook::Playbook;
+pub use playbook::{Mutable, MutableForecast, MutablePaper, Playbook};
 pub use scoring::{ForecastScore, PendingForecast, Scorecard};

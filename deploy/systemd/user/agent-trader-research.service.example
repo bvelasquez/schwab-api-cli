@@ -14,8 +14,10 @@
 #   ExecStart=... research run --rules ... --interval-seconds 1800
 # Do not run both at once.
 #
-# Patches: proposals are always versioned. Add --apply-patches only when you want
-# the arm to trade the newest accepted bounded patch on the following tick.
+# Patches: proposals are always versioned. --apply-patches lets the arm trade the
+# newest accepted bounded patch on the following tick (self-adaptation). Remove it
+# to keep the arm propose-only. Only the fields in the arm's allowlist can change,
+# and each is clamped to a hard rail.
 
 [Unit]
 Description=agent-trader research arm (paper-only; never places an order)
@@ -26,4 +28,4 @@ Wants=network-online.target
 Type=oneshot
 WorkingDirectory=%h/projects/schwabinvestbot
 EnvironmentFile=%h/.config/agent-trader/research.env
-ExecStart=%h/.cargo/bin/agent-trader research tick --rules %h/projects/schwabinvestbot/rules/research/megacaps.yaml
+ExecStart=%h/.cargo/bin/agent-trader research tick --rules %h/projects/schwabinvestbot/rules/research/megacaps.yaml --apply-patches

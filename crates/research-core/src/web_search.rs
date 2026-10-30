@@ -135,7 +135,10 @@ impl OpenRouterClient {
             .await
             .context("OpenRouter web-search request failed")?;
         let status = resp.status();
-        let payload: Value = resp.json().await.context("OpenRouter response was not JSON")?;
+        let payload: Value = resp
+            .json()
+            .await
+            .context("OpenRouter response was not JSON")?;
         if !status.is_success() {
             let message = payload
                 .pointer("/error/message")
@@ -225,7 +228,10 @@ mod tests {
         let tool = build_web_search_tool(&params);
         assert_eq!(tool[0]["type"], json!("openrouter:web_search"));
         assert_eq!(tool[0]["parameters"]["max_total_results"], json!(20));
-        assert_eq!(tool[0]["parameters"]["allowed_domains"][0], json!("reuters.com"));
+        assert_eq!(
+            tool[0]["parameters"]["allowed_domains"][0],
+            json!("reuters.com")
+        );
         assert!(tool[0]["parameters"].get("excluded_domains").is_none());
     }
 

@@ -10,12 +10,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Code-level ceiling on what an LLM may patch. Config may narrow this, never widen it.
+///
+/// Deliberately excludes anything that could fake results or remove risk control:
+/// `paper.starting_equity_usd` (baseline), `paper.slippage_bps` (cost model),
+/// `paper.max_daily_loss_usd` (kill switch), `forecast.horizon_days`/`benchmark`
+/// (scoring contract), account, mode, gate and the allowlist itself.
 pub const DEFAULT_ALLOWLIST: &[&str] = &[
     "playbook.exit.profit_target_pct",
     "playbook.exit.stop_loss_pct",
     "playbook.exit.trailing.trail_atr_multiple",
     "playbook.exit.trailing.activate_after_profit_pct",
     "playbook.entry.rsi_14_range",
+    "paper.max_open_positions",
+    "paper.max_hold_days",
+    "forecast.min_confidence",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,6 +64,12 @@ pub fn rail_for(path: &str) -> Option<(f64, f64)> {
         "trail_atr_multiple" => Some((1.0, 4.0)),
         "activate_after_profit_pct" => Some((1.0, 10.0)),
         "rsi_14_range" => Some((30.0, 80.0)),
+        // Selectivity / sizing / hold time. Rails keep the agent inside a sane
+        // band: at least one slot, at most ten; a 2-20 trading-day hold; and a
+        // confidence floor between 0.30 and 0.85.
+        "max_open_positions" => Some((1.0, 10.0)),
+        "max_hold_days" => Some((2.0, 20.0)),
+        "min_confidence" => Some((0.30, 0.85)),
         _ => None,
     }
 }
@@ -74,8 +88,9 @@ pub fn apply_patches(
         }
         let rail = rail_for(&patch.path)
             .with_context(|| format!("patch path `{}` has no safety rail", patch.path))?;
-        let old = get_path(root, &patch.path)
-            .with_context(|| format!("patch path `{}` is absent from the rules tree", patch.path))?;
+        let old = get_path(root, &patch.path).with_context(|| {
+            format!("patch path `{}` is absent from the rules tree", patch.path)
+        })?;
         let new = clamp(&old, &patch.value, rail, &patch.path)?;
         if new == old {
             continue;
@@ -93,7 +108,13 @@ pub fn apply_patches(
 
 fn clamp(old: &Value, proposed: &Value, rail: (f64, f64), path: &str) -> Result<Value> {
     if let Some(number) = proposed.as_f64() {
-        return Ok(Value::from(number.clamp(rail.0, rail.1)));
+        let clamped = number.clamp(rail.0, rail.1);
+        // Integer fields (max_open_positions, max_hold_days) must stay integers,
+        // or deserializing the patched tree into their u32 type would fail.
+        if old.is_i64() || old.is_u64() {
+            return Ok(Value::from(clamped.round() as i64));
+        }
+        return Ok(Value::from(clamped));
     }
     // rsi_14_range is a [low, high] pair.
     if let Some(items) = proposed.as_array() {
@@ -153,7 +174,9 @@ mod tests {
                     "trailing": { "trail_atr_multiple": 2.0, "activate_after_profit_pct": 4.0 }
                 },
                 "entry": { "rsi_14_range": [35.0, 70.0] }
-            }
+            },
+            "paper": { "max_open_positions": 5, "max_hold_days": 5 },
+            "forecast": { "min_confidence": 0.55 }
         })
     }
 
@@ -172,6 +195,58 @@ mod tests {
         let applied = apply_patches(&mut tree, &patches, &allow()).unwrap();
         assert_eq!(applied.len(), 1);
         assert_eq!(tree["playbook"]["exit"]["stop_loss_pct"], json!(10.0));
+    }
+
+    #[test]
+    fn integer_fields_stay_integers_and_clamp() {
+        let mut tree = rules();
+        let patches = vec![
+            Patch {
+                path: "paper.max_open_positions".into(),
+                value: json!(99),
+                reason: "test".into(),
+            },
+            Patch {
+                path: "paper.max_hold_days".into(),
+                value: json!(1),
+                reason: "test".into(),
+            },
+            Patch {
+                path: "forecast.min_confidence".into(),
+                value: json!(0.99),
+                reason: "test".into(),
+            },
+        ];
+        apply_patches(&mut tree, &patches, &allow()).unwrap();
+        assert_eq!(tree["paper"]["max_open_positions"], json!(10));
+        assert!(tree["paper"]["max_open_positions"].is_u64());
+        assert_eq!(tree["paper"]["max_hold_days"], json!(2));
+        assert_eq!(tree["forecast"]["min_confidence"], json!(0.85));
+    }
+
+    #[test]
+    fn every_ceiling_path_has_a_rail() {
+        for path in DEFAULT_ALLOWLIST {
+            assert!(rail_for(path).is_some(), "no rail for {path}");
+        }
+    }
+
+    #[test]
+    fn risk_and_baseline_fields_are_not_in_the_ceiling() {
+        for forbidden in [
+            "paper.starting_equity_usd",
+            "paper.slippage_bps",
+            "paper.max_daily_loss_usd",
+            "forecast.horizon_days",
+            "forecast.benchmark",
+            "mode",
+            "account",
+        ] {
+            assert!(
+                !DEFAULT_ALLOWLIST.contains(&forbidden),
+                "{forbidden} must never be patchable"
+            );
+        }
     }
 
     #[test]
@@ -194,7 +269,10 @@ mod tests {
             reason: "test".into(),
         }];
         apply_patches(&mut tree, &patches, &allow()).unwrap();
-        assert_eq!(tree["playbook"]["entry"]["rsi_14_range"], json!([30.0, 80.0]));
+        assert_eq!(
+            tree["playbook"]["entry"]["rsi_14_range"],
+            json!([30.0, 80.0])
+        );
     }
 
     #[test]
@@ -210,7 +288,10 @@ mod tests {
 
     #[test]
     fn config_allowlist_cannot_widen_code_ceiling() {
-        let configured = vec!["account".to_string(), "playbook.exit.stop_loss_pct".to_string()];
+        let configured = vec![
+            "account".to_string(),
+            "playbook.exit.stop_loss_pct".to_string(),
+        ];
         let effective = effective_allowlist(&configured);
         assert_eq!(effective, vec!["playbook.exit.stop_loss_pct".to_string()]);
     }
