@@ -110,6 +110,11 @@ impl OpenRouterClient {
                 { "role": "user", "content": user }
             ],
             "tools": build_web_search_tool(params),
+            // Force a JSON object. Without this, a large forecast (dozens of
+            // signals) is routinely wrapped in prose or fenced, and the arm
+            // silently loses the tick. Structured output removes that class of
+            // failure at the provider.
+            "response_format": { "type": "json_object" },
             "max_tokens": max_tokens,
         })
     }
@@ -246,6 +251,7 @@ mod tests {
             excluded_domains: vec![],
         };
         let body = OpenRouterClient::build_chat_body("m", "sys", "usr", &params, 1024);
+        assert_eq!(body["response_format"]["type"], json!("json_object"));
         assert_eq!(body["tools"][0]["type"], json!("openrouter:web_search"));
         assert_eq!(body["messages"][0]["role"], json!("system"));
     }

@@ -252,7 +252,17 @@ pub async fn run_tick(rules: &Path, options: &TickOptions, cache: &mut BarCache)
                 forecast = Some(parsed);
             }
             Err(err) => {
-                forecast_note = format!("forecast parse failed: {err}");
+                // Keep a bounded snippet so a parse failure is diagnosable from
+                // the journal without storing the whole response.
+                let snippet: String = result
+                    .content
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .chars()
+                    .take(300)
+                    .collect();
+                forecast_note = format!("forecast parse failed: {err}; content starts: {snippet}");
             }
         }
     } else {
