@@ -50,8 +50,17 @@ pub struct PaperBook {
     pub equity_peak_usd: f64,
     pub halted: Option<Halt>,
     pub last_tick: Option<String>,
+    /// RFC3339 instant the book started. Set once, on the first tick.
+    #[serde(default)]
+    pub started_at: Option<String>,
     pub benchmark_symbol: String,
     pub benchmark_first: Option<f64>,
+    /// Exchange date (`YYYY-MM-DD`) of the bar or quote that anchored `benchmark_first`.
+    #[serde(default)]
+    pub benchmark_first_date: Option<String>,
+    /// `"bar_backfill"` when the anchor came from daily bars, `"tick"` when it came from a quote.
+    #[serde(default)]
+    pub benchmark_source: Option<String>,
     pub benchmark_last: Option<f64>,
     pub last_regime: Option<String>,
     /// Symbol -> date before which re-entry is blocked after a stop/thesis exit.
@@ -141,6 +150,53 @@ pub struct TickOutcome {
     pub exits: Vec<String>,
     pub notes: Vec<String>,
     pub halted: bool,
+}
+
+fn date_prefix(raw: &str) -> Option<&str> {
+    let prefix = raw.get(..10)?;
+    let bytes = prefix.as_bytes();
+    if bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && prefix.chars().all(|ch| ch.is_ascii_digit() || ch == '-')
+    {
+        Some(prefix)
+    } else {
+        None
+    }
+}
+
+/// Last daily bar of `symbol` on or before `inception`. The caller already
+/// includes the benchmark symbol in `bars`.
+fn benchmark_bar_at_or_before(
+    bars: &BTreeMap<String, Vec<Bar>>,
+    symbol: &str,
+    inception: NaiveDate,
+) -> Option<(NaiveDate, f64)> {
+    if symbol.is_empty() {
+        return None;
+    }
+    let series = bars.get(symbol).or_else(|| {
+        let upper = symbol.to_ascii_uppercase();
+        if upper == symbol {
+            None
+        } else {
+            bars.get(&upper)
+        }
+    })?;
+    let mut best: Option<(NaiveDate, f64)> = None;
+    for bar in series {
+        let Some(date) = indicators::parse_bar_date(&bar.timestamp) else {
+            continue;
+        };
+        if date <= inception && bar.close > 0.0 {
+            match best {
+                Some((prev, _)) if date < prev => {}
+                _ => best = Some((date, bar.close)),
+            }
+        }
+    }
+    best
 }
 
 fn note(kind: &str, detail: impl Into<String>) -> JournalNote {
@@ -268,9 +324,98 @@ impl PaperBook {
             .map(|bench| self.return_pct() - bench)
     }
 
+    /// True when the benchmark anchor is later than the book's inception, so the
+    /// comparison window is shorter than the book. Dates are the `YYYY-MM-DD`
+    /// prefix of the inception timestamp and `benchmark_first_date`.
+    pub fn benchmark_partial_window(&self) -> bool {
+        let Some(baseline) = self.benchmark_first_date.as_deref().and_then(date_prefix) else {
+            return false;
+        };
+        let inception_stamp = self.inception_stamp();
+        let Some(inception) = inception_stamp.as_deref().and_then(date_prefix) else {
+            return false;
+        };
+        baseline > inception
+    }
+
+    /// Inception instant: `started_at`, else the first P&L point, else nothing.
+    fn inception_stamp(&self) -> Option<String> {
+        self.started_at
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                self.pnl_series
+                    .first()
+                    .map(|point| point.at.clone())
+                    .filter(|at| !at.is_empty())
+            })
+    }
+
+    /// Exchange date of inception. `now` is only used when the book has no stamp yet.
+    fn inception_exchange_date(&self, now: chrono::DateTime<Utc>) -> NaiveDate {
+        if let Some(stamp) = self.inception_stamp() {
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&stamp) {
+                return indicators::exchange_date(dt.with_timezone(&Utc));
+            }
+            if let Some(prefix) = date_prefix(&stamp) {
+                if let Ok(date) = NaiveDate::parse_from_str(prefix, "%Y-%m-%d") {
+                    return date;
+                }
+            }
+        }
+        indicators::exchange_date(now)
+    }
+
+    /// `genesis` is true only when the book was not yet `started` at entry to `tick`.
+    /// A genesis quote is the baseline: equity and the benchmark are observed together.
+    /// Every other unfrozen book backfills the last daily bar on or before inception.
+    fn anchor_benchmark(&mut self, input: &TickInputs<'_>, today_key: &str, genesis: bool) {
+        if self.benchmark_symbol.is_empty() {
+            self.benchmark_symbol = input.benchmark_symbol.to_string();
+        }
+        let quote = input.benchmark_last.filter(|value| *value > 0.0);
+        let frozen = self.benchmark_first.is_some()
+            && self
+                .benchmark_first_date
+                .as_deref()
+                .is_some_and(|date| !date.is_empty());
+        if !frozen {
+            if genesis && quote.is_some() {
+                self.benchmark_first = quote;
+                self.benchmark_first_date = Some(today_key.to_string());
+                self.benchmark_source = Some("tick".to_string());
+            } else {
+                let inception = self.inception_exchange_date(input.now);
+                let symbol = if input.benchmark_symbol.is_empty() {
+                    self.benchmark_symbol.as_str()
+                } else {
+                    input.benchmark_symbol
+                };
+                if let Some((date, close)) =
+                    benchmark_bar_at_or_before(input.bars, symbol, inception)
+                {
+                    self.benchmark_first = Some(close);
+                    self.benchmark_first_date = Some(date.to_string());
+                    self.benchmark_source = Some("bar_backfill".to_string());
+                } else if let Some(last) = quote {
+                    self.benchmark_first = Some(last);
+                    self.benchmark_first_date = Some(today_key.to_string());
+                    self.benchmark_source = Some("tick".to_string());
+                }
+            }
+        }
+        if let Some(last) = quote {
+            self.benchmark_last = Some(last);
+        }
+    }
+
     /// One paper tick. Never places an order; only reads quotes and bars.
     pub fn tick(&mut self, input: &TickInputs<'_>) -> TickOutcome {
         let mut outcome = TickOutcome::default();
+        // Captured before `started` is latched. Genesis is the only tick where
+        // a live quote outranks the daily-bar backfill.
+        let genesis = !self.started;
         // Exchange date, so buckets and cooldowns line up with daily bar dates.
         let today = indicators::exchange_date(input.now);
         let today_key = today.to_string();
@@ -595,20 +740,22 @@ impl PaperBook {
         // --- bookkeeping ---
         self.tick_count += 1;
         self.last_tick = Some(input.now.to_rfc3339());
+        // Stamp genesis before the anchor so a legacy book (no `started_at`)
+        // still measures the benchmark from its first P&L point, not from today.
+        if self.started_at.as_deref().unwrap_or("").is_empty() {
+            let prior = self
+                .pnl_series
+                .first()
+                .map(|point| point.at.clone())
+                .filter(|at| !at.is_empty());
+            self.started_at = Some(prior.unwrap_or_else(|| input.now.to_rfc3339()));
+        }
         if let Some(forecast) = input.forecast {
             if !forecast.regime.is_empty() {
                 self.last_regime = Some(forecast.regime.clone());
             }
         }
-        if self.benchmark_symbol.is_empty() {
-            self.benchmark_symbol = input.benchmark_symbol.to_string();
-        }
-        if let Some(last) = input.benchmark_last.filter(|value| *value > 0.0) {
-            self.benchmark_last = Some(last);
-            if self.benchmark_first.is_none() {
-                self.benchmark_first = Some(last);
-            }
-        }
+        self.anchor_benchmark(input, &today_key, genesis);
         let equity = self.equity();
         if equity > self.equity_peak_usd {
             self.equity_peak_usd = equity;
@@ -778,6 +925,9 @@ impl PaperBook {
                 "first_close": self.benchmark_first,
                 "last_close": self.benchmark_last,
                 "return_pct": self.benchmark_return_pct(),
+                "first_date": self.benchmark_first_date,
+                "source": self.benchmark_source,
+                "partial_window": self.benchmark_partial_window(),
             },
             "regime": self.last_regime,
             "scorecard": scorecard,
@@ -1339,5 +1489,233 @@ mod tests {
         let loaded = PaperBook::load(&path, "research-test", 10_000.0);
         assert_eq!(loaded.cash_usd, 9_000.0);
         assert!(loaded.started);
+    }
+
+    fn spy_bars() -> BTreeMap<String, Vec<Bar>> {
+        [(
+            "SPY".to_string(),
+            vec![
+                bar("2026-10-28", 90.0),
+                bar("2026-10-29", 100.0),
+                bar("2026-10-30", 110.0),
+            ],
+        )]
+        .into_iter()
+        .collect()
+    }
+
+    fn tick_bench(
+        book: &mut PaperBook,
+        config: &ArmConfig,
+        playbook: &Playbook,
+        bars: &BTreeMap<String, Vec<Bar>>,
+        now: &str,
+        benchmark_last: Option<f64>,
+    ) {
+        let mut input = inputs(config, playbook, &[], bars, None, rt(now), true);
+        input.benchmark_last = benchmark_last;
+        book.tick(&input);
+    }
+
+    #[test]
+    fn benchmark_backfill_anchors_on_the_inception_bar() {
+        let config = config();
+        let playbook = Playbook::default();
+        let bars = spy_bars();
+        let mut book = PaperBook::new("research-test", 10_000.0);
+        book.started = true;
+        book.tick_count = 3;
+        book.benchmark_first = None;
+        book.started_at = Some("2026-10-29T14:00:00Z".into());
+        // Already running, so a later quote does not replace the inception bar.
+        tick_bench(
+            &mut book,
+            &config,
+            &playbook,
+            &bars,
+            "2026-10-30T15:00:00Z",
+            Some(111.0),
+        );
+        assert_eq!(book.benchmark_first, Some(100.0));
+        assert_eq!(book.benchmark_first_date.as_deref(), Some("2026-10-29"));
+        assert_eq!(book.benchmark_source.as_deref(), Some("bar_backfill"));
+        assert_eq!(book.benchmark_last, Some(111.0));
+        assert!(!book.benchmark_partial_window());
+        let doc = book.to_dashboard_json(&config, &playbook, None, None);
+        assert_eq!(doc["benchmark"]["first_close"], json!(100.0));
+        assert_eq!(doc["benchmark"]["last_close"], json!(111.0));
+        assert_eq!(doc["benchmark"]["first_date"], "2026-10-29");
+        assert_eq!(doc["benchmark"]["source"], "bar_backfill");
+        assert_eq!(doc["benchmark"]["partial_window"], false);
+        let return_pct = doc["benchmark"]["return_pct"].as_f64().unwrap();
+        assert!((return_pct - 11.0).abs() < 1e-9, "{return_pct}");
+    }
+
+    #[test]
+    fn legacy_book_backfills_benchmark_from_the_first_pnl_date() {
+        let config = config();
+        let playbook = Playbook::default();
+        let bars = spy_bars();
+        let mut book = PaperBook::new("research-test", 10_000.0);
+        book.started_at = None;
+        book.benchmark_first = None;
+        book.pnl_series.push(PnlPoint {
+            at: "2026-10-29T14:00:00Z".into(),
+            equity_usd: 10_000.0,
+            realized_usd: 0.0,
+        });
+        tick_bench(
+            &mut book,
+            &config,
+            &playbook,
+            &bars,
+            "2026-11-02T15:00:00Z",
+            Some(120.0),
+        );
+        assert_eq!(book.started_at.as_deref(), Some("2026-10-29T14:00:00Z"));
+        assert_eq!(book.benchmark_first, Some(100.0));
+        assert_eq!(book.benchmark_first_date.as_deref(), Some("2026-10-29"));
+        assert_eq!(book.benchmark_source.as_deref(), Some("bar_backfill"));
+        assert!(!book.benchmark_partial_window());
+    }
+
+    #[test]
+    fn benchmark_return_is_none_without_bars_or_a_quote() {
+        let config = config();
+        let playbook = Playbook::default();
+        let bars = BTreeMap::new();
+        let mut book = PaperBook::new("research-test", 10_000.0);
+        tick_bench(
+            &mut book,
+            &config,
+            &playbook,
+            &bars,
+            "2026-10-29T14:00:00Z",
+            None,
+        );
+        assert!(book.benchmark_first.is_none());
+        assert!(book.benchmark_last.is_none());
+        assert_eq!(book.benchmark_return_pct(), None);
+        assert!(!book.benchmark_partial_window());
+    }
+
+    #[test]
+    fn tick_quote_anchors_the_benchmark_when_bars_are_missing() {
+        let config = config();
+        let playbook = Playbook::default();
+        let bars = BTreeMap::new();
+        let mut book = PaperBook::new("research-test", 10_000.0);
+        tick_bench(
+            &mut book,
+            &config,
+            &playbook,
+            &bars,
+            "2026-10-29T14:00:00Z",
+            None,
+        );
+        assert_eq!(
+            book.started_at.as_deref(),
+            Some(rt("2026-10-29T14:00:00Z").to_rfc3339().as_str())
+        );
+        tick_bench(
+            &mut book,
+            &config,
+            &playbook,
+            &bars,
+            "2026-11-02T15:00:00Z",
+            Some(130.0),
+        );
+        assert_eq!(book.benchmark_first, Some(130.0));
+        assert_eq!(book.benchmark_first_date.as_deref(), Some("2026-11-02"));
+        assert_eq!(book.benchmark_source.as_deref(), Some("tick"));
+        assert_eq!(book.benchmark_last, Some(130.0));
+        assert!(book.benchmark_partial_window());
+    }
+
+    #[test]
+    fn genesis_tick_anchors_on_the_quote_even_when_bars_exist() {
+        let config = config();
+        let playbook = Playbook::default();
+        let bars = spy_bars();
+        let mut book = PaperBook::new("research-test", 10_000.0);
+        book.started = false;
+        tick_bench(
+            &mut book,
+            &config,
+            &playbook,
+            &bars,
+            "2026-10-29T14:00:00Z",
+            Some(105.0),
+        );
+        assert!(book.started);
+        assert_eq!(book.benchmark_first, Some(105.0));
+        assert_eq!(book.benchmark_first_date.as_deref(), Some("2026-10-29"));
+        assert_eq!(book.benchmark_source.as_deref(), Some("tick"));
+        assert_eq!(book.benchmark_last, Some(105.0));
+        assert!(!book.benchmark_partial_window());
+    }
+
+    #[test]
+    fn genesis_without_a_quote_backfills_on_the_next_tick() {
+        let config = config();
+        let playbook = Playbook::default();
+        let empty = BTreeMap::new();
+        let bars = spy_bars();
+        let mut book = PaperBook::new("research-test", 10_000.0);
+        book.started = false;
+        tick_bench(
+            &mut book,
+            &config,
+            &playbook,
+            &empty,
+            "2026-10-29T14:00:00Z",
+            None,
+        );
+        assert!(book.started);
+        assert!(book.benchmark_first.is_none());
+        tick_bench(
+            &mut book,
+            &config,
+            &playbook,
+            &bars,
+            "2026-10-30T15:00:00Z",
+            Some(111.0),
+        );
+        assert_eq!(book.benchmark_first, Some(100.0));
+        assert_eq!(book.benchmark_first_date.as_deref(), Some("2026-10-29"));
+        assert_eq!(book.benchmark_source.as_deref(), Some("bar_backfill"));
+        assert_eq!(book.benchmark_last, Some(111.0));
+        assert!(!book.benchmark_partial_window());
+    }
+
+    #[test]
+    fn benchmark_baseline_stays_frozen_after_it_is_anchored() {
+        let config = config();
+        let playbook = Playbook::default();
+        let bars = spy_bars();
+        let mut book = PaperBook::new("research-test", 10_000.0);
+        book.started_at = Some("2026-10-29T14:00:00Z".into());
+        tick_bench(
+            &mut book,
+            &config,
+            &playbook,
+            &bars,
+            "2026-10-30T15:00:00Z",
+            Some(111.0),
+        );
+        assert_eq!(book.benchmark_first, Some(100.0));
+        tick_bench(
+            &mut book,
+            &config,
+            &playbook,
+            &bars,
+            "2026-11-02T15:00:00Z",
+            Some(140.0),
+        );
+        assert_eq!(book.benchmark_first, Some(100.0));
+        assert_eq!(book.benchmark_first_date.as_deref(), Some("2026-10-29"));
+        assert_eq!(book.benchmark_source.as_deref(), Some("bar_backfill"));
+        assert_eq!(book.benchmark_last, Some(140.0));
+        assert!(!book.benchmark_partial_window());
     }
 }
