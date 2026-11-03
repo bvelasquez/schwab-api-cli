@@ -1616,6 +1616,25 @@ mod tests {
     }
 
     #[test]
+    fn an_unanchored_book_backfills_from_the_inception_bar() {
+        let config = config();
+        let playbook = Playbook::default();
+        let bars = spy_bars();
+        let mut book = PaperBook::new("research-test", 10_000.0);
+        book.started = true;
+        book.started_at = Some("2026-10-30T14:00:00Z".into());
+        tick_bench(
+            &mut book,
+            &config,
+            &playbook,
+            &bars,
+            "2026-11-03T15:00:00Z",
+            Some(754.0),
+        );
+        assert_eq!(book.benchmark_source.as_deref(), Some("bar_backfill"));
+    }
+
+    #[test]
     fn benchmark_return_is_none_without_bars_or_a_quote() {
         let config = config();
         let playbook = Playbook::default();
