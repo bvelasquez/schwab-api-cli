@@ -12,6 +12,7 @@
 //! - [`playbook`] — the mutable artifact and its versioned overlay store (plan §5).
 //! - [`book`] — the paper fill model, positions, marks and P&L (plan §7).
 //! - [`scoring`] — forward-return scoring and rank IC (plan §8 stage B).
+//! - [`promotion`] — evidence gate and patch ledger before a version is activated.
 //! - [`indicators`] — RSI/ATR over daily bars, point-in-time filtered.
 
 pub mod book;
@@ -22,6 +23,7 @@ pub mod indicators;
 pub mod paper_broker;
 pub mod patch;
 pub mod playbook;
+pub mod promotion;
 pub mod scoring;
 pub mod web_search;
 
