@@ -380,11 +380,19 @@ impl PaperBook {
                 .benchmark_first_date
                 .as_deref()
                 .is_some_and(|date| !date.is_empty());
+        // A book saved before the anchor carried its date still holds the real
+        // inception price. Stamp the date from inception instead of re-anchoring
+        // at today's quote, which would silently erase the benchmark window.
+        let legacy_anchor = self.benchmark_first.is_some() && !genesis;
         if !frozen {
             if genesis && quote.is_some() {
                 self.benchmark_first = quote;
                 self.benchmark_first_date = Some(today_key.to_string());
                 self.benchmark_source = Some("tick".to_string());
+            } else if legacy_anchor {
+                self.benchmark_first_date =
+                    Some(self.inception_exchange_date(input.now).to_string());
+                self.benchmark_source = Some("legacy_anchor".to_string());
             } else {
                 let inception = self.inception_exchange_date(input.now);
                 let symbol = if input.benchmark_symbol.is_empty() {
@@ -1577,6 +1585,34 @@ mod tests {
         assert_eq!(book.benchmark_first_date.as_deref(), Some("2026-10-29"));
         assert_eq!(book.benchmark_source.as_deref(), Some("bar_backfill"));
         assert!(!book.benchmark_partial_window());
+    }
+
+    #[test]
+    fn legacy_anchor_without_a_date_is_kept_not_relatched() {
+        let config = config();
+        let playbook = Playbook::default();
+        let bars = spy_bars();
+        let mut book = PaperBook::new("research-test", 10_000.0);
+        // Pre-date-field state: the inception quote was persisted, the date was not.
+        book.started_at = Some("2026-10-29T14:00:00Z".into());
+        book.benchmark_first = Some(755.37);
+        book.benchmark_first_date = None;
+        book.pnl_series.push(PnlPoint {
+            at: "2026-10-29T14:00:00Z".into(),
+            equity_usd: 10_000.0,
+            realized_usd: 0.0,
+        });
+        tick_bench(
+            &mut book,
+            &config,
+            &playbook,
+            &bars,
+            "2026-11-02T15:00:00Z",
+            Some(120.0),
+        );
+        assert_eq!(book.benchmark_first, Some(755.37));
+        assert_eq!(book.benchmark_first_date.as_deref(), Some("2026-10-29"));
+        assert_eq!(book.benchmark_source.as_deref(), Some("legacy_anchor"));
     }
 
     #[test]
