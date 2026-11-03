@@ -742,7 +742,11 @@ impl BarCache {
                 return Ok(rows.clone());
             }
         }
-        let raw = data.bars(account, &key, "day").await?;
+        // `day` on the Public gateway means "today", which comes back as one-minute
+        // intraday bars: 132 rows covering two hours. The playbook's indicators are
+        // daily (rsi_14, 20/50-day averages) and the benchmark anchor needs a bar on
+        // or before inception, so ask for a year of daily sessions instead.
+        let raw = data.bars(account, &key, "year").await?;
         let rows = research_core::indicators::sorted(&raw);
         self.entries.insert(key, (Instant::now(), rows.clone()));
         Ok(rows)
