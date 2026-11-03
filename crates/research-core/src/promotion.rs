@@ -149,6 +149,17 @@ pub fn may_activate(
     ledger: &Ledger,
     cfg: &AdaptationConfig,
 ) -> Result<(), String> {
+    may_activate_at(card, ledger, cfg, Utc::now())
+}
+
+/// Time-injected form of [`may_activate`], so the dwell window can be tested
+/// without waiting or writing entries in the future.
+pub fn may_activate_at(
+    card: &Scorecard,
+    ledger: &Ledger,
+    cfg: &AdaptationConfig,
+    now: DateTime<Utc>,
+) -> Result<(), String> {
     if card.ic_days < cfg.min_ic_days as usize {
         return Err(format!(
             "ic_days {} is below min_ic_days {}",
@@ -170,7 +181,6 @@ pub fn may_activate(
             return Err(format!("ic_t_stat {t} is below min_ic_t {}", cfg.min_ic_t));
         }
     }
-    let now = Utc::now();
     let dwell = Duration::days(i64::from(cfg.min_dwell_days));
     if let Some(live) =
         ledger.entries.iter().rev().find(|entry| {
@@ -210,6 +220,7 @@ pub fn decide_activation(
     card: &Scorecard,
     ledger: &Ledger,
     cfg: &AdaptationConfig,
+    now: DateTime<Utc>,
 ) -> ActivationDecision {
     if !apply_patches {
         return ActivationDecision {
@@ -226,7 +237,7 @@ pub fn decide_activation(
             gate_reason: Some(NO_HYPOTHESIS.into()),
         };
     }
-    match may_activate(card, ledger, cfg) {
+    match may_activate_at(card, ledger, cfg, now) {
         Ok(()) => ActivationDecision {
             activate: true,
             gate_reason: None,
@@ -259,7 +270,7 @@ pub fn consider_proposal(
 ) -> Result<ProposalOutcome> {
     let path = ledger_path(rules);
     let mut ledger = load_ledger(&path)?;
-    let decision = decide_activation(apply_patches, applied, card, &ledger, cfg);
+    let decision = decide_activation(apply_patches, applied, card, &ledger, cfg, now);
     if decision.activate {
         let previous = ledger.clone();
         ledger.record_activations(applied, card, now);
@@ -463,6 +474,21 @@ mod tests {
             err.contains("has not elapsed since the last activation"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn may_activate_uses_the_injected_clock() {
+        let cfg = AdaptationConfig::default();
+        let card = passing_card();
+        let t0 = DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut ledger = Ledger::default();
+        ledger.entries.push(entry_at(t0, true));
+
+        let early = may_activate_at(&card, &ledger, &cfg, t0 + Duration::days(4));
+        assert!(early.is_err(), "4 days must still be inside the dwell");
+        assert!(may_activate_at(&card, &ledger, &cfg, t0 + Duration::days(6)).is_ok());
     }
 
     #[test]
