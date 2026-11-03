@@ -1,25 +1,29 @@
 {
-  "rows": 49,
+  "rows": 89,
   "by_reason": {
     "below_sma": {
-      "n": 28,
-      "mean_hyp_pnl_pct": 1.9912013610126962
+      "n": 41,
+      "mean_hyp_pnl_pct": -1.9625178831000802
+    },
+    "ADMITTED": {
+      "n": 21,
+      "mean_hyp_pnl_pct": -0.06522435861549256
     },
     "rsi_out_of_range": {
       "n": 13,
-      "mean_hyp_pnl_pct": -0.2591441977786969
+      "mean_hyp_pnl_pct": 1.8047716050733922
     },
     "near_52w_high": {
-      "n": 4,
-      "mean_hyp_pnl_pct": -0.2505794602514211
+      "n": 6,
+      "mean_hyp_pnl_pct": -0.8653732656783651
     },
     "rs_below_min": {
-      "n": 3,
-      "mean_hyp_pnl_pct": -0.0786473507819981
+      "n": 5,
+      "mean_hyp_pnl_pct": -0.3975744610645693
     },
-    "ADMITTED": {
-      "n": 1,
-      "mean_hyp_pnl_pct": -2.5988655107213154
+    "symbol_group_cap": {
+      "n": 3,
+      "mean_hyp_pnl_pct": 0.0
     }
   }
 }

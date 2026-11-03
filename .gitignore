@@ -129,3 +129,7 @@ rules/analysis-*/arm-*-W*.json
 
 # Swing lab price cache (regenerate with scripts/swing_lab_fetch.py)
 rules/lab-data/
+
+# Runtime state: archives and playbook patch snapshots are pure volume
+rules/archive/
+rules/research/*.versions/

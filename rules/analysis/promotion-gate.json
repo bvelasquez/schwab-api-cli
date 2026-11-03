@@ -13,14 +13,15 @@
       "arm": "research-corr-groups",
       "eligible": false,
       "reasons": [
-        "days 0 < 40",
-        "day-paired CI does not sit above 0"
+        "days 3 < 40",
+        "day-paired CI does not sit above 0",
+        "max drawdown -0.07% worse than control -0.04%"
       ],
       "paired": {
-        "n": 0,
-        "mean": null,
-        "ci_low": null,
-        "ci_high": null
+        "n": 3,
+        "mean": -99.4812006665937,
+        "ci_low": -225.88676164295813,
+        "ci_high": 26.924360309770748
       },
       "operator_ok_required": true,
       "applied": false
@@ -29,14 +30,15 @@
       "arm": "research-dip",
       "eligible": false,
       "reasons": [
-        "days 0 < 40",
-        "day-paired CI does not sit above 0"
+        "days 3 < 40",
+        "day-paired CI does not sit above 0",
+        "max drawdown -0.37% worse than control -0.04%"
       ],
       "paired": {
-        "n": 0,
-        "mean": null,
-        "ci_low": null,
-        "ci_high": null
+        "n": 3,
+        "mean": -1110.777886374931,
+        "ci_low": -3109.350244704324,
+        "ci_high": 887.7944719544619
       },
       "operator_ok_required": true,
       "applied": false
@@ -45,14 +47,14 @@
       "arm": "research-downsize-event",
       "eligible": false,
       "reasons": [
-        "days 0 < 40",
+        "days 3 < 40",
         "day-paired CI does not sit above 0"
       ],
       "paired": {
-        "n": 0,
-        "mean": null,
-        "ci_low": null,
-        "ci_high": null
+        "n": 3,
+        "mean": 3.8805107275644936e-11,
+        "ci_low": -3.725290298461914e-11,
+        "ci_high": 1.1486311753590901e-10
       },
       "operator_ok_required": true,
       "applied": false
@@ -61,14 +63,14 @@
       "arm": "research-exit-event",
       "eligible": false,
       "reasons": [
-        "days 0 < 40",
+        "days 3 < 40",
         "day-paired CI does not sit above 0"
       ],
       "paired": {
-        "n": 0,
-        "mean": null,
-        "ci_low": null,
-        "ci_high": null
+        "n": 3,
+        "mean": 3.8805107275644936e-11,
+        "ci_low": -3.725290298461914e-11,
+        "ci_high": 1.1486311753590901e-10
       },
       "operator_ok_required": true,
       "applied": false
@@ -77,14 +79,14 @@
       "arm": "research-gap",
       "eligible": false,
       "reasons": [
-        "days 0 < 40",
+        "days 3 < 40",
         "day-paired CI does not sit above 0"
       ],
       "paired": {
-        "n": 0,
-        "mean": null,
-        "ci_low": null,
-        "ci_high": null
+        "n": 3,
+        "mean": 122.6163078750639,
+        "ci_low": -41.80491402782083,
+        "ci_high": 287.03752977794863
       },
       "operator_ok_required": true,
       "applied": false
@@ -93,14 +95,14 @@
       "arm": "research-llm-agent",
       "eligible": false,
       "reasons": [
-        "days 0 < 40",
+        "days 3 < 40",
         "day-paired CI does not sit above 0"
       ],
       "paired": {
-        "n": 0,
-        "mean": null,
-        "ci_low": null,
-        "ci_high": null
+        "n": 3,
+        "mean": 3.8805107275644936e-11,
+        "ci_low": -3.725290298461914e-11,
+        "ci_high": 1.1486311753590901e-10
       },
       "operator_ok_required": true,
       "applied": false
@@ -109,14 +111,14 @@
       "arm": "research-midcap",
       "eligible": false,
       "reasons": [
-        "days 0 < 40",
+        "days 3 < 40",
         "day-paired CI does not sit above 0"
       ],
       "paired": {
-        "n": 0,
-        "mean": null,
-        "ci_low": null,
-        "ci_high": null
+        "n": 3,
+        "mean": 3.8805107275644936e-11,
+        "ci_low": -3.725290298461914e-11,
+        "ci_high": 1.1486311753590901e-10
       },
       "operator_ok_required": true,
       "applied": false
@@ -125,14 +127,14 @@
       "arm": "research-no-blocklist",
       "eligible": false,
       "reasons": [
-        "days 0 < 40",
+        "days 3 < 40",
         "day-paired CI does not sit above 0"
       ],
       "paired": {
-        "n": 0,
-        "mean": null,
-        "ci_low": null,
-        "ci_high": null
+        "n": 3,
+        "mean": 3.8805107275644936e-11,
+        "ci_low": -3.725290298461914e-11,
+        "ci_high": 1.1486311753590901e-10
       },
       "operator_ok_required": true,
       "applied": false
@@ -141,14 +143,14 @@
       "arm": "research-pullback",
       "eligible": false,
       "reasons": [
-        "days 0 < 40",
+        "days 3 < 40",
         "day-paired CI does not sit above 0"
       ],
       "paired": {
-        "n": 0,
-        "mean": null,
-        "ci_low": null,
-        "ci_high": null
+        "n": 3,
+        "mean": 536.7298801250678,
+        "ci_low": -286.8022098273573,
+        "ci_high": 1360.2619700774928
       },
       "operator_ok_required": true,
       "applied": false
@@ -157,14 +159,14 @@
       "arm": "research-rangecap",
       "eligible": false,
       "reasons": [
-        "days 0 < 40",
+        "days 3 < 40",
         "day-paired CI does not sit above 0"
       ],
       "paired": {
-        "n": 0,
-        "mean": null,
-        "ci_low": null,
-        "ci_high": null
+        "n": 3,
+        "mean": 3.8805107275644936e-11,
+        "ci_low": -3.725290298461914e-11,
+        "ci_high": 1.1486311753590901e-10
       },
       "operator_ok_required": true,
       "applied": false
@@ -173,14 +175,15 @@
       "arm": "research-regime",
       "eligible": false,
       "reasons": [
-        "days 0 < 40",
-        "day-paired CI does not sit above 0"
+        "days 3 < 40",
+        "day-paired CI does not sit above 0",
+        "max drawdown -0.29% worse than control -0.04%"
       ],
       "paired": {
-        "n": 0,
-        "mean": null,
-        "ci_low": null,
-        "ci_high": null
+        "n": 3,
+        "mean": -708.5487242915746,
+        "ci_low": -2549.9487867348794,
+        "ci_high": 1132.85133815173
       },
       "operator_ok_required": true,
       "applied": false
@@ -189,14 +192,14 @@
       "arm": "research-skip-event",
       "eligible": false,
       "reasons": [
-        "days 0 < 40",
+        "days 3 < 40",
         "day-paired CI does not sit above 0"
       ],
       "paired": {
-        "n": 0,
-        "mean": null,
-        "ci_low": null,
-        "ci_high": null
+        "n": 3,
+        "mean": 3.8805107275644936e-11,
+        "ci_low": -3.725290298461914e-11,
+        "ci_high": 1.1486311753590901e-10
       },
       "operator_ok_required": true,
       "applied": false
@@ -205,14 +208,14 @@
       "arm": "research-wide-universe",
       "eligible": false,
       "reasons": [
-        "days 0 < 40",
+        "days 3 < 40",
         "day-paired CI does not sit above 0"
       ],
       "paired": {
-        "n": 0,
-        "mean": null,
-        "ci_low": null,
-        "ci_high": null
+        "n": 3,
+        "mean": 3.8805107275644936e-11,
+        "ci_low": -3.725290298461914e-11,
+        "ci_high": 1.1486311753590901e-10
       },
       "operator_ok_required": true,
       "applied": false
