@@ -492,7 +492,7 @@ pub async fn run_loop(
         config.mode,
         interval,
         if options.apply_patches {
-            "auto-activate"
+            "gated on the scorecard"
         } else {
             "propose only"
         }
