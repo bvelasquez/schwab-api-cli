@@ -26,12 +26,41 @@ pub const DEFAULT_ALLOWLIST: &[&str] = &[
     "forecast.min_confidence",
 ];
 
+fn default_evaluate_after_days() -> u32 {
+    5
+}
+
+/// A proposed change. `hypothesis`, `expected_effect`, `evaluate_after_days`,
+/// and `kill_criteria` are pre-registered before the patch is considered.
+/// They default so older forecasts and snapshots still deserialize.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Patch {
     pub path: String,
     pub value: Value,
     #[serde(default)]
     pub reason: String,
+    #[serde(default)]
+    pub hypothesis: String,
+    #[serde(default)]
+    pub expected_effect: String,
+    #[serde(default = "default_evaluate_after_days")]
+    pub evaluate_after_days: u32,
+    #[serde(default)]
+    pub kill_criteria: String,
+}
+
+impl Default for Patch {
+    fn default() -> Self {
+        Self {
+            path: String::new(),
+            value: Value::Null,
+            reason: String::new(),
+            hypothesis: String::new(),
+            expected_effect: String::new(),
+            evaluate_after_days: default_evaluate_after_days(),
+            kill_criteria: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +69,14 @@ pub struct AppliedPatch {
     pub old_value: Value,
     pub new_value: Value,
     pub reason: String,
+    #[serde(default)]
+    pub hypothesis: String,
+    #[serde(default)]
+    pub expected_effect: String,
+    #[serde(default = "default_evaluate_after_days")]
+    pub evaluate_after_days: u32,
+    #[serde(default)]
+    pub kill_criteria: String,
 }
 
 /// Narrow a configured allowlist against the code ceiling. An empty config
@@ -101,6 +138,10 @@ pub fn apply_patches(
             old_value: old,
             new_value: new,
             reason: patch.reason.clone(),
+            hypothesis: patch.hypothesis.clone(),
+            expected_effect: patch.expected_effect.clone(),
+            evaluate_after_days: patch.evaluate_after_days,
+            kill_criteria: patch.kill_criteria.clone(),
         });
     }
     Ok(applied)
@@ -191,6 +232,7 @@ mod tests {
             path: "playbook.exit.stop_loss_pct".into(),
             value: json!(99.0),
             reason: "test".into(),
+            ..Default::default()
         }];
         let applied = apply_patches(&mut tree, &patches, &allow()).unwrap();
         assert_eq!(applied.len(), 1);
@@ -205,16 +247,19 @@ mod tests {
                 path: "paper.max_open_positions".into(),
                 value: json!(99),
                 reason: "test".into(),
+                ..Default::default()
             },
             Patch {
                 path: "paper.max_hold_days".into(),
                 value: json!(1),
                 reason: "test".into(),
+                ..Default::default()
             },
             Patch {
                 path: "forecast.min_confidence".into(),
                 value: json!(0.99),
                 reason: "test".into(),
+                ..Default::default()
             },
         ];
         apply_patches(&mut tree, &patches, &allow()).unwrap();
@@ -256,6 +301,7 @@ mod tests {
             path: "account".into(),
             value: json!("schwab:X"),
             reason: "malicious".into(),
+            ..Default::default()
         }];
         assert!(apply_patches(&mut tree, &patches, &allow()).is_err());
     }
@@ -267,6 +313,7 @@ mod tests {
             path: "playbook.entry.rsi_14_range".into(),
             value: json!([10.0, 99.0]),
             reason: "test".into(),
+            ..Default::default()
         }];
         apply_patches(&mut tree, &patches, &allow()).unwrap();
         assert_eq!(
@@ -282,6 +329,7 @@ mod tests {
             path: "playbook.entry.rsi_14_range".into(),
             value: json!([70.0, 40.0]),
             reason: "test".into(),
+            ..Default::default()
         }];
         assert!(apply_patches(&mut tree, &patches, &allow()).is_err());
     }
@@ -297,12 +345,25 @@ mod tests {
     }
 
     #[test]
+    fn older_patch_json_defaults_the_pre_registration_fields() {
+        let patch: Patch = serde_json::from_str(
+            r#"{"path":"forecast.min_confidence","value":0.5,"reason":"loosen"}"#,
+        )
+        .unwrap();
+        assert!(patch.hypothesis.is_empty());
+        assert!(patch.expected_effect.is_empty());
+        assert!(patch.kill_criteria.is_empty());
+        assert_eq!(patch.evaluate_after_days, 5);
+    }
+
+    #[test]
     fn field_without_rail_is_rejected() {
         let mut tree = rules();
         let patches = vec![Patch {
             path: "playbook.exit.trailing.trail_atr_multiple".into(),
             value: json!(2.5),
             reason: "ok".into(),
+            ..Default::default()
         }];
         // trail_atr_multiple *does* have a rail, so this should succeed.
         assert!(apply_patches(&mut tree, &patches, &allow()).is_ok());

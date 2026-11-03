@@ -168,12 +168,33 @@ impl Default for PaperConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AdaptationConfig {
     /// Must stay `false` in the research arm. There is no live path here.
     pub live_auto_apply: bool,
     pub allowlist: Vec<String>,
+    /// Defined rank-IC days required before a patch may activate.
+    pub min_ic_days: u32,
+    /// `mean_rank_ic` must be strictly above this.
+    pub min_rank_ic: f64,
+    /// When `ic_t_stat` is present it must be at least this. A missing t-stat does not deny.
+    pub min_ic_t: f64,
+    /// Minimum age of a live patch, and the minimum gap since the last activation.
+    pub min_dwell_days: u32,
+}
+
+impl Default for AdaptationConfig {
+    fn default() -> Self {
+        Self {
+            live_auto_apply: false,
+            allowlist: Vec::new(),
+            min_ic_days: 10,
+            min_rank_ic: 0.02,
+            min_ic_t: 2.0,
+            min_dwell_days: 5,
+        }
+    }
 }
 
 impl ArmConfig {
@@ -342,6 +363,48 @@ mod tests {
         let mut config = valid();
         config.forecast.target = "next_tick_up".into();
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn adaptation_thresholds_default_when_the_block_is_missing() {
+        let raw = r#"
+version: 1
+mode: paper
+arm_id: research-megacaps
+account: "public:ACC123"
+universe: [MSFT]
+"#;
+        let config: ArmConfig = serde_yaml::from_str(raw).unwrap();
+        assert!(!config.adaptation.live_auto_apply);
+        assert!(config.adaptation.allowlist.is_empty());
+        assert_eq!(config.adaptation.min_ic_days, 10);
+        assert_eq!(config.adaptation.min_rank_ic, 0.02);
+        assert_eq!(config.adaptation.min_ic_t, 2.0);
+        assert_eq!(config.adaptation.min_dwell_days, 5);
+    }
+
+    #[test]
+    fn adaptation_block_fills_omitted_thresholds_from_defaults() {
+        let raw = r#"
+version: 1
+mode: paper
+arm_id: research-megacaps
+account: "public:ACC123"
+universe: [MSFT]
+adaptation:
+  live_auto_apply: false
+  allowlist: [forecast.min_confidence]
+  min_dwell_days: 7
+"#;
+        let config: ArmConfig = serde_yaml::from_str(raw).unwrap();
+        assert_eq!(
+            config.adaptation.allowlist,
+            vec!["forecast.min_confidence".to_string()]
+        );
+        assert_eq!(config.adaptation.min_dwell_days, 7);
+        assert_eq!(config.adaptation.min_ic_days, 10);
+        assert_eq!(config.adaptation.min_rank_ic, 0.02);
+        assert_eq!(config.adaptation.min_ic_t, 2.0);
     }
 
     #[test]

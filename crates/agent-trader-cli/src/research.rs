@@ -22,6 +22,7 @@ use broker_public::PublicBackend;
 use chrono::Utc;
 use research_core::book::PaperBook;
 use research_core::playbook::{self, Mutable};
+use research_core::promotion;
 use research_core::scoring::{self, ForecastScore, PendingForecast, Scorecard};
 use research_core::web_search::{OpenRouterClient, SearchParams};
 use research_core::{run_self_test, ArmConfig, Forecast, GateInputs, PaperOnlyBroker, TickInputs};
@@ -123,8 +124,9 @@ pub fn run_validate(rules: &Path) -> Result<Value> {
 }
 
 pub struct TickOptions {
-    /// Promote accepted playbook patches to the active overlay. Off by default:
-    /// proposals are always versioned, activation is an explicit operator choice.
+    /// May promote a pre-registered patch to the active overlay when the
+    /// evidence gate allows it. Off by default: proposals are always versioned,
+    /// and this flag is not an unconditional activate.
     pub apply_patches: bool,
 }
 
@@ -283,7 +285,27 @@ pub async fn run_tick(rules: &Path, options: &TickOptions, cache: &mut BarCache)
         session_open: session.open,
     });
 
-    // --- Bounded patches: always versioned, activated only on request ---
+    // --- Queue today's forecast so it can be scored in `horizon_days` ---
+    if let Some(forecast) = &forecast {
+        record_pending(&config, forecast, now)?;
+    }
+
+    // --- Score any forecast whose forward window has now elapsed ---
+    let scoring = score_due(&config, cache, handle.data.as_ref(), &account, &bars).await;
+    let (scored_now, scorecard) = match scoring {
+        Ok(value) => value,
+        Err(err) => {
+            let scorecard = scorecard_before;
+            let _ = err;
+            (Vec::new(), scorecard)
+        }
+    };
+
+    // Judge a prior activation once its window has passed, then consider any
+    // new proposal. `--apply-patches` may activate only when the gate allows.
+    if let Err(err) = promotion::evaluate_ledger(rules, now, &scorecard) {
+        eprintln!("research patch ledger evaluation failed: {err}");
+    }
     let allowlist = research_core::patch::effective_allowlist(&config.adaptation.allowlist);
     let mut proposed: Vec<Value> = Vec::new();
     let mut applied: Vec<Value> = Vec::new();
@@ -295,7 +317,15 @@ pub async fn run_tick(rules: &Path, options: &TickOptions, cache: &mut BarCache)
                 .plan_patch
                 .iter()
                 .map(|patch| {
-                    json!({"path": patch.path, "value": patch.value, "reason": patch.reason})
+                    json!({
+                        "path": patch.path,
+                        "value": patch.value,
+                        "reason": patch.reason,
+                        "hypothesis": patch.hypothesis,
+                        "expected_effect": patch.expected_effect,
+                        "evaluate_after_days": patch.evaluate_after_days,
+                        "kill_criteria": patch.kill_criteria,
+                    })
                 })
                 .collect();
             match mutable.apply(&forecast.plan_patch, &allowlist) {
@@ -308,24 +338,44 @@ pub async fn run_tick(rules: &Path, options: &TickOptions, cache: &mut BarCache)
                                 "old_value": change.old_value,
                                 "new_value": change.new_value,
                                 "reason": change.reason,
+                                "hypothesis": change.hypothesis,
+                                "expected_effect": change.expected_effect,
+                                "evaluate_after_days": change.evaluate_after_days,
+                                "kill_criteria": change.kill_criteria,
                             })
                         })
                         .collect();
                     if changes.is_empty() {
                         patch_note = "no patch changed a value".into();
                     } else {
-                        match playbook::write_version(
+                        match promotion::consider_proposal(
                             rules,
                             &root,
                             &changes,
                             json!({"source": "forecast", "as_of": forecast.as_of}),
                             options.apply_patches,
+                            &scorecard,
+                            &config.adaptation,
+                            now,
                         ) {
-                            Ok(path) => {
-                                patch_version = Some(path.display().to_string());
-                                patch_note = if options.apply_patches {
+                            Ok(outcome) => {
+                                patch_version = Some(outcome.version_path.display().to_string());
+                                if let Some(reason) = &outcome.gate_reason {
+                                    for change in &changes {
+                                        eprintln!(
+                                            "research patch denied: {}: {reason}",
+                                            change.path
+                                        );
+                                    }
+                                }
+                                patch_note = if outcome.activated {
                                     format!(
                                         "activated {} playbook patch(es) for the next tick",
+                                        changes.len()
+                                    )
+                                } else if let Some(reason) = &outcome.gate_reason {
+                                    format!(
+                                        "{} patch(es) versioned but not activated: {reason}",
                                         changes.len()
                                     )
                                 } else {
@@ -347,22 +397,6 @@ pub async fn run_tick(rules: &Path, options: &TickOptions, cache: &mut BarCache)
             }
         }
     }
-
-    // --- Queue today's forecast so it can be scored in `horizon_days` ---
-    if let Some(forecast) = &forecast {
-        record_pending(&config, forecast, now)?;
-    }
-
-    // --- Score any forecast whose forward window has now elapsed ---
-    let scoring = score_due(&config, cache, handle.data.as_ref(), &account, &bars).await;
-    let (scored_now, scorecard) = match scoring {
-        Ok(value) => value,
-        Err(err) => {
-            let scorecard = scorecard_before;
-            let _ = err;
-            (Vec::new(), scorecard)
-        }
-    };
 
     // --- Persist book + journal ---
     let book_json = paper_book.to_dashboard_json(
@@ -741,7 +775,12 @@ fn build_prompt(
          \"horizon_days\":number,\"signals\":[{{\"symbol\":string,\"direction\":\"up|down|flat\",\
          \"expected_return_pct\":number,\"confidence\":0..1,\"rank\":number,\"citations\":[string]}}],\
          \"regime\":\"risk_on|risk_off|chop\",\"plan_patch\":[{{\"path\":string,\"value\":number,\
-         \"reason\":string}}],\"risk_alerts\":[string],\"notes\":string}}. \
+         \"reason\":string,\"hypothesis\":string,\"expected_effect\":string,\
+         \"evaluate_after_days\":number,\"kill_criteria\":string}}],\
+         \"risk_alerts\":[string],\"notes\":string}}. \
+         Every plan_patch must pre-register a one-sentence hypothesis, the metric and sign \
+         it should move (expected_effect, for example \"mean_rank_ic up\"), evaluate_after_days, \
+         and kill_criteria. A patch with no hypothesis is versioned and not activated. \
          Only propose plan_patch paths from this allowlist: {:?}. \
          Current adaptive settings (playbook, sizing, selectivity): {}. \
          Scoring so far: {}. \
