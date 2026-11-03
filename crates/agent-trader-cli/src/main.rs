@@ -130,7 +130,7 @@ enum ResearchCmd {
     Tick {
         #[arg(long)]
         rules: PathBuf,
-        /// Promote accepted playbook patches to the active versioned overlay.
+        /// Version patches and activate them only when the evidence gate allows.
         #[arg(long)]
         apply_patches: bool,
     },
@@ -145,7 +145,7 @@ enum ResearchCmd {
         /// Run a single pass and exit.
         #[arg(long)]
         once: bool,
-        /// Promote accepted playbook patches to the active versioned overlay.
+        /// Version patches and activate them only when the evidence gate allows.
         #[arg(long)]
         apply_patches: bool,
     },
