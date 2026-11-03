@@ -335,6 +335,7 @@ pub fn write_version(
         "applied": applied,
         "meta": meta,
         "active": activate,
+        "activated": activate,
     });
     let pretty = serde_json::to_string_pretty(&record)?;
     // Write-then-rename so a crash cannot leave a half-written version.
@@ -421,6 +422,7 @@ mod tests {
                     path: "playbook.exit.profit_target_pct".into(),
                     value: json!(99.0),
                     reason: "test".into(),
+                    ..Default::default()
                 }],
                 &allow(),
             )
@@ -438,11 +440,13 @@ mod tests {
                     path: "playbook.exit.stop_loss_pct".into(),
                     value: json!(10.0),
                     reason: "test".into(),
+                    ..Default::default()
                 },
                 Patch {
                     path: "playbook.exit.profit_target_pct".into(),
                     value: json!(4.0),
                     reason: "test".into(),
+                    ..Default::default()
                 },
             ],
             &allow(),
@@ -462,11 +466,13 @@ mod tests {
                         path: "playbook.exit.stop_loss_pct".into(),
                         value: json!(3.0),
                         reason: "test".into(),
+                        ..Default::default()
                     },
                     Patch {
                         path: "paper.max_open_positions".into(),
                         value: json!(8),
                         reason: "test".into(),
+                        ..Default::default()
                     },
                 ],
                 &allow(),
