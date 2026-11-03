@@ -1,0 +1,32 @@
+# Schwab options paper agent
+#
+# systemd is the supervisor — run the agent in the foreground (no --background).
+# Paper only: never add --trust or --yes to this unit.
+#
+# Copy rules/options-rules.example.yaml to a local rules file and point ExecStart
+# at it (drop-in). Do not commit that file.
+#
+#   systemctl --user edit schwab-options.service
+#   [Service]
+#   WorkingDirectory=/path/to/schwab-api-cli
+#   ExecStart=%h/.cargo/bin/schwab agent run rules/options-pilot.yaml --simulate
+#
+# Linger (required so this user unit stays up after logout):
+#   sudo loginctl enable-linger %u
+
+[Unit]
+Description=Schwab options paper agent
+Documentation=file://%h/projects/schwabinvestbot/docs/REMOTE_PAPER_HOST.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/schwabinvestbot
+Environment=SCHWAB_REPO=%h/projects/schwabinvestbot
+ExecStart=%h/.cargo/bin/schwab agent run rules/options-pilot.yaml --simulate
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

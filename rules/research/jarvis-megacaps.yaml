@@ -1,0 +1,136 @@
+# Paper-only research arm. See docs/RESEARCH_ARM_PLAN.md.
+#
+#   agent-trader research validate --rules rules/research/example-megacaps.yaml
+#   agent-trader research tick     --rules rules/research/example-megacaps.yaml
+#   agent-trader research run      --rules rules/research/example-megacaps.yaml --interval-seconds 1800
+#   agent-trader research rollback --rules rules/research/example-megacaps.yaml
+#
+# `tick`/`run` need PUBLIC_API_KEY (read-only use) and, for a forecast,
+# OPENROUTER_API_KEY. The arm simulates fills locally into
+# `rules/research/agent-trader-research-<arm_id>.json`; it never applies a live
+# patch and never places an order. Playbook patches are versioned under
+# `rules/research/<file>.versions/` and only activated with --apply-patches.
+version: 1
+mode: paper
+arm_id: research-megacaps
+broker: public
+account: "public:5OI43600"   # bare hashes are rejected (they map to Schwab)
+
+interval:
+  cron: "0 10-15 * * 1-5"
+  timezone: America/New_York
+
+forecast:
+  target: forward_5d_excess_return_sign
+  benchmark: SPY
+  horizon_days: 5
+  min_confidence: 0.55
+
+research:
+  feeds:
+    - id: fed-press
+      kind: rss
+      url: "https://www.federalreserve.gov/feeds/press_all.xml"
+      phases: [all]
+  search:
+    enabled: true
+    provider: openrouter_web_search
+    engine: auto
+    model: google/gemini-2.5-flash
+    max_results: 5
+    max_total_results: 20
+    search_context_size: medium
+    max_queries_per_tick: 4
+    allowed_domains: [reuters.com, federalreserve.gov, sec.gov, bls.gov]
+
+# A varied cross-section, not five mega-caps: broad market, size, the eleven
+# sector SPDRs, segments/themes, international, rates/credit/commodities/REITs and
+# a dozen single names. The forecast ranks all of these on the same
+# benchmark-relative horizon, so rank IC has a population to measure.
+#
+# ETFs need no special handling: Public treats them as EQUITY instruments, the
+# same path the SPY benchmark already uses. Inverse and leveraged ETFs are left
+# out on purpose - 5-day decay would contaminate the score.
+universe:
+  # Broad market and size
+  - QQQ
+  - IWM
+  - DIA
+  # Sector SPDRs
+  - XLK
+  - XLF
+  - XLV
+  - XLE
+  - XLI
+  - XLY
+  - XLP
+  - XLU
+  - XLB
+  - XLRE
+  - XLC
+  # Segments and themes
+  - SMH
+  - XBI
+  - KRE
+  - XOP
+  - ITB
+  # International
+  - EEM
+  - EFA
+  - FXI
+  # Rates, credit, commodities, REITs
+  - TLT
+  - IEF
+  - HYG
+  - LQD
+  - GLD
+  - VNQ
+  # Single names across sectors
+  - MSFT
+  - NVDA
+  - AMZN
+  - GOOGL
+  - META
+  - JPM
+  - UNH
+  - XOM
+  - CAT
+  - WMT
+  - LLY
+  - TSLA
+
+paper:
+  starting_equity_usd: 10000
+  slippage_bps: 5
+  max_quote_age_seconds: 60
+  max_daily_loss_usd: 300
+  max_open_positions: 5
+  max_hold_days: 5
+
+# The only thing the patch engine may change. Every patched field is read by the
+# paper fill model: stop/target/trailing drive exits, the RSI band drives entries.
+playbook:
+  exit:
+    profit_target_pct: 8.0
+    stop_loss_pct: 4.0
+    trailing:
+      trail_atr_multiple: 2.0
+      activate_after_profit_pct: 4.0
+  entry:
+    rsi_14_range: [35.0, 70.0]
+
+adaptation:
+  live_auto_apply: false
+  # The full code ceiling: exits, entry selectivity, sizing and hold time. Each
+  # path is clamped to a hard rail (see research-core::patch::rail_for). Risk
+  # controls (max_daily_loss_usd), the cost model (slippage_bps), the baseline
+  # equity, the scoring contract and the allowlist itself are never patchable.
+  allowlist:
+    - playbook.exit.stop_loss_pct
+    - playbook.exit.profit_target_pct
+    - playbook.exit.trailing.trail_atr_multiple
+    - playbook.exit.trailing.activate_after_profit_pct
+    - playbook.entry.rsi_14_range
+    - paper.max_open_positions
+    - paper.max_hold_days
+    - forecast.min_confidence

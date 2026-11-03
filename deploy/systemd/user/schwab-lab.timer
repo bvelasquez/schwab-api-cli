@@ -1,0 +1,12 @@
+# Weekday lab run after the scorecard (4:20 PM Eastern) and the last chain snapshot (3:45 PM).
+
+[Unit]
+Description=Run the Schwab options strategy-lab evidence on weekdays
+
+[Timer]
+OnCalendar=Mon..Fri 16:35 America/New_York
+Persistent=true
+Unit=schwab-lab.service
+
+[Install]
+WantedBy=timers.target

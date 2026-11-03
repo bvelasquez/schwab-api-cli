@@ -1,0 +1,20 @@
+# Schwab options paper arm o9 ($30k). Paper only: never add --trust or --yes.
+# Installed by scripts/install-options-arms.sh, which also copies the token-mirror
+# drop-in so this unit cannot refresh OAuth.
+
+[Unit]
+Description=Schwab options paper arm o9 (O9 edge floor, credit 0.50 and 12.5% of width)
+Documentation=file://%h/projects/schwabinvestbot/docs/REMOTE_PAPER_HOST.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/schwabinvestbot
+Environment=SCHWAB_REPO=%h/projects/schwabinvestbot
+ExecStart=%h/.cargo/bin/schwab agent run rules/options-arm-o9.yaml --simulate
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
